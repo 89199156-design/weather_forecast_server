@@ -235,7 +235,7 @@ Results observed:
 - API inventory tests: passed;
 - point API validation utility tests: passed;
 - validation gate runner tests: passed.
-- full Python test suite: `42 passed`.
+- full Python test suite: `44 passed`.
 
 First Singapore candidate validation against official Open-Meteo stopped at
 the required 50-point GFS gate:
@@ -256,6 +256,22 @@ Open-Meteo downloader/reader internals such as `wind_u_component_10m`,
 driven by `ForecastSurfaceVariable`; GFS internal raw dependencies must not be
 sent as public hourly parameters. The next validation round uses the corrected
 source-derived point API inventory.
+
+Second Singapore candidate validation against official Open-Meteo again stopped
+at the 50-point GFS gate:
+
+- report:
+  `docs/validation/reports/openmeteo-official-20260626T051258Z/50x50-gfs.json`
+- checked values before stop: `658000`
+- failures: `5330`
+- primary failure classes: reference mismatches, variables reported as
+  all-null by the local validator, and reference request failures.
+
+Root cause for the all-null class in the validator: local all-null series were
+marked failed before comparing the reference series. For reference-backed
+consistency validation, all-null is only a failure if the reference has values
+or a different null pattern. The validator now compares local and reference
+series first whenever a reference base URL is provided.
 
 ## Required Runtime Validation
 

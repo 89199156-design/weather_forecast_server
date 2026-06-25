@@ -257,19 +257,18 @@ def validate_scope(
                     local_series = local_hourly.get(variable)
                     summary = summarize_variable(local_series, frames=frames)
                     report["checked_values"] += frames
-                    if summary["status"] == "missing" or (summary["status"] == "all_null" and not allow_all_null):
-                        report["failures"].append(
-                            {
-                                "point_index": point_index,
-                                "point": point,
-                                "variable": variable,
-                                "reason": summary["status"],
-                                "summary": summary,
-                            }
-                        )
-                        continue
 
                     if reference_hourly is None:
+                        if summary["status"] == "missing" or (summary["status"] == "all_null" and not allow_all_null):
+                            report["failures"].append(
+                                {
+                                    "point_index": point_index,
+                                    "point": point,
+                                    "variable": variable,
+                                    "reason": summary["status"],
+                                    "summary": summary,
+                                }
+                            )
                         continue
 
                     reference_series = reference_hourly.get(variable)
