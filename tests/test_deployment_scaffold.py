@@ -18,6 +18,9 @@ def test_root_dockerfile_builds_vendored_openmeteo_with_local_sdk():
     assert "rm -f Package.resolved" in source
     assert "open-meteo/sdk.git" not in source
     assert "ENABLE_PARQUET=TRUE MARCH_SKYLAKE=TRUE swift build -c release" in source
+    assert "COPY --from=build /usr/lib/x86_64-linux-gnu/libarrow*.so*" in source
+    assert "COPY --from=build /usr/lib/x86_64-linux-gnu/libparquet*.so*" in source
+    assert "RUN ldconfig" in source
     assert 'ENTRYPOINT ["./openmeteo-api"]' in source
 
 
