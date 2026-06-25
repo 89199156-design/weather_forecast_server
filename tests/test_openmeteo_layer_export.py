@@ -69,6 +69,22 @@ def test_layer_definitions_are_api_variables_not_legacy_grib_fields():
         assert legacy_dependency not in source
 
 
+def test_layer_manifest_preserves_encoder_vmin_for_decoding():
+    layers = load_module()
+    grid = layers.compute_gfs013_region_grid(
+        left_lon=70.0,
+        right_lon=140.0,
+        bottom_lat=0.0,
+        top_lat=58.0,
+    )
+
+    manifests = {layer.name: layer.manifest(grid) for layer in layers.DEFAULT_LAYER_DEFINITIONS}
+
+    assert manifests["cloud_total_1"]["vmin"] == 0.0
+    assert manifests["t2m"]["vmin"] == -100.0
+    assert manifests["prmsl"]["vmin"] == 50000.0
+
+
 def test_scalar_and_wind_encoding_round_trip():
     layers = load_module()
 

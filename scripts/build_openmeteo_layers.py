@@ -96,6 +96,7 @@ class LayerDefinition:
             "render_var": self.render_var,
             "unit": self.unit,
             "scale": self.scale,
+            "vmin": self.vmin,
             "range": list(self.value_range),
             "data_type": self.data_type,
             "interpolation": "linear",
