@@ -1,0 +1,103 @@
+// swift-tools-version:6.2
+
+import PackageDescription
+import Foundation
+
+#if arch(x86_64)
+// Docker and Ubuntu release system uses `march=skylake`
+let mArch = ProcessInfo.processInfo.environment["MARCH_SKYLAKE"] == "TRUE" ? ["-march=skylake"] : ["-march=native"]
+#else
+let mArch: [String] = []
+#endif
+
+let swiftFlags: [PackageDescription.SwiftSetting] = [
+    .unsafeFlags(["-cross-module-optimization", "-Ounchecked"],
+    .when(configuration: .release))
+]
+
+/// `no-omit-frame-pointer` is required for back-tracing https://github.com/swiftlang/swift/blob/main/docs/Backtracing.rst#frame-pointers
+let cFlags = [PackageDescription.CSetting.unsafeFlags(["-O3", "-Wall", "-Werror", "-fno-math-errno", "-fno-trapping-math", "-freciprocal-math", "-ffp-contract=fast", "-fno-omit-frame-pointer"] + mArch)]
+
+/// Conditional support for Apache Arrow Parquet files
+let enableParquet = ProcessInfo.processInfo.environment["ENABLE_PARQUET"] == "TRUE"
+
+let package = Package(
+    name: "OpenMeteoApi",
+    platforms: [
+        .macOS(.v26)
+    ],
+    dependencies: [
+        .package(url: "https://github.com/vapor/vapor.git", from: "4.89.0"),
+        .package(url: "https://github.com/open-meteo/swift-zarr.git", from: "0.1.4"),
+        .package(url: "https://github.com/apple/swift-crypto.git", from: "4.0.0"),
+        .package(url: "https://github.com/apple/swift-async-algorithms", from: "1.0.0"),
+        .package(url: "https://github.com/apple/swift-numerics", from: "1.0.0"),
+        .package(path: "../openmeteo-sdk"),
+        .package(url: "https://github.com/open-meteo/om-file-format.git", revision: "71f422b2706d8a81f1cecf52ae3073990de1ddbe"), // Because unsafe C flags are set, tagged releases cannot be used
+        // .package(path: "../openmeteo-sdk-fork"),  // local forked version
+        //.package(url: "https://github.com/open-meteo/sdk.git", branch: "add_ecmwf_long_window"),
+        .package(url: "https://github.com/patrick-zippenfenig/curl-swift.git", from: "1.0.1"),
+        //.package(url: "https://github.com/patrick-zippenfenig/SwiftParallelBzip2", from: "0.0.10"), -> code is embedded because linux release build crashes otherwise...
+        //.package(url: "/Users/patrick/Documents/curl-swift", branch: "main"),
+        .package(url: "https://github.com/patrick-zippenfenig/SwiftNetCDF.git", from: "1.2.0"),
+        .package(url: "https://github.com/patrick-zippenfenig/SwiftTimeZoneLookup.git", from: "1.0.8"),
+        .package(url: "https://github.com/patrick-zippenfenig/SwiftEccodes.git", from: "1.1.1"),
+        .package(url: "https://github.com/apple/swift-nio.git", from: "2.68.0")
+        //.package(url: "https://github.com/SimplyDanny/SwiftLintPlugins", from: "0.59.1")
+    ] + (enableParquet ? [
+        .package(url: "https://github.com/patrick-zippenfenig/SwiftArrowParquet.git", from: "1.0.3")
+    ] : []),
+    targets: [
+        .target(
+            name: "App",
+            dependencies: [
+                .product(name: "SwiftZarr", package: "swift-zarr"),
+                .product(name: "Vapor", package: "vapor"),
+                .product(name: "Crypto", package: "swift-crypto"),
+                .product(name: "OpenMeteoSdk", package: "openmeteo-sdk"),
+                .product(name: "SwiftNetCDF", package: "SwiftNetCDF"),
+                .product(name: "SwiftTimeZoneLookup", package: "SwiftTimeZoneLookup"),
+                .product(name: "SwiftEccodes", package: "SwiftEccodes"),
+                .product(name: "NIOCore", package: "swift-nio"),
+                .product(name: "_NIOFileSystem", package: "swift-nio"),
+                .target(name: "Lbzip2"),
+                "CHelper",
+                //.product(name: "SwiftParallelBzip2", package: "SwiftParallelBzip2"),
+                .product(name: "OmFileFormat", package: "om-file-format"),
+                .product(name: "curl-swift", package: "curl-swift"),
+                .product(name: "AsyncAlgorithms", package: "swift-async-algorithms"),
+                "CZlib",
+            ] + (enableParquet ? [
+                .product(name: "SwiftArrowParquet", package: "SwiftArrowParquet")
+            ] : []),
+            cSettings: cFlags,
+            swiftSettings: swiftFlags + (enableParquet ? [.define("ENABLE_PARQUET")] : [])
+            //plugins: [.plugin(name: "SwiftLintBuildToolPlugin", package: "SwiftLintPlugins")]
+        ),
+        .target(
+            name: "Lbzip2"
+        ),
+        .systemLibrary(
+            name: "CZlib",
+            pkgConfig: "z",
+            providers: [.brew(["zlib"]), .apt(["libz-dev"])]
+        ),
+        .target(
+            name: "CHelper",
+            cSettings: cFlags,
+            swiftSettings: swiftFlags
+        ),
+        .executableTarget(
+            name: "openmeteo-api",
+            dependencies: [.target(name: "App")]
+        ),
+        .testTarget(
+            name: "AppTests",
+            dependencies: [
+                .target(name: "App"),
+                .product(name: "Numerics", package: "swift-numerics"),
+                .product(name: "VaporTesting", package: "vapor")
+            ]
+        ),
+    ]
+)

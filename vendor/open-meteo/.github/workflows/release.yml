@@ -1,0 +1,95 @@
+on:
+  push:
+    tags:
+      - '*.*.*'
+
+name: Upload Release Asset
+
+env:
+  swift_package_resolve: swift package resolve
+  swift_build: MARCH_SKYLAKE=TRUE swift build -c release -Xswiftc -g -Xswiftc -static-stdlib
+  swift_test: swift test
+  cache_version: 2
+
+jobs:
+  linux:
+    runs-on: ubuntu-22.04
+    container: ghcr.io/open-meteo/docker-container-build:latest
+    name: Linux
+    steps:
+    - name: Get Swift Version
+      id: get-swift-version
+      run: echo "version=$(swift -version | head -n 1 | sed s/,// )" >> $GITHUB_OUTPUT
+      shell: bash
+    - uses: actions/checkout@v6
+    - name: Copy Swift Backtrace
+      run: cp /usr/libexec/swift/linux/swift-backtrace-static ./swift-backtrace
+    #- name: Get runtime library
+    #  uses: wei/curl@v1
+    #  with:
+    #    args: -o libswiftlang_5.8-1.0.0-ubuntu-jammy_amd64.deb https://archive.swiftlang.xyz/repos/ubuntu/pool/main/libs/libswiftlang/libswiftlang_5.8-1.0.0-ubuntu-jammy_amd64.deb # https://apt.open-meteo.com/pool/main/s/swiftlang-slim/swiftlang-slim_5.7.1-01-ubuntu-jammy_amd64.deb
+    - name: Cache resolved dependencies
+      id: cache-resolved-dependencies
+      uses: actions/cache@v5
+      with:
+        path: |
+          .build
+          Package.resolved
+        key: ${{ runner.os }}-${{ steps.get-swift-version.outputs.version }}-${{ env.cache_version }}-spm-deps-${{ hashFiles('Package.swift', 'Package.resolved') }}
+        restore-keys: |
+          ${{ runner.os }}-${{ steps.get-swift-version.outputs.version }}-${{ env.cache_version }}-spm-deps-
+    - name: Resolve dependencies
+      if: steps.cache-resolved-dependencies.outputs.cache-hit != 'true'
+      run: ${{ env.swift_package_resolve }}
+    - name: Build
+      run: |
+        ${{ env.swift_build }}
+        mkdir Resources
+        cp .build/release/openmeteo-api openmeteo-api
+        cp -r .build/release/*.resources Resources/
+    - name: Package
+      uses: gravitl/github-action-fpm@master
+      with:
+        fpm_args: './build'
+        # -d swiftlang-slim -d libeccodes0
+        fpm_opts: '-s dir -t deb -n openmeteo-api -v ${{github.ref_name}} -d tzdata -d libnetcdf19 -d libeccodes0 --deb-systemd-enable --deb-systemd-auto-start --deb-systemd build/openmeteo-sync.service --deb-systemd build/openmeteo-api.service  --deb-systemd build/openmeteo-api2.service  --deb-systemd build/openmeteo-api3.service --deb-default build/openmeteo-api.env --before-install build/openmeteo-before-install.sh --before-upgrade build/openmeteo-before-install.sh build/openmeteo-notify.sh=/usr/local/bin/ openmeteo-api=/usr/local/bin/ swift-backtrace=/usr/local/bin/ Public=/var/lib/openmeteo-api Resources=/var/lib/openmeteo-api'
+    - name: Rename deb file
+      run: mv openmeteo-api_${{github.ref_name}}_amd64.deb openmeteo-api_${{github.ref_name}}_jammy_amd64.deb
+    - name: Release
+      uses: ncipollo/release-action@v1
+      with:
+        generateReleaseNotes: true
+        artifacts: 'openmeteo-api_${{github.ref_name}}_jammy_amd64.deb'
+        draft: true
+    - name: Create APT repository
+      uses: patrick-zippenfenig/apt-repo-action@master
+      with:
+        repo_supported_arch: amd64
+        repo_supported_version: jammy
+        file: 'openmeteo-api_${{github.ref_name}}_jammy_amd64.deb'
+        file_target_version: jammy
+        public_key: ${{ secrets.GPG_PUBLIC }}
+        private_key: ${{ secrets.GPG_PRIVATE }}
+        key_passphrase: ${{ secrets.GPG_SECRET }}
+    - name: Get eccodes
+      run: curl -L https://github.com/patrick-zippenfenig/ecCodes-ubuntu/releases/download/2.41.0/libeccodes0_2.41.0_jammy_amd64.deb -o libeccodes0_2.41.0_jammy_amd64.deb
+    - name: Create APT repository
+      uses: patrick-zippenfenig/apt-repo-action@master
+      with:
+        repo_supported_arch: amd64
+        repo_supported_version: jammy
+        file: 'libeccodes0_2.41.0_jammy_amd64.deb'
+        file_target_version: jammy
+        public_key: ${{ secrets.GPG_PUBLIC }}
+        private_key: ${{ secrets.GPG_PRIVATE }}
+        key_passphrase: ${{ secrets.GPG_SECRET }}
+    - name: Upload to FTP
+      uses: SamKirkland/FTP-Deploy-Action@v4.4.0
+      with:
+        server: storage.bunnycdn.com
+        username: apt-repo
+        password: ${{ secrets.ftp_password }}
+        local-dir: './repo/'
+        server-dir: 'aaa/../'
+    - name: Purge APT CDN cache
+      run: "curl --request POST --url https://api.bunny.net/pullzone/884852/purgeCache --header 'AccessKey: ${{ secrets.bunny_api_key }}' --header 'content-type: application/json'"
