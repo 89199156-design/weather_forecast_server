@@ -107,3 +107,19 @@ def test_gfs_download_imports_eccodes_when_using_grib_message_type():
 
     assert "message: GribMessage" in download
     assert "import SwiftEccodes" in download
+
+
+def test_dem_remote_directory_is_separate_from_forecast_remote_archive():
+    configure = (ROOT / "vendor" / "open-meteo" / "Sources" / "App" / "configure.swift").read_text(
+        encoding="utf-8"
+    )
+    om_file_type = (ROOT / "vendor" / "open-meteo" / "Sources" / "App" / "Helper" / "File" / "OmFileType.swift").read_text(
+        encoding="utf-8"
+    )
+    singapore_env = (ROOT / "config" / "singapore.example.env").read_text(encoding="utf-8")
+
+    assert "WEATHER_DEM_REMOTE_DATA_DIRECTORY" in configure
+    assert "demRemoteDataDirectory" in configure
+    assert "domain == .copernicus_dem90" in om_file_type
+    assert "OpenMeteo.demRemoteDataDirectory" in om_file_type
+    assert "WEATHER_DEM_REMOTE_DATA_DIRECTORY" in singapore_env
