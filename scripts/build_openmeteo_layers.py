@@ -10,7 +10,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any, Iterable, Mapping, Sequence
 
 import numpy as np
 import requests
@@ -23,6 +23,9 @@ DEFAULT_OUTPUT_DIR = os.environ.get(
     "WEATHER_OPENMETEO_LAYER_DIR",
     "./data/openmeteo_layers/gfs013_surface",
 )
+LAYER_API_OPTIONS: dict[str, str] = {
+    "wind_speed_unit": "ms",
+}
 
 
 @dataclass(frozen=True)
@@ -273,8 +276,9 @@ def build_forecast_params(
     model: str,
     start_hour: str,
     end_hour: str,
+    api_options: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
-    return {
+    params = {
         "latitude": ",".join(f"{value:.6f}" for value in latitudes),
         "longitude": ",".join(f"{value:.6f}" for value in longitudes),
         "hourly": ",".join(variables),
@@ -284,6 +288,8 @@ def build_forecast_params(
         "start_hour": start_hour,
         "end_hour": end_hour,
     }
+    params.update(dict(LAYER_API_OPTIONS if api_options is None else api_options))
+    return params
 
 
 def fetch_forecast_chunk(
@@ -295,6 +301,7 @@ def fetch_forecast_chunk(
     model: str,
     start_hour: str,
     end_hour: str,
+    api_options: Mapping[str, str] | None = None,
     timeout_seconds: float,
 ) -> list[dict[str, Any]]:
     params = build_forecast_params(
@@ -304,6 +311,7 @@ def fetch_forecast_chunk(
         model=model,
         start_hour=start_hour,
         end_hour=end_hour,
+        api_options=api_options,
     )
     response = requests.get(api_base_url, params=params, timeout=timeout_seconds)
     response.raise_for_status()
@@ -524,6 +532,7 @@ def build_layers(
             "layers": {layer.name: layer.manifest(grid) for layer in layers},
             "source": "openmeteo_api",
             "api_base_url": api_base_url,
+            "api_options": dict(LAYER_API_OPTIONS),
         }
         publish_build(build_dir, output_dir, filenames, manifest)
         return manifest

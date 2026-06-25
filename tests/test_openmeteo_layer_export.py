@@ -128,4 +128,5 @@ def test_api_request_params_preserve_openmeteo_point_semantics():
     assert params["models"] == "gfs013"
     assert params["timezone"] == "UTC"
     assert params["cell_selection"] == "land"
+    assert params["wind_speed_unit"] == "ms"
     assert "elevation" not in params

@@ -178,6 +178,8 @@ def verify_layers(
     grid = manifest["grid"]
     layers = selected_layer_items(manifest["layers"], layers_filter)
     variables = variables_from_manifest(layers)
+    manifest_api_options = manifest.get("api_options") or layer_builder.LAYER_API_OPTIONS
+    api_options = {str(key): str(value) for key, value in manifest_api_options.items()}
     points = point_cases(grid, max_points)
     selected_time_indices = time_indices(manifest.get("times") or [], max_times)
     selected_times = [manifest["times"][idx] for idx in selected_time_indices]
@@ -196,6 +198,7 @@ def verify_layers(
             model=str(manifest.get("model", "gfs013")),
             start_hour=str(manifest["start_hour"]),
             end_hour=str(manifest["end_hour"]),
+            api_options=api_options,
             timeout_seconds=timeout_seconds,
         )
         if len(response) != len(chunk):
@@ -269,6 +272,7 @@ def verify_layers(
         "layer_dir": str(layer_dir),
         "api_base_url": api_base_url,
         "model": manifest.get("model"),
+        "api_options": api_options,
         "points": len(points),
         "frames": len(selected_time_indices),
         "layers": list(layers.keys()),
@@ -286,6 +290,7 @@ def write_report(report: dict[str, Any], report_path: Path) -> None:
         f"- layer_dir: `{report['layer_dir']}`",
         f"- api_base_url: `{report['api_base_url']}`",
         f"- model: `{report['model']}`",
+        f"- api_options: `{json.dumps(report.get('api_options') or {}, ensure_ascii=False, sort_keys=True)}`",
         f"- points: {report['points']}",
         f"- frames: {report['frames']}",
         f"- layers: {', '.join(report['layers'])}",
