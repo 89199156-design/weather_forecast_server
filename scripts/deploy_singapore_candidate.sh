@@ -15,11 +15,22 @@ cd "$APP_DIR"
 mkdir -p "$DATA_DIR"
 chown "$OPENMETEO_UID:$OPENMETEO_GID" "$DATA_DIR"
 
+SANITIZED_ENV_FILE="$(mktemp)"
+cleanup_sanitized_env() {
+  rm -f "$SANITIZED_ENV_FILE"
+}
+trap cleanup_sanitized_env EXIT
+
+awk '
+  /^[[:space:]]*($|#)/ { print; next }
+  $0 !~ /^[[:space:]]*[^#][^=]*=[[:space:]]*$/ { print; next }
+' "$ENV_FILE" > "$SANITIZED_ENV_FILE"
+
 docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
 docker run -d \
   --name "$CONTAINER_NAME" \
   --restart unless-stopped \
-  --env-file "$ENV_FILE" \
+  --env-file "$SANITIZED_ENV_FILE" \
   --volume "$DATA_DIR:/app/data" \
   --publish "127.0.0.1:$PORT:8080" \
   "$IMAGE_NAME:$IMAGE_TAG"

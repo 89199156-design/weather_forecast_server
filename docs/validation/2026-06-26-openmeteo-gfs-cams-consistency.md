@@ -109,6 +109,14 @@ the underlying NOAA GRIB file family before chunking so filter URLs do not mix
 `pgrb2` and `pgrb2b` levels. The GFS025 filter URL selector routes `pgrb2b`
 files to NOAA's secondary filter endpoint.
 
+During candidate API probing, the Open-Meteo process crashed when resolving
+coordinates because the deployment env file passed
+`WEATHER_DEM_REMOTE_DATA_DIRECTORY=` as an empty string. The upstream
+Open-Meteo `configure.swift` contract allows the variable to be absent, or to
+start with `http`, but not to be present and empty. The fix is limited to the
+deployment shell wrapper: it writes a temporary Docker env file that drops empty
+`KEY=` assignments before `docker run`. No Open-Meteo engine code was changed.
+
 ## Source-Derived Inventory
 
 The inventory must be generated from the selected vendored source:
@@ -192,6 +200,10 @@ Explicitly reviewed required examples:
     failure;
   - passes a point batch size to the validator so 500-point gates do not
     require one HTTP request per point.
+- `scripts/deploy_singapore_candidate.sh`
+  - filters empty env-file assignments before `docker run` so optional upstream
+    Open-Meteo variables remain absent instead of present with invalid empty
+    values.
 - `scripts/build_openmeteo_layers.py`
   - uses `gfs_global` by default for layer export;
   - adds Open-Meteo weather-code-based categorical layer products for
@@ -216,11 +228,11 @@ Results observed:
 
 - deployment scaffold tests: passed after adding `gfs025` pressure-level
   `--only-variables` batches, pressure-level chunking, env-file-first
-  defaults, and resume skip flags;
+  defaults, resume skip flags, and Docker env-file empty-value filtering;
 - API inventory tests: passed;
 - point API validation utility tests: passed;
 - validation gate runner tests: passed.
-- full Python test suite: `41 passed`.
+- full Python test suite: `42 passed`.
 
 ## Required Runtime Validation
 

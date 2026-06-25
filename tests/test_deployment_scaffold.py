@@ -51,6 +51,18 @@ def test_singapore_deploy_makes_data_directory_writable_by_openmeteo_user():
     assert "$DATA_DIR" in script
 
 
+def test_singapore_deploy_filters_empty_env_values_before_docker_run():
+    script = (ROOT / "scripts" / "deploy_singapore_candidate.sh").read_text(encoding="utf-8")
+
+    assert "SANITIZED_ENV_FILE" in script
+    assert "mktemp" in script
+    assert "cleanup_sanitized_env" in script
+    assert "--env-file \"$SANITIZED_ENV_FILE\"" in script
+    assert "--env-file \"$ENV_FILE\"" not in script
+    assert "next" in script
+    assert "$0 !~ /^[[:space:]]*[^#][^=]*=[[:space:]]*$/" in script
+
+
 def test_runtime_data_download_covers_openmeteo_gfs_mixer_and_cams_global():
     script = (ROOT / "scripts" / "download_openmeteo_runtime_data.sh").read_text(encoding="utf-8")
 
