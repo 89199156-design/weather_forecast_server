@@ -557,7 +557,21 @@ private enum GfsFilterDownload {
         return (file, dir)
     }
 
-    private static func noaaFilterVariableItems<Variable: CurlIndexedVariable>(variables: [Variable]) -> [URLQueryItem] {
+    static func indexLineMatchesFilter(_ line: Substring, filterItemNames: Set<String>) -> Bool {
+        let parts = line.split(separator: ":", omittingEmptySubsequences: false)
+        guard parts.count > 4 else {
+            return false
+        }
+        guard filterItemNames.contains("var_\(parts[3])") else {
+            return false
+        }
+        guard filterItemNames.contains(where: { $0.hasPrefix("lev_") }) else {
+            return true
+        }
+        return filterItemNames.contains("lev_\(sanitizeLevel(parts[4]))")
+    }
+
+    static func noaaFilterItemNames<Variable: CurlIndexedVariable>(variables: [Variable]) -> [String] {
         var seen = Set<String>()
         var names = [String]()
         for variable in variables {
@@ -572,7 +586,11 @@ private enum GfsFilterDownload {
                 add("lev_\(sanitizeLevel(parts[2]))", seen: &seen, names: &names)
             }
         }
-        return names.sorted().map { URLQueryItem(name: $0, value: "on") }
+        return names.sorted()
+    }
+
+    private static func noaaFilterVariableItems<Variable: CurlIndexedVariable>(variables: [Variable]) -> [URLQueryItem] {
+        return noaaFilterItemNames(variables: variables).map { URLQueryItem(name: $0, value: "on") }
     }
 
     private static func add(_ name: String, seen: inout Set<String>, names: inout [String]) {
@@ -594,7 +612,7 @@ private extension Curl {
         guard indexUrl.count == filteredUrl.count else {
             fatalError("filtered URL count does not match index URL count")
         }
-        let inventories = try await downloadIndexAndDecode(url: indexUrl.map { "\($0).idx" }, variables: variables, errorOnMissing: errorOnMissing)
+        let inventories = try await downloadFilteredIndexAndDecode(indexUrl: indexUrl.map { "\($0).idx" }, variables: variables, errorOnMissing: errorOnMissing)
         guard !inventories.isEmpty else {
             return []
         }
@@ -606,12 +624,81 @@ private extension Curl {
                 continue
             }
             let messages = try await downloadGrib(url: url, bzip2Decode: false)
-            if messages.count != inventory.matches.count {
-                logger.error("Filtered GRIB message count \(messages.count) does not match index match count \(inventory.matches.count)")
-                throw CurlError.didNotGetAllGribMessages(got: messages.count, expected: inventory.matches.count)
+            if messages.count != inventory.filteredLineCount {
+                logger.error("Filtered GRIB message count \(messages.count) does not match filtered index line count \(inventory.filteredLineCount)")
+                throw CurlError.didNotGetAllGribMessages(got: messages.count, expected: inventory.filteredLineCount)
             }
-            zip(inventory.matches, messages).forEach { result.append(($0, $1)) }
+            for (match, position) in zip(inventory.matches, inventory.filteredLineIndexes) {
+                result.append((match, messages[position]))
+            }
         }
+        return result
+    }
+
+    func downloadFilteredIndexAndDecode<Variable: CurlIndexedVariable>(indexUrl: [String], variables: [Variable], errorOnMissing: Bool) async throws -> [(matches: [Variable], filteredLineIndexes: [Int], filteredLineCount: Int)] {
+        let count = variables.reduce(0, { return $0 + ($1.gribIndexName == nil ? 0 : 1) })
+        if count == 0 {
+            return []
+        }
+
+        let filterItemNames = Set(GfsFilterDownload.noaaFilterItemNames(variables: variables))
+        var indices = [String]()
+        indices.reserveCapacity(indexUrl.count)
+        for url in indexUrl {
+            guard let index = try await downloadInMemoryAsync(url: url, minSize: nil).readStringImmutable() else {
+                fatalError("Could not decode index to string")
+            }
+            indices.append(index)
+        }
+
+        var result = [(matches: [Variable], filteredLineIndexes: [Int], filteredLineCount: Int)]()
+        result.reserveCapacity(indexUrl.count)
+
+        for index in indices {
+            let filteredLines = index.split(separator: "\n").filter {
+                GfsFilterDownload.indexLineMatchesFilter($0, filterItemNames: filterItemNames)
+            }
+            var matches = [Variable]()
+            var filteredLineIndexes = [Int]()
+            matches.reserveCapacity(count)
+            filteredLineIndexes.reserveCapacity(count)
+
+            for (position, line) in filteredLines.enumerated() {
+                guard let match = variables.first(where: {
+                    guard let gribIndexName = $0.gribIndexName else {
+                        return false
+                    }
+                    if $0.exactMatch {
+                        return line.hasSuffix(gribIndexName)
+                    }
+                    return line.contains(gribIndexName)
+                }) else {
+                    continue
+                }
+                guard !matches.contains(where: { $0.gribIndexName == match.gribIndexName }) else {
+                    logger.info("Grib variable \(match) matched twice for \(line)")
+                    continue
+                }
+                matches.append(match)
+                filteredLineIndexes.append(position)
+            }
+            result.append((matches, filteredLineIndexes, filteredLines.count))
+        }
+
+        var missing = false
+        for variable in variables {
+            guard let gribIndexName = variable.gribIndexName else {
+                continue
+            }
+            if !result.contains(where: { $0.matches.contains(where: { $0.gribIndexName == gribIndexName }) }) {
+                logger.error("Variable \(variable) '\(gribIndexName)' missing")
+                missing = true
+            }
+        }
+        if missing && errorOnMissing {
+            throw CurlError.didNotFindAllVariablesInGribIndex
+        }
+
         return result
     }
 }

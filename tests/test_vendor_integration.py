@@ -53,9 +53,20 @@ def test_gfs_region_filter_download_is_configurable_and_reuses_openmeteo_pipelin
 
     assert "GfsFilterDownload.filteredUrls" in download
     assert "downloadFilteredIndexedGrib" in download
-    assert "downloadIndexAndDecode" in download
+    assert "downloadFilteredIndexAndDecode" in download
     assert "downloadGrib(url: url, bzip2Decode: false)" in download
     assert "RegularGrid(" in domain
+
+
+def test_gfs_filtered_download_maps_noaa_filter_messages_back_to_openmeteo_index_matches():
+    download = (ROOT / "vendor" / "open-meteo" / "Sources" / "App" / "Gfs" / "GfsDownload.swift").read_text(
+        encoding="utf-8"
+    )
+
+    assert "downloadFilteredIndexAndDecode" in download
+    assert "filteredLineIndexes" in download
+    assert "indexLineMatchesFilter" in download
+    assert "messages[position]" in download
 
 
 def test_gfs_region_grid_uses_source_grid_point_centers():
