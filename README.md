@@ -40,3 +40,34 @@ The implementation order is:
 5. Deploy to Singapore and remove old satellite code/tasks there.
 6. Validate 50, then 100, then 500 points x 50 forecast frames for point API
    and layer consistency.
+
+## Layer Export
+
+Layer products are generated from the local Open-Meteo API, not from the old
+Python GRIB parsing chain. The Python layer code only requests point values
+from Open-Meteo and encodes those values into the existing WebP/manifest
+product shape used by clients.
+
+Build layers for a known validated window:
+
+```bash
+python3 scripts/build_openmeteo_layers.py \
+  --api-base-url http://127.0.0.1:18080/v1/forecast \
+  --output-dir ./data/openmeteo_layers/gfs013_surface \
+  --start-hour 2026-06-25T07:00 \
+  --end-hour 2026-06-27T08:00
+```
+
+Validate generated layers against the same Open-Meteo API before promotion:
+
+```bash
+python3 scripts/validate_openmeteo_layers.py \
+  --layer-dir ./data/openmeteo_layers/gfs013_surface \
+  --api-base-url http://127.0.0.1:18080/v1/forecast \
+  --max-points 50 \
+  --max-times 50
+```
+
+Run the validation gates in order: 50 points x 50 frames, then 100 x 50, then
+500 x 50. Stop on the first mismatch and record the changed revision, report,
+and source-chain analysis before changing code again.

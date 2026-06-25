@@ -49,3 +49,17 @@ def test_singapore_deploy_makes_data_directory_writable_by_openmeteo_user():
     assert "WEATHER_OPENMETEO_GID" in script
     assert "chown" in script
     assert "$DATA_DIR" in script
+
+
+def test_layer_scripts_are_documented_as_openmeteo_api_backed():
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    build_script = (ROOT / "scripts" / "build_openmeteo_layers.py").read_text(encoding="utf-8")
+    validate_script = (ROOT / "scripts" / "validate_openmeteo_layers.py").read_text(encoding="utf-8")
+
+    assert "scripts/build_openmeteo_layers.py" in readme
+    assert "scripts/validate_openmeteo_layers.py" in readme
+    assert "Open-Meteo API" in readme
+    assert "gfs_raw_download_core" not in build_script
+    assert "gfs_raw_download_core" not in validate_script
+    assert "satellite" not in build_script.lower()
+    assert "satellite" not in validate_script.lower()
