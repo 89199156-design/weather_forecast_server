@@ -118,7 +118,7 @@ struct GfsDownload: AsyncCommand {
         logger.info("Finished in \(start.timeElapsedPretty())")
     }
 
-    func downloadNcepElevation(application: Application, url: [String], surfaceElevationFileOm: OmFileType, grid: any Gridable, isGlobal: Bool) async throws {
+    func downloadNcepElevation(application: Application, domain: GfsDomain, url: [String], surfaceElevationFileOm: OmFileType, grid: any Gridable, isGlobal: Bool) async throws {
         let logger = application.logger
 
         /// download seamask and height
@@ -151,10 +151,19 @@ struct GfsDownload: AsyncCommand {
         var landmask: Array2D?
         let curl = Curl(logger: logger, client: application.dedicatedHttpClient)
         var grib2d = GribArray2D(nx: grid.nx, ny: grid.ny)
-        for (variable, message) in try await curl.downloadIndexedGrib(url: url, variables: ElevationVariable.allCases) {
+        let elevationMessages: [(variable: ElevationVariable, message: GribMessage)]
+        if let filteredUrl = GfsFilterDownload.filteredUrls(domain: domain, variables: ElevationVariable.allCases, sourceUrls: url) {
+            elevationMessages = try await curl.downloadFilteredIndexedGrib(indexUrl: url, filteredUrl: filteredUrl, variables: ElevationVariable.allCases)
+        } else {
+            elevationMessages = try await curl.downloadIndexedGrib(url: url, variables: ElevationVariable.allCases)
+        }
+
+        for (variable, message) in elevationMessages {
             try grib2d.load(message: message)
             if isGlobal {
                 grib2d.array.shift180LongitudeAndFlipLatitude()
+            } else if GfsFilterDownload.usesRegionalGrid(domain: domain) {
+                grib2d.array.flipLatitude()
             }
             switch variable {
             case .height:
@@ -183,7 +192,7 @@ struct GfsDownload: AsyncCommand {
         let elevationUrl = (domain == .gfs025_ens ? GfsDomain.gfs025 : domain).getGribUrl(run: run, forecastHour: 0, member: 0, useAws: downloadFromAws)
         if ![GfsDomain.hrrr_conus_15min, .gfswave025, .gfswave025_ens, .gfswave016].contains(domain) {
             // 15min hrrr data uses hrrr domain elevation files
-            try await downloadNcepElevation(application: application, url: elevationUrl, surfaceElevationFileOm: domain.surfaceElevationFileOm, grid: domain.grid, isGlobal: domain.isGlobal)
+            try await downloadNcepElevation(application: application, domain: domain == .gfs025_ens ? .gfs025 : domain, url: elevationUrl, surfaceElevationFileOm: domain.surfaceElevationFileOm, grid: domain.grid, isGlobal: domain.isGlobal)
         }
 
         let deadLineHours: Double
@@ -323,7 +332,14 @@ struct GfsDownload: AsyncCommand {
                 /// Keep variables in memory. Precip + Frozen percent to calculate snowfall
                 let inMemory = VariablePerMemberStorage<GfsSurfaceVariable>()
                 
-                for (variable, message) in try await curl.downloadIndexedGrib(url: url, variables: variables, errorOnMissing: !skipMissing) {
+                let gribMessages: [(variable: GfsVariableAndDomain, message: GribMessage)]
+                if let filteredUrl = GfsFilterDownload.filteredUrls(domain: domain, variables: variables, sourceUrls: url), !downloadFromAws {
+                    gribMessages = try await curl.downloadFilteredIndexedGrib(indexUrl: url, filteredUrl: filteredUrl, variables: variables, errorOnMissing: !skipMissing)
+                } else {
+                    gribMessages = try await curl.downloadIndexedGrib(url: url, variables: variables, errorOnMissing: !skipMissing)
+                }
+
+                for (variable, message) in gribMessages {
                     if skipMissing {
                         // for whatever reason, the `hrrr.t10z.wrfprsf01.grib2` file uses different grib dimensions
                         guard let nx = message.get(attribute: "Nx")?.toInt() else {
@@ -340,6 +356,8 @@ struct GfsDownload: AsyncCommand {
                     var grib2d = try message.to2D(nx: nx, ny: ny, shift180LongitudeAndFlipLatitudeIfRequired: false)
                     if domain.isGlobal {
                         grib2d.array.shift180LongitudeAndFlipLatitude()
+                    } else if GfsFilterDownload.usesRegionalGrid(domain: domain) {
+                        grib2d.array.flipLatitude()
                     }
                     // try message.debugGrid(grid: domain.grid, flipLatidude: domain.isGlobal, shift180Longitude: domain.isGlobal)
                     
@@ -469,6 +487,131 @@ struct GfsDownload: AsyncCommand {
         }
         await curl.printStatistics()
         return handles
+    }
+}
+
+private enum GfsFilterDownload {
+    static func usesRegionalGrid(domain: GfsDomain) -> Bool {
+        WeatherForecastServerSourceConfig.gfsFilterDownloadEnabled && (domain == .gfs025 || domain == .gfs013)
+    }
+
+    static func filteredUrls<Variable: CurlIndexedVariable>(domain: GfsDomain, variables: [Variable], sourceUrls: [String]) -> [String]? {
+        guard WeatherForecastServerSourceConfig.gfsFilterDownloadEnabled else {
+            return nil
+        }
+        guard domain == .gfs025 || domain == .gfs013 else {
+            return nil
+        }
+
+        let filterBase: String
+        switch domain {
+        case .gfs025:
+            filterBase = WeatherForecastServerSourceConfig.string(
+                "WEATHER_GFS_FILTER_0P25_URL",
+                fallback: "https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_0p25.pl"
+            )
+        case .gfs013:
+            filterBase = WeatherForecastServerSourceConfig.string(
+                "WEATHER_GFS_FILTER_SFLUX_URL",
+                fallback: "https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_sflux.pl"
+            )
+        default:
+            return nil
+        }
+
+        let variableItems = noaaFilterVariableItems(variables: variables)
+        guard !variableItems.isEmpty else {
+            return nil
+        }
+
+        return sourceUrls.compactMap { sourceUrl in
+            guard let (file, dir) = fileAndDir(from: sourceUrl), var components = URLComponents(string: filterBase) else {
+                return nil
+            }
+            let region = WeatherForecastServerSourceConfig.region
+            components.queryItems = [
+                URLQueryItem(name: "file", value: file),
+                URLQueryItem(name: "subregion", value: ""),
+                URLQueryItem(name: "leftlon", value: String(region.leftLon)),
+                URLQueryItem(name: "rightlon", value: String(region.rightLon)),
+                URLQueryItem(name: "toplat", value: String(region.topLat)),
+                URLQueryItem(name: "bottomlat", value: String(region.bottomLat)),
+                URLQueryItem(name: "dir", value: dir),
+            ] + variableItems
+            return components.string
+        }
+    }
+
+    private static func fileAndDir(from sourceUrl: String) -> (file: String, dir: String)? {
+        guard let url = URL(string: sourceUrl) else {
+            return nil
+        }
+        let parts = url.path.split(separator: "/").map(String.init)
+        guard let gfsIndex = parts.firstIndex(where: { $0.hasPrefix("gfs.") }),
+              parts.count > gfsIndex + 3 else {
+            return nil
+        }
+        let file = parts.last!
+        let dir = "/" + parts[gfsIndex..<(parts.count - 1)].joined(separator: "/")
+        return (file, dir)
+    }
+
+    private static func noaaFilterVariableItems<Variable: CurlIndexedVariable>(variables: [Variable]) -> [URLQueryItem] {
+        var seen = Set<String>()
+        var names = [String]()
+        for variable in variables {
+            guard let gribIndexName = variable.gribIndexName else {
+                continue
+            }
+            let parts = gribIndexName.split(separator: ":", omittingEmptySubsequences: false)
+            if parts.count > 1, !parts[1].isEmpty {
+                add("var_\(parts[1])", seen: &seen, names: &names)
+            }
+            if parts.count > 2, !parts[2].isEmpty {
+                add("lev_\(sanitizeLevel(parts[2]))", seen: &seen, names: &names)
+            }
+        }
+        return names.sorted().map { URLQueryItem(name: $0, value: "on") }
+    }
+
+    private static func add(_ name: String, seen: inout Set<String>, names: inout [String]) {
+        if seen.insert(name).inserted {
+            names.append(name)
+        }
+    }
+
+    private static func sanitizeLevel(_ level: Substring) -> String {
+        String(level)
+            .replacingOccurrences(of: " ", with: "_")
+            .replacingOccurrences(of: "(", with: "\\(")
+            .replacingOccurrences(of: ")", with: "\\)")
+    }
+}
+
+private extension Curl {
+    func downloadFilteredIndexedGrib<Variable: CurlIndexedVariable>(indexUrl: [String], filteredUrl: [String], variables: [Variable], errorOnMissing: Bool = true) async throws -> [(variable: Variable, message: GribMessage)] {
+        guard indexUrl.count == filteredUrl.count else {
+            fatalError("filtered URL count does not match index URL count")
+        }
+        let inventories = try await downloadIndexAndDecode(url: indexUrl.map { "\($0).idx" }, variables: variables, errorOnMissing: errorOnMissing)
+        guard !inventories.isEmpty else {
+            return []
+        }
+
+        var result = [(variable: Variable, message: GribMessage)]()
+        result.reserveCapacity(variables.count)
+        for (url, inventory) in zip(filteredUrl, inventories) {
+            if inventory.matches.isEmpty {
+                continue
+            }
+            let messages = try await downloadGrib(url: url, bzip2Decode: false)
+            if messages.count != inventory.matches.count {
+                logger.error("Filtered GRIB message count \(messages.count) does not match index match count \(inventory.matches.count)")
+                throw CurlError.didNotGetAllGribMessages(got: messages.count, expected: inventory.matches.count)
+            }
+            zip(inventory.matches, messages).forEach { result.append(($0, $1)) }
+        }
+        return result
     }
 }
 

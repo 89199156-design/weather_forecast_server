@@ -1,12 +1,50 @@
 import Foundation
 import OmFileFormat
 
-private enum WeatherForecastServerSourceConfig {
+enum WeatherForecastServerSourceConfig {
     static func baseUrl(_ environmentKey: String, fallback: String) -> String {
         guard let raw = ProcessInfo.processInfo.environment[environmentKey]?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else {
             return fallback
         }
         return raw.hasSuffix("/") ? raw : "\(raw)/"
+    }
+
+    static func string(_ environmentKey: String, fallback: String) -> String {
+        guard let raw = ProcessInfo.processInfo.environment[environmentKey]?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else {
+            return fallback
+        }
+        return raw
+    }
+
+    static func bool(_ environmentKey: String, fallback: Bool = false) -> Bool {
+        guard let raw = ProcessInfo.processInfo.environment[environmentKey]?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(), !raw.isEmpty else {
+            return fallback
+        }
+        return ["1", "true", "yes", "on"].contains(raw)
+    }
+
+    static func double(_ environmentKey: String, fallback: Double) -> Double {
+        guard let raw = ProcessInfo.processInfo.environment[environmentKey], let value = Double(raw) else {
+            return fallback
+        }
+        return value
+    }
+
+    static var gfsFilterDownloadEnabled: Bool {
+        bool("WEATHER_GFS_FILTER_DOWNLOAD")
+    }
+
+    static var region: (leftLon: Double, rightLon: Double, bottomLat: Double, topLat: Double) {
+        (
+            leftLon: double("WEATHER_REGION_LEFT_LON", fallback: 70.0),
+            rightLon: double("WEATHER_REGION_RIGHT_LON", fallback: 140.0),
+            bottomLat: double("WEATHER_REGION_BOTTOM_LAT", fallback: 0.0),
+            topLat: double("WEATHER_REGION_TOP_LAT", fallback: 58.0)
+        )
+    }
+
+    static func gridPointCount(lower: Double, upper: Double, step: Double) -> Int {
+        Int(((upper - lower) / step).rounded()) + 1
     }
 }
 
@@ -283,9 +321,33 @@ enum GfsDomain: String, GenericDomain, CaseIterable {
         case .gfs05_ens ,.gefs05_ensemble_mean:
             return RegularGrid(nx: 720, ny: 361, latMin: -90, lonMin: -180, dx: 0.5, dy: 0.5)
         case .gfs013:
+            if WeatherForecastServerSourceConfig.gfsFilterDownloadEnabled {
+                let region = WeatherForecastServerSourceConfig.region
+                let dx = 360.0 / 3072.0
+                let dy = 0.11714935
+                return RegularGrid(
+                    nx: WeatherForecastServerSourceConfig.gridPointCount(lower: region.leftLon, upper: region.rightLon, step: dx),
+                    ny: WeatherForecastServerSourceConfig.gridPointCount(lower: region.bottomLat, upper: region.topLat, step: dy),
+                    latMin: Float(region.bottomLat),
+                    lonMin: Float(region.leftLon),
+                    dx: Float(dx),
+                    dy: Float(dy)
+                )
+            }
             // Coordinates confirmed with eccodes coordinate output
             return RegularGrid(nx: 3072, ny: 1536, latMin: -0.11714935 * (1536 - 1) / 2, lonMin: -180, dx: 360 / 3072, dy: 0.11714935)
         case .gfs025_ens, .gfs025, .gfswave025, .gfswave025_ens, .gefs025_ensemble_mean, .gefswave025_ensemble_mean:
+            if self == .gfs025, WeatherForecastServerSourceConfig.gfsFilterDownloadEnabled {
+                let region = WeatherForecastServerSourceConfig.region
+                return RegularGrid(
+                    nx: WeatherForecastServerSourceConfig.gridPointCount(lower: region.leftLon, upper: region.rightLon, step: 0.25),
+                    ny: WeatherForecastServerSourceConfig.gridPointCount(lower: region.bottomLat, upper: region.topLat, step: 0.25),
+                    latMin: Float(region.bottomLat),
+                    lonMin: Float(region.leftLon),
+                    dx: 0.25,
+                    dy: 0.25
+                )
+            }
             return RegularGrid(nx: 1440, ny: 721, latMin: -90, lonMin: -180, dx: 0.25, dy: 0.25)
         case .nam_conus:
             /// labert conformal grid https://www.emc.ncep.noaa.gov/mmb/namgrids/hrrrspecs.html
