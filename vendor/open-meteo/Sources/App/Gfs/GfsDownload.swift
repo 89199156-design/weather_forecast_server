@@ -4,6 +4,24 @@ import OmFileFormat
 import SwiftNetCDF
 @preconcurrency import SwiftEccodes
 
+private extension Array where Element == Float {
+    mutating func roundToGribDecimalScale(message: GribMessage) {
+        guard let decimalScale = message.get(attribute: "decimalScaleFactor")?.toInt() else {
+            return
+        }
+        let factor = powf(10, Float(decimalScale))
+        guard factor.isFinite, factor > 0 else {
+            return
+        }
+        for i in indices {
+            guard self[i].isFinite else {
+                continue
+            }
+            self[i] = (self[i] * factor).rounded() / factor
+        }
+    }
+}
+
 /**
 NCEP GFS downloader
  */
@@ -163,6 +181,7 @@ struct GfsDownload: AsyncCommand {
             try grib2d.load(message: message)
             if GfsFilterDownload.usesRegionalGrid(domain: domain) {
                 // NOAA subregion GRIB is already west-to-east and south-to-north.
+                grib2d.array.data.roundToGribDecimalScale(message: message)
             } else if isGlobal {
                 grib2d.array.shift180LongitudeAndFlipLatitude()
             }
@@ -357,6 +376,7 @@ struct GfsDownload: AsyncCommand {
                     var grib2d = try message.to2D(nx: nx, ny: ny, shift180LongitudeAndFlipLatitudeIfRequired: false)
                     if GfsFilterDownload.usesRegionalGrid(domain: domain) {
                         // NOAA subregion GRIB is already west-to-east and south-to-north.
+                        grib2d.array.data.roundToGribDecimalScale(message: message)
                     } else if domain.isGlobal {
                         grib2d.array.shift180LongitudeAndFlipLatitude()
                     }
