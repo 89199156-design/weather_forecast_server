@@ -23,6 +23,7 @@ DEFAULT_OUTPUT_DIR = os.environ.get(
     "WEATHER_OPENMETEO_LAYER_DIR",
     "./data/openmeteo_layers/gfs013_surface",
 )
+DEFAULT_LAYER_MODEL = os.environ.get("WEATHER_OPENMETEO_LAYER_MODEL", "gfs_global")
 LAYER_API_OPTIONS: dict[str, str] = {
     "wind_speed_unit": "ms",
 }
@@ -91,10 +92,11 @@ class LayerDefinition:
     vmin: float = 0.0
     api_multiplier: float = 1.0
     data_type: str = "continuous"
+    derive: str | None = None
 
     def manifest(self, grid: RegionGrid) -> dict[str, Any]:
         field: str | list[str] = self.api_variables[0] if len(self.api_variables) == 1 else list(self.api_variables)
-        return {
+        manifest = {
             "field": field,
             "render_var": self.render_var,
             "unit": self.unit,
@@ -109,6 +111,9 @@ class LayerDefinition:
             "grid": grid.manifest(),
             "subdir": self.subdir,
         }
+        if self.derive:
+            manifest["derive"] = self.derive
+        return manifest
 
 
 DEFAULT_LAYER_DEFINITIONS: tuple[LayerDefinition, ...] = (
@@ -132,6 +137,29 @@ DEFAULT_LAYER_DEFINITIONS: tuple[LayerDefinition, ...] = (
     LayerDefinition("snod", "snod", ("snow_depth",), "snod", "mm", 10.0, (0.0, 2000.0), api_multiplier=1000.0),
     LayerDefinition("gust", "gust", ("wind_gusts_10m",), "gust", "m/s", 100.0, (0.0, 200.0)),
     LayerDefinition("vis", "vis", ("visibility",), "vis", "m", 0.1, (0.0, 100000.0)),
+    LayerDefinition("weather_code", "weather_code", ("weather_code",), "weather_code", "wmo code", 1.0, (0.0, 100.0), data_type="categorical"),
+    LayerDefinition(
+        "precip_phase",
+        "precip_phase",
+        ("weather_code",),
+        "precip_phase",
+        "code",
+        1.0,
+        (0.0, 6.0),
+        data_type="categorical",
+        derive="precip_phase_from_weather_code",
+    ),
+    LayerDefinition(
+        "thunderstorm_code",
+        "thunderstorm_code",
+        ("weather_code",),
+        "thunderstorm_code",
+        "wmo code",
+        1.0,
+        (0.0, 100.0),
+        data_type="categorical",
+        derive="thunderstorm_code_from_weather_code",
+    ),
     LayerDefinition(
         "prmsl",
         "prmsl",
@@ -144,6 +172,41 @@ DEFAULT_LAYER_DEFINITIONS: tuple[LayerDefinition, ...] = (
         api_multiplier=100.0,
     ),
 )
+
+
+def precip_phase_from_weather_code(weather_code: np.ndarray) -> np.ndarray:
+    codes = np.asarray(weather_code, dtype=np.float32)
+    out = np.zeros(codes.shape, dtype=np.float32)
+    invalid = ~np.isfinite(codes)
+    rounded = np.rint(np.where(invalid, 0.0, codes)).astype(np.int16)
+    out[np.isin(rounded, [51, 53, 55, 61, 63, 65, 80, 81, 82])] = 1.0
+    out[np.isin(rounded, [71, 73, 75, 77, 85, 86])] = 2.0
+    out[np.isin(rounded, [56, 57, 66, 67])] = 4.0
+    out[np.isin(rounded, [96, 99])] = 5.0
+    out[rounded == 95] = 6.0
+    out[invalid] = np.nan
+    return out
+
+
+def thunderstorm_code_from_weather_code(weather_code: np.ndarray) -> np.ndarray:
+    codes = np.asarray(weather_code, dtype=np.float32)
+    out = np.zeros(codes.shape, dtype=np.float32)
+    invalid = ~np.isfinite(codes)
+    rounded = np.rint(np.where(invalid, 0.0, codes)).astype(np.int16)
+    mask = np.isin(rounded, [95, 96, 99])
+    out[mask] = rounded[mask].astype(np.float32)
+    out[invalid] = np.nan
+    return out
+
+
+def derive_layer_values(layer: LayerDefinition, values: np.ndarray) -> np.ndarray:
+    if layer.derive is None:
+        return values
+    if layer.derive == "precip_phase_from_weather_code":
+        return precip_phase_from_weather_code(values)
+    if layer.derive == "thunderstorm_code_from_weather_code":
+        return thunderstorm_code_from_weather_code(values)
+    raise ValueError(f"unknown layer derive transform: {layer.derive}")
 
 
 def compute_gfs013_region_grid(
@@ -511,6 +574,7 @@ def build_layers(
                     rgba = encode_wind_rgba(u, v)
                 else:
                     values = np.asarray(stores[layer.api_variables[0]][time_index], dtype=np.float32)
+                    values = derive_layer_values(layer, values)
                     values = values * np.float32(layer.api_multiplier)
                     rgba = encode_scalar_rgba(values, vmin=layer.vmin, scale=layer.scale)
                 save_webp_rgba(rgba, layer_dir / f"{stem}.webp")
@@ -544,7 +608,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build regional WebP weather layers from the local Open-Meteo API.")
     parser.add_argument("--api-base-url", default=DEFAULT_API_BASE_URL)
     parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR)
-    parser.add_argument("--model", default=os.environ.get("WEATHER_OPENMETEO_LAYER_MODEL", "gfs013"))
+    parser.add_argument("--model", default=DEFAULT_LAYER_MODEL)
     parser.add_argument("--start-hour", required=True, help="UTC start hour, for example 2026-06-25T07:00")
     parser.add_argument("--end-hour", required=True, help="UTC included end hour, for example 2026-06-27T08:00")
     parser.add_argument("--left-lon", type=float, default=float(os.environ.get("WEATHER_REGION_LEFT_LON", "70.0")))

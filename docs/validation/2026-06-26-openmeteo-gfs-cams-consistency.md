@@ -1,0 +1,184 @@
+# Open-Meteo GFS/CAMS Consistency Record
+
+Date: 2026-06-26
+
+## Objective
+
+Provide the same point API surface as the selected vendored Open-Meteo source
+version for:
+
+- `/v1/forecast` with `models=gfs_global`
+- `/v1/air-quality` with `domains=cams_global`
+
+The client may use only a subset of these fields, but the server must expose
+the full GFS/CAMS point output set that the selected Open-Meteo API source
+accepts.
+
+## Commercial Compliance Boundary
+
+This project directly vendors Open-Meteo under AGPL-3.0-or-later. Commercial
+use is allowed only with the AGPL obligations preserved:
+
+- keep the Open-Meteo license and upstream source records in the public repo;
+- keep local patches auditable;
+- do not place the Open-Meteo-derived service behind a closed-source wrapper;
+- publish corresponding source for the running network service.
+
+## Engine Modification Boundary
+
+Open-Meteo engine behavior must remain Open-Meteo-owned. Local changes are
+restricted to:
+
+- configured GFS/CAMS source URLs;
+- China and surrounding-region download clipping;
+- Docker/deployment scripts;
+- Shanghai mirror scripts;
+- WebP layer product export;
+- validation tools and reports.
+
+Do not reimplement or locally fork:
+
+- GFS/CAMS readers;
+- weather-code calculation;
+- interpolation;
+- model fallback and mixing;
+- unit conversion or API serialization semantics.
+
+## Root-Cause Analysis
+
+The visibility and weather-code dependency failures were traced to incomplete
+runtime data, not to a missing Open-Meteo algorithm.
+
+Evidence from vendored source:
+
+- `ForecastapiController.swift` maps `gfs_global` to `GfsReader(domains:
+  [.gfs025, .gfs013])`.
+- `GfsVariableDownloadable.swift` maps `visibility`, `wind_gusts_10m`, `cape`,
+  `lifted_index`, `convective_inhibition`, and `categorical_freezing_rain`
+  to `gfs025` GRIB messages, not only to `gfs013` sflux.
+- `GfsDownload.swift` downloads only surface variables unless `--upper-level`
+  is passed. Pressure-level API variables therefore require a separate
+  upper-level download pass.
+- `CamsReader.swift` derives AQI fields from raw CAMS fields, so CAMS parity
+  requires `download-cams cams_global` with valid credentials.
+
+Conclusion: the correct fix is to complete the Open-Meteo runtime data chain:
+`gfs013` surface, `gfs025` surface, `gfs025` upper-level, and `cams_global`.
+
+## Source-Derived Inventory
+
+The inventory must be generated from the selected vendored source:
+
+```bash
+python3 scripts/openmeteo_api_inventory.py \
+  --output docs/validation/openmeteo-api-inventory.json
+```
+
+Inventory source locations:
+
+- forecast surface API names: `ForecastSurfaceVariable`
+- forecast pressure API names: `ForecastPressureVariableType` x
+  `GfsDomain.gfs025.levels`
+- GFS runtime raw variables: `GfsSurfaceVariable` and `GfsPressureVariableType`
+- CAMS raw names: `CamsVariable`
+- CAMS derived names: `CamsVariableDerived`
+
+Generated inventory snapshot:
+
+- forecast surface API variables: 379
+- forecast pressure API variables: 660
+- GFS runtime surface variables: 45
+- GFS runtime pressure variables: 308
+- CAMS raw variables: 30
+- CAMS derived variables: 21
+
+Explicitly reviewed required examples:
+
+- `uv_index`
+- `uv_index_clear_sky`
+- `visibility`
+- `weather_code`
+- `precipitation`
+- `rain`
+- `snowfall`
+- `wind_speed_10m`
+- `temperature_2m`
+- `pm2_5`
+- `pm10`
+- `aerosol_optical_depth`
+- `us_aqi`
+- `european_aqi`
+
+## Current Code Changes
+
+- `scripts/download_openmeteo_runtime_data.sh`
+  - downloads `gfs013` surface;
+  - downloads `gfs025` surface;
+  - downloads `gfs025 --upper-level`;
+  - downloads `cams_global` when CAMS credentials are configured.
+- `scripts/openmeteo_api_inventory.py`
+  - writes the source-derived GFS/CAMS point API inventory.
+- `scripts/validate_openmeteo_point_api.py`
+  - validates field presence, null coverage, and optional reference-value
+    equality for GFS/CAMS point APIs.
+- `scripts/run_openmeteo_validation_gates.py`
+  - runs 50, 100, then 500 point gates with 50 frames and stops on first
+    failure.
+- `scripts/build_openmeteo_layers.py`
+  - uses `gfs_global` by default for layer export;
+  - adds Open-Meteo weather-code-based categorical layer products for
+    weather code, precipitation phase, and thunderstorm.
+- `scripts/validate_openmeteo_layers.py`
+  - validates categorical layer products against the same Open-Meteo API
+    field source.
+
+## Tests Run
+
+Local unit tests run during this record:
+
+```bash
+python -m pytest tests\test_deployment_scaffold.py -q
+python -m pytest tests\test_openmeteo_api_inventory.py -q
+python -m pytest tests\test_openmeteo_point_api_validation.py -q
+python -m pytest tests\test_openmeteo_validation_gates.py -q
+python -m pytest -q
+```
+
+Results observed:
+
+- deployment scaffold tests: passed after adding `gfs025 --upper-level`;
+- API inventory tests: passed;
+- point API validation utility tests: passed;
+- validation gate runner tests: passed.
+- full Python test suite: `36 passed`.
+
+## Required Runtime Validation
+
+After deploying the complete runtime data chain, run:
+
+```bash
+python3 scripts/run_openmeteo_validation_gates.py \
+  --api-base-url http://127.0.0.1:18080 \
+  --reference-base-url http://127.0.0.1:18081 \
+  --output-dir docs/validation/reports
+```
+
+Gate order:
+
+1. 50 points x 50 frames for GFS and CAMS.
+2. 100 points x 50 frames only if gate 1 passes completely.
+3. 500 points x 50 frames only if gate 2 passes completely.
+
+Failure rule:
+
+- stop at the first failed scope;
+- record report path, changed files, mismatch summary, and root-cause analysis;
+- do not continue to the next point-count gate until the source/data issue is
+  fixed and reviewed.
+
+## Current Status
+
+Manual source review has identified the missing data-chain requirements. Local
+unit tests for the new tooling pass. Full runtime consistency has not yet been
+claimed because the Singapore runtime data and same-version reference service
+must still be deployed and validated.

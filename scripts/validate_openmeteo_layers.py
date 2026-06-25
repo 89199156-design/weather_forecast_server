@@ -38,6 +38,15 @@ def transform_api_value(value: Any, layer: dict[str, Any]) -> float | None:
     parsed = float(value)
     if not math.isfinite(parsed):
         return None
+    derive = layer.get("derive")
+    if derive == "precip_phase_from_weather_code":
+        phase = layer_builder.precip_phase_from_weather_code(np.asarray([[parsed]], dtype=np.float32))[0, 0]
+        return None if not math.isfinite(float(phase)) else float(phase)
+    if derive == "thunderstorm_code_from_weather_code":
+        code = layer_builder.thunderstorm_code_from_weather_code(np.asarray([[parsed]], dtype=np.float32))[0, 0]
+        return None if not math.isfinite(float(code)) else float(code)
+    if derive:
+        raise ValueError(f"unknown layer derive transform: {derive}")
     return parsed * float(layer.get("api_multiplier", 1.0))
 
 

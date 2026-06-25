@@ -37,6 +37,12 @@ def test_gfs013_region_grid_matches_openmeteo_swift_slice():
     assert grid.latitude_values[-1] == 57.930354
 
 
+def test_default_layer_model_uses_openmeteo_gfs_global_mixer():
+    layers = load_module()
+
+    assert layers.DEFAULT_LAYER_MODEL == "gfs_global"
+
+
 def test_layer_definitions_are_api_variables_not_legacy_grib_fields():
     layers = load_module()
 
@@ -55,6 +61,7 @@ def test_layer_definitions_are_api_variables_not_legacy_grib_fields():
         "snow_depth",
         "wind_gusts_10m",
         "visibility",
+        "weather_code",
         "pressure_msl",
     }
 
@@ -83,6 +90,9 @@ def test_layer_manifest_preserves_encoder_vmin_for_decoding():
     assert manifests["cloud_total_1"]["vmin"] == 0.0
     assert manifests["t2m"]["vmin"] == -100.0
     assert manifests["prmsl"]["vmin"] == 50000.0
+    assert manifests["weather_code"]["data_type"] == "categorical"
+    assert manifests["precip_phase"]["derive"] == "precip_phase_from_weather_code"
+    assert manifests["thunderstorm_code"]["derive"] == "thunderstorm_code_from_weather_code"
 
 
 def test_scalar_and_wind_encoding_round_trip():
@@ -108,6 +118,45 @@ def test_scalar_and_wind_encoding_round_trip():
     assert np.isclose(decoded_v[0, 1], -1.2)
     assert np.isclose(decoded_u[1, 1], 3.2)
     assert np.isclose(decoded_v[1, 1], 9.9)
+
+
+def test_openmeteo_weather_code_drives_phase_and_thunderstorm_layers():
+    layers = load_module()
+
+    weather_codes = np.array(
+        [
+            [0, 3, 61, 65],
+            [71, 85, 56, 67],
+            [95, 96, 99, 45],
+        ],
+        dtype=np.float32,
+    )
+
+    phase = layers.precip_phase_from_weather_code(weather_codes)
+    thunderstorm = layers.thunderstorm_code_from_weather_code(weather_codes)
+
+    np.testing.assert_array_equal(
+        phase,
+        np.array(
+            [
+                [0, 0, 1, 1],
+                [2, 2, 4, 4],
+                [6, 5, 5, 0],
+            ],
+            dtype=np.float32,
+        ),
+    )
+    np.testing.assert_array_equal(
+        thunderstorm,
+        np.array(
+            [
+                [0, 0, 0, 0],
+                [0, 0, 0, 0],
+                [95, 96, 99, 0],
+            ],
+            dtype=np.float32,
+        ),
+    )
 
 
 def test_api_request_params_preserve_openmeteo_point_semantics():

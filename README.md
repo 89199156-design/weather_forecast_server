@@ -48,12 +48,39 @@ Python GRIB parsing chain. The Python layer code only requests point values
 from Open-Meteo and encodes those values into the existing WebP/manifest
 product shape used by clients.
 
+Before serving or exporting products, download the Open-Meteo runtime data. The
+GFS point API uses Open-Meteo's `gfs_global` mixer, so both `gfs013` and `gfs025`
+must be present locally. `gfs025` supplies variables missing from GFS013 sflux
+files, including visibility and several weather-code dependencies.
+
+```bash
+bash scripts/download_openmeteo_runtime_data.sh
+```
+
+Write the source-derived GFS/CAMS API inventory:
+
+```bash
+python3 scripts/openmeteo_api_inventory.py \
+  --output docs/validation/openmeteo-api-inventory.json
+```
+
+Run the required point validation gates. The runner stops on the first failed
+gate, so a failed 50-point gate prevents 100/500-point validation:
+
+```bash
+python3 scripts/run_openmeteo_validation_gates.py \
+  --api-base-url http://127.0.0.1:18080 \
+  --reference-base-url http://127.0.0.1:18081 \
+  --output-dir docs/validation/reports
+```
+
 Build layers for a known validated window:
 
 ```bash
 python3 scripts/build_openmeteo_layers.py \
   --api-base-url http://127.0.0.1:18080/v1/forecast \
   --output-dir ./data/openmeteo_layers/gfs013_surface \
+  --model gfs_global \
   --start-hour 2026-06-25T07:00 \
   --end-hour 2026-06-27T08:00
 ```

@@ -35,6 +35,26 @@ def test_layer_api_value_transform_uses_manifest_multiplier():
     assert validator.transform_api_value(float("nan"), layer) is None
 
 
+def test_layer_api_value_transform_derives_phase_and_thunderstorm_from_weather_code():
+    validator = load_module()
+
+    phase_layer = {"derive": "precip_phase_from_weather_code", "api_multiplier": 1.0}
+    thunderstorm_layer = {"derive": "thunderstorm_code_from_weather_code", "api_multiplier": 1.0}
+
+    assert validator.transform_api_value(61, phase_layer) == 1.0
+    assert validator.transform_api_value(71, phase_layer) == 2.0
+    assert validator.transform_api_value(56, phase_layer) == 4.0
+    assert validator.transform_api_value(96, phase_layer) == 5.0
+    assert validator.transform_api_value(95, phase_layer) == 6.0
+    assert validator.transform_api_value(3, phase_layer) == 0.0
+    assert validator.transform_api_value(None, phase_layer) is None
+
+    assert validator.transform_api_value(95, thunderstorm_layer) == 95.0
+    assert validator.transform_api_value(96, thunderstorm_layer) == 96.0
+    assert validator.transform_api_value(99, thunderstorm_layer) == 99.0
+    assert validator.transform_api_value(61, thunderstorm_layer) == 0.0
+
+
 def test_value_comparison_uses_encoding_precision():
     validator = load_module()
 

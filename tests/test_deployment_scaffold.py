@@ -51,6 +51,19 @@ def test_singapore_deploy_makes_data_directory_writable_by_openmeteo_user():
     assert "$DATA_DIR" in script
 
 
+def test_runtime_data_download_covers_openmeteo_gfs_mixer_and_cams_global():
+    script = (ROOT / "scripts" / "download_openmeteo_runtime_data.sh").read_text(encoding="utf-8")
+
+    assert "download-gfs gfs013" in script
+    assert "download-gfs gfs025" in script
+    assert "--upper-level" in script
+    assert "download-cams cams_global" in script
+    assert "WEATHER_CAMS_FTP_USER" in script
+    assert "WEATHER_CAMS_FTP_PASSWORD" in script
+    assert "weather_server_gfs" not in script
+    assert "satellite" not in script.lower()
+
+
 def test_layer_scripts_are_documented_as_openmeteo_api_backed():
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     build_script = (ROOT / "scripts" / "build_openmeteo_layers.py").read_text(encoding="utf-8")
