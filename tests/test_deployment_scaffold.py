@@ -60,6 +60,8 @@ def test_runtime_data_download_covers_openmeteo_gfs_mixer_and_cams_global():
     assert "download-cams cams_global" in script
     assert "WEATHER_CAMS_FTP_USER" in script
     assert "WEATHER_CAMS_FTP_PASSWORD" in script
+    assert "set -a" in script
+    assert 'source "$ENV_FILE"' in script
     assert "weather_server_gfs" not in script
     assert "satellite" not in script.lower()
 

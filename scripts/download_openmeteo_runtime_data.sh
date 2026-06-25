@@ -13,6 +13,12 @@ CAMS_CONCURRENT="${WEATHER_CAMS_DOWNLOAD_CONCURRENT:-1}"
 cd "$APP_DIR"
 mkdir -p "$DATA_DIR"
 
+if [[ -f "$ENV_FILE" ]]; then
+  set -a
+  source "$ENV_FILE"
+  set +a
+fi
+
 run_openmeteo() {
   docker run --rm \
     --env-file "$ENV_FILE" \
