@@ -189,7 +189,9 @@ Explicitly reviewed required examples:
     non-GFS air-quality, marine, wave, and ensemble-spread names.
 - `scripts/run_openmeteo_validation_gates.py`
   - runs 50, 100, then 500 point gates with 50 frames and stops on first
-    failure.
+    failure;
+  - passes a point batch size to the validator so 500-point gates do not
+    require one HTTP request per point.
 - `scripts/build_openmeteo_layers.py`
   - uses `gfs_global` by default for layer export;
   - adds Open-Meteo weather-code-based categorical layer products for
@@ -218,7 +220,7 @@ Results observed:
 - API inventory tests: passed;
 - point API validation utility tests: passed;
 - validation gate runner tests: passed.
-- full Python test suite: `39 passed`.
+- full Python test suite: `41 passed`.
 
 ## Required Runtime Validation
 

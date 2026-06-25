@@ -22,6 +22,7 @@ def build_gate_commands(
     scopes: list[str],
     point_gates: list[int],
     frames: int,
+    point_chunk_size: int,
 ) -> list[dict[str, Any]]:
     commands: list[dict[str, Any]] = []
     validator = SCRIPT_DIR / "validate_openmeteo_point_api.py"
@@ -39,6 +40,8 @@ def build_gate_commands(
                 str(points),
                 "--frames",
                 str(frames),
+                "--point-chunk-size",
+                str(point_chunk_size),
                 "--output-report",
                 str(report),
             ]
@@ -97,6 +100,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--scopes", default="gfs,cams")
     parser.add_argument("--point-gates", default="50,100,500")
     parser.add_argument("--frames", type=int, default=50)
+    parser.add_argument("--point-chunk-size", type=int, default=10)
     return parser.parse_args()
 
 
@@ -113,6 +117,7 @@ def main() -> int:
         scopes=scopes,
         point_gates=point_gates,
         frames=args.frames,
+        point_chunk_size=args.point_chunk_size,
     )
     results = run_commands(commands)
     summary = summarize_results(results, planned=commands)

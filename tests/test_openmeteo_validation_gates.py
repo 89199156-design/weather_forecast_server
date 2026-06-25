@@ -23,6 +23,7 @@ def test_validation_gate_commands_stop_after_first_failed_gate():
         scopes=["gfs", "cams"],
         point_gates=[50, 100, 500],
         frames=50,
+        point_chunk_size=25,
     )
 
     assert commands[0]["points"] == 50
@@ -33,6 +34,7 @@ def test_validation_gate_commands_stop_after_first_failed_gate():
     assert commands[-1]["points"] == 500
     assert all("--reference-base-url" in " ".join(command["argv"]) for command in commands)
     assert all("--frames" in " ".join(command["argv"]) for command in commands)
+    assert all("--point-chunk-size 25" in " ".join(command["argv"]) for command in commands)
 
 
 def test_validation_summary_marks_first_failure_and_skipped_gates():
@@ -52,4 +54,3 @@ def test_validation_summary_marks_first_failure_and_skipped_gates():
     assert summary["passed"] is False
     assert summary["failed_at"] == {"points": 50, "scope": "cams", "report": "50-cams.json"}
     assert summary["skipped"] == [{"points": 100, "scope": "gfs", "report": "100-gfs.json"}]
-

@@ -135,10 +135,20 @@ def extract_hourly(payload: Any) -> dict[str, Any]:
     return hourly if isinstance(hourly, dict) else {}
 
 
-def request_params(scope: str, point: dict[str, float], variables: list[str], frames: int) -> tuple[str, dict[str, Any]]:
+def extract_hourlies(payload: Any) -> list[dict[str, Any]]:
+    if isinstance(payload, list):
+        return [extract_hourly(item) for item in payload]
+    return [extract_hourly(payload)]
+
+
+def format_points(points: list[dict[str, float]], key: str) -> str:
+    return ",".join(str(point[key]) for point in points)
+
+
+def request_params(scope: str, points: list[dict[str, float]], variables: list[str], frames: int) -> tuple[str, dict[str, Any]]:
     params: dict[str, Any] = {
-        "latitude": point["latitude"],
-        "longitude": point["longitude"],
+        "latitude": format_points(points, "latitude"),
+        "longitude": format_points(points, "longitude"),
         "hourly": ",".join(variables),
         "forecast_hours": frames,
         "timezone": "UTC",
@@ -163,6 +173,7 @@ def validate_scope(
     points: list[dict[str, float]],
     frames: int,
     chunk_size: int,
+    point_chunk_size: int,
     tolerance: float,
     timeout: float,
     allow_all_null: bool,
@@ -178,16 +189,17 @@ def validate_scope(
         "checked_values": 0,
     }
 
-    for point_index, point in enumerate(points):
+    for point_offset in range(0, len(points), point_chunk_size):
+        point_chunk = points[point_offset : point_offset + point_chunk_size]
         for variable_chunk in chunked(variables, chunk_size):
-            endpoint, params = request_params(scope, point, variable_chunk, frames)
+            endpoint, params = request_params(scope, point_chunk, variable_chunk, frames)
             try:
-                local_hourly = extract_hourly(fetch_json(api_base_url, endpoint, params, timeout=timeout))
+                local_hourlies = extract_hourlies(fetch_json(api_base_url, endpoint, params, timeout=timeout))
             except Exception as exc:  # noqa: BLE001
                 report["failures"].append(
                     {
-                        "point_index": point_index,
-                        "point": point,
+                        "point_index": point_offset,
+                        "points": point_chunk,
                         "variables": variable_chunk,
                         "reason": "local_request_failed",
                         "error": str(exc),
@@ -198,51 +210,81 @@ def validate_scope(
             reference_hourly = None
             if reference_base_url:
                 try:
-                    reference_hourly = extract_hourly(fetch_json(reference_base_url, endpoint, params, timeout=timeout))
+                    reference_hourlies = extract_hourlies(fetch_json(reference_base_url, endpoint, params, timeout=timeout))
                 except Exception as exc:  # noqa: BLE001
                     report["failures"].append(
                         {
-                            "point_index": point_index,
-                            "point": point,
+                            "point_index": point_offset,
+                            "points": point_chunk,
                             "variables": variable_chunk,
                             "reason": "reference_request_failed",
                             "error": str(exc),
                         }
                     )
                     continue
+            else:
+                reference_hourlies = []
 
-            for variable in variable_chunk:
-                local_series = local_hourly.get(variable)
-                summary = summarize_variable(local_series, frames=frames)
-                report["checked_values"] += frames
-                if summary["status"] == "missing" or (summary["status"] == "all_null" and not allow_all_null):
-                    report["failures"].append(
-                        {
-                            "point_index": point_index,
-                            "point": point,
-                            "variable": variable,
-                            "reason": summary["status"],
-                            "summary": summary,
-                        }
-                    )
-                    continue
+            if len(local_hourlies) != len(point_chunk):
+                report["failures"].append(
+                    {
+                        "point_index": point_offset,
+                        "points": point_chunk,
+                        "variables": variable_chunk,
+                        "reason": "local_point_count_mismatch",
+                        "expected": len(point_chunk),
+                        "actual": len(local_hourlies),
+                    }
+                )
+                continue
+            if reference_base_url and len(reference_hourlies) != len(point_chunk):
+                report["failures"].append(
+                    {
+                        "point_index": point_offset,
+                        "points": point_chunk,
+                        "variables": variable_chunk,
+                        "reason": "reference_point_count_mismatch",
+                        "expected": len(point_chunk),
+                        "actual": len(reference_hourlies),
+                    }
+                )
+                continue
 
-                if reference_hourly is None:
-                    continue
+            for point_index, point in enumerate(point_chunk, start=point_offset):
+                local_hourly = local_hourlies[point_index - point_offset]
+                reference_hourly = reference_hourlies[point_index - point_offset] if reference_base_url else None
+                for variable in variable_chunk:
+                    local_series = local_hourly.get(variable)
+                    summary = summarize_variable(local_series, frames=frames)
+                    report["checked_values"] += frames
+                    if summary["status"] == "missing" or (summary["status"] == "all_null" and not allow_all_null):
+                        report["failures"].append(
+                            {
+                                "point_index": point_index,
+                                "point": point,
+                                "variable": variable,
+                                "reason": summary["status"],
+                                "summary": summary,
+                            }
+                        )
+                        continue
 
-                reference_series = reference_hourly.get(variable)
-                mismatches = compare_series(local_series or [], reference_series or [], frames=frames, tolerance=tolerance)
-                if mismatches:
-                    report["failures"].append(
-                        {
-                            "point_index": point_index,
-                            "point": point,
-                            "variable": variable,
-                            "reason": "reference_mismatch",
-                            "mismatch_count": len(mismatches),
-                            "first_mismatches": mismatches[:10],
-                        }
-                    )
+                    if reference_hourly is None:
+                        continue
+
+                    reference_series = reference_hourly.get(variable)
+                    mismatches = compare_series(local_series or [], reference_series or [], frames=frames, tolerance=tolerance)
+                    if mismatches:
+                        report["failures"].append(
+                            {
+                                "point_index": point_index,
+                                "point": point,
+                                "variable": variable,
+                                "reason": "reference_mismatch",
+                                "mismatch_count": len(mismatches),
+                                "first_mismatches": mismatches[:10],
+                            }
+                        )
 
     report["elapsed_seconds"] = round(time.time() - started, 3)
     report["passed"] = not report["failures"]
@@ -257,6 +299,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--points", type=int, required=True)
     parser.add_argument("--frames", type=int, default=50)
     parser.add_argument("--chunk-size", type=int, default=30)
+    parser.add_argument("--point-chunk-size", type=int, default=10)
     parser.add_argument("--tolerance", type=float, default=0.001)
     parser.add_argument("--timeout", type=float, default=60.0)
     parser.add_argument("--repo-root", default=Path(__file__).resolve().parents[1])
@@ -289,6 +332,7 @@ def main() -> int:
         points=points,
         frames=args.frames,
         chunk_size=args.chunk_size,
+        point_chunk_size=args.point_chunk_size,
         tolerance=args.tolerance,
         timeout=args.timeout,
         allow_all_null=args.allow_all_null,

@@ -67,3 +67,61 @@ def test_summarize_variable_detects_missing_and_all_null_local_output():
     assert validator.summarize_variable(None, frames=2) == {"status": "missing", "frames": 0, "nulls": 2}
     assert validator.summarize_variable([None, None, 3], frames=2) == {"status": "all_null", "frames": 2, "nulls": 2}
     assert validator.summarize_variable([None, 1, 2], frames=2) == {"status": "ok", "frames": 2, "nulls": 1}
+
+
+def test_request_params_batches_multiple_points():
+    validator = load_module()
+    endpoint, params = validator.request_params(
+        "gfs",
+        [
+            {"latitude": 10.0, "longitude": 100.0},
+            {"latitude": 20.5, "longitude": 110.25},
+        ],
+        ["temperature_2m"],
+        2,
+    )
+
+    assert endpoint == "/v1/forecast"
+    assert params["latitude"] == "10.0,20.5"
+    assert params["longitude"] == "100.0,110.25"
+    assert params["models"] == "gfs_global"
+
+
+def test_validate_scope_batches_points_and_compares_each_location(monkeypatch):
+    validator = load_module()
+    calls = []
+
+    def fake_fetch_json(base_url, endpoint, params, *, timeout):
+        calls.append((base_url, endpoint, params["latitude"], params["longitude"]))
+        point_count = len(params["latitude"].split(","))
+        return [{"hourly": {"temperature_2m": [1.0, 2.0]}} for _ in range(point_count)]
+
+    monkeypatch.setattr(validator, "fetch_json", fake_fetch_json)
+    points = [
+        {"latitude": 10.0, "longitude": 100.0},
+        {"latitude": 20.0, "longitude": 110.0},
+        {"latitude": 30.0, "longitude": 120.0},
+    ]
+
+    report = validator.validate_scope(
+        api_base_url="local",
+        reference_base_url="reference",
+        scope="gfs",
+        variables=["temperature_2m"],
+        points=points,
+        frames=2,
+        chunk_size=10,
+        point_chunk_size=2,
+        tolerance=0.001,
+        timeout=1,
+        allow_all_null=False,
+    )
+
+    assert report["passed"] is True
+    assert report["checked_values"] == 6
+    assert calls == [
+        ("local", "/v1/forecast", "10.0,20.0", "100.0,110.0"),
+        ("reference", "/v1/forecast", "10.0,20.0", "100.0,110.0"),
+        ("local", "/v1/forecast", "30.0", "120.0"),
+        ("reference", "/v1/forecast", "30.0", "120.0"),
+    ]
