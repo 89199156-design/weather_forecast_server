@@ -2,12 +2,13 @@ FROM ghcr.io/open-meteo/docker-container-build:latest AS build
 
 WORKDIR /build
 COPY vendor/openmeteo-sdk /build/openmeteo-sdk
-COPY vendor/open-meteo/Package.* /build/open-meteo/
+COPY vendor/open-meteo/Package.swift /build/open-meteo/Package.swift
 
 WORKDIR /build/open-meteo
 RUN ENABLE_PARQUET=TRUE swift package resolve
 
 COPY vendor/open-meteo /build/open-meteo
+RUN rm -f Package.resolved && ENABLE_PARQUET=TRUE swift package resolve
 RUN ENABLE_PARQUET=TRUE MARCH_SKYLAKE=TRUE swift build -c release
 
 FROM ghcr.io/open-meteo/docker-container-run:latest

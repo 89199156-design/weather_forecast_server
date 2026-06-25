@@ -10,9 +10,13 @@ def test_root_dockerfile_builds_vendored_openmeteo_with_local_sdk():
 
     assert "FROM ghcr.io/open-meteo/docker-container-build:latest AS build" in source
     assert "COPY vendor/openmeteo-sdk /build/openmeteo-sdk" in source
+    assert "COPY vendor/open-meteo/Package.swift /build/open-meteo/Package.swift" in source
+    assert "COPY vendor/open-meteo/Package.*" not in source
     assert "COPY vendor/open-meteo /build/open-meteo" in source
     assert "WORKDIR /build/open-meteo" in source
     assert "ENABLE_PARQUET=TRUE swift package resolve" in source
+    assert "rm -f Package.resolved" in source
+    assert "open-meteo/sdk.git" not in source
     assert "ENABLE_PARQUET=TRUE MARCH_SKYLAKE=TRUE swift build -c release" in source
     assert 'ENTRYPOINT ["./openmeteo-api"]' in source
 
