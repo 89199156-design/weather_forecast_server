@@ -56,7 +56,9 @@ def test_runtime_data_download_covers_openmeteo_gfs_mixer_and_cams_global():
 
     assert "download-gfs gfs013" in script
     assert "download-gfs gfs025" in script
-    assert "--upper-level" in script
+    assert "download_gfs025_upper_level_variable" in script
+    assert "--only-variables" in script
+    assert "--upper-level" not in script
     assert "download-cams cams_global" in script
     assert "WEATHER_CAMS_FTP_USER" in script
     assert "WEATHER_CAMS_FTP_PASSWORD" in script

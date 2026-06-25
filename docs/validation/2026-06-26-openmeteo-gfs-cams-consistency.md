@@ -56,14 +56,22 @@ Evidence from vendored source:
 - `GfsVariableDownloadable.swift` maps `visibility`, `wind_gusts_10m`, `cape`,
   `lifted_index`, `convective_inhibition`, and `categorical_freezing_rain`
   to `gfs025` GRIB messages, not only to `gfs013` sflux.
-- `GfsDownload.swift` downloads only surface variables unless `--upper-level`
-  is passed. Pressure-level API variables therefore require a separate
-  upper-level download pass.
+- `GfsDownload.swift` downloads only surface variables by default.
+  Pressure-level API variables therefore require separate `gfs025`
+  `--only-variables` batches for the pressure-level raw names.
 - `CamsReader.swift` derives AQI fields from raw CAMS fields, so CAMS parity
   requires `download-cams cams_global` with valid credentials.
 
 Conclusion: the correct fix is to complete the Open-Meteo runtime data chain:
-`gfs013` surface, `gfs025` surface, `gfs025` upper-level, and `cams_global`.
+`gfs013` surface, `gfs025` surface, `gfs025` pressure-level batches, and
+`cams_global`.
+
+During Singapore runtime download, a single pressure-level filter request for
+all `gfs025` variables returned repeated NOAA filter HTTP 500 responses. This
+was caused by our orchestration asking the Open-Meteo downloader for too many
+pressure-level filter items in one request. The fix keeps Open-Meteo's native
+download and conversion path, but calls it in smaller `--only-variables`
+batches by pressure variable family.
 
 ## Source-Derived Inventory
 
@@ -114,7 +122,8 @@ Explicitly reviewed required examples:
 - `scripts/download_openmeteo_runtime_data.sh`
   - downloads `gfs013` surface;
   - downloads `gfs025` surface;
-  - downloads `gfs025 --upper-level`;
+  - downloads `gfs025` pressure-level variables in smaller Open-Meteo
+    `--only-variables` batches;
   - downloads `cams_global` when CAMS credentials are configured.
 - `scripts/openmeteo_api_inventory.py`
   - writes the source-derived GFS/CAMS point API inventory.
@@ -146,7 +155,8 @@ python -m pytest -q
 
 Results observed:
 
-- deployment scaffold tests: passed after adding `gfs025 --upper-level`;
+- deployment scaffold tests: passed after adding `gfs025` pressure-level
+  `--only-variables` batches;
 - API inventory tests: passed;
 - point API validation utility tests: passed;
 - validation gate runner tests: passed.
