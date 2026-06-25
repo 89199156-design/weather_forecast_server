@@ -4,6 +4,11 @@ import OmFileFormat
 import SwiftNetCDF
 @preconcurrency import SwiftEccodes
 
+private let gfsNoaaDownloadHeaders = [
+    ("User-Agent", "curl/8.5.0"),
+    ("Connection", "close"),
+]
+
 private extension Array where Element == Float {
     mutating func roundToGribDecimalScale(message: GribMessage) {
         guard let decimalScale = message.get(attribute: "decimalScaleFactor")?.toInt() else {
@@ -233,7 +238,7 @@ struct GfsDownload: AsyncCommand {
             fatalError()
         }
         let waitAfterLastModified: TimeInterval = domain == .gfs025 ? 180 : 120
-        let curl = Curl(logger: logger, client: application.dedicatedHttpClient, deadLineHours: deadLineHours, waitAfterLastModified: waitAfterLastModified)
+        let curl = Curl(logger: logger, client: application.http1Client, deadLineHours: deadLineHours, waitAfterLastModified: waitAfterLastModified, headers: gfsNoaaDownloadHeaders)
         Process.alarm(seconds: Int(deadLineHours + 2) * 3600)
         defer { Process.alarm(seconds: 0) }
 

@@ -85,10 +85,16 @@ Follow-up evidence from the same NOAA filter endpoint:
   HTTP 302 retry loops at forecast hour `42`;
 - the same chunk with download concurrency `1` passed forecast hour `42` and
   converted all four variables successfully.
+- a later full pressure-level run still hit repeated HTTP 302 on `.idx`
+  requests. Container-level curl probes showed empty/headerless requests can
+  receive repeated 302 responses from NOAA/Akamai, while normal curl-style
+  requests intermittently recover with HTTP 200.
 
 Conclusion: this is a download-request sizing issue in our orchestration. It is
 not evidence of an Open-Meteo decoding, interpolation, weather-code, or API
-logic mismatch.
+logic mismatch. The local vendored patch is therefore restricted to the GFS
+download transport path: HTTP/1.1 client, stable NOAA request headers, and
+draining small non-success response bodies before retry.
 
 ## Source-Derived Inventory
 
@@ -147,6 +153,11 @@ Explicitly reviewed required examples:
     surface, `gfs025` pressure-level, and CAMS download scopes;
   - sources the runtime env file before deriving download defaults;
   - downloads `cams_global` when CAMS credentials are configured.
+- `vendor/open-meteo/Sources/App/Gfs/GfsDownload.swift`
+  - uses Open-Meteo's HTTP/1.1 client and stable NOAA headers for GFS raw-data
+    downloads only.
+- `vendor/open-meteo/Sources/App/Helper/Download/Curl.swift`
+  - drains small non-success HTTP response bodies before retrying.
 - `scripts/openmeteo_api_inventory.py`
   - writes the source-derived GFS/CAMS point API inventory.
 - `scripts/validate_openmeteo_point_api.py`

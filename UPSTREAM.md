@@ -71,3 +71,21 @@ not from a separately maintained Python clone.
 - Reason: allow Singapore to use our own lightweight mirror or regional
   pre-sliced download source without changing Open-Meteo reader, interpolation,
   weather-code, or API semantics.
+
+### `vendor/open-meteo/Sources/App/Gfs/GfsDownload.swift`
+
+- GFS downloads use Open-Meteo's existing HTTP/1.1 client and add stable NOAA
+  request headers:
+  - `User-Agent: curl/8.5.0`
+  - `Connection: close`
+- Reason: Singapore runtime tests showed NOAA/Akamai can return repeated
+  HTTP 302 responses to headerless GFS `.idx` requests from the container.
+  This patch is limited to the raw-data download transport path and does not
+  change Open-Meteo readers, interpolation, weather-code, unit conversion, or
+  API serialization.
+
+### `vendor/open-meteo/Sources/App/Helper/Download/Curl.swift`
+
+- Drains up to 1 MiB from non-success HTTP responses before retrying.
+- Reason: keep retry connections clean when NOAA/Akamai returns small 3xx/4xx
+  bodies during transient download failures.

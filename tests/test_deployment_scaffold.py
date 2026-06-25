@@ -94,6 +94,21 @@ def test_runtime_data_download_chunks_gfs025_upper_levels_and_can_resume():
     assert '--concurrent "$GFS_CONCURRENT"' not in upper_function
 
 
+def test_gfs_downloader_uses_noaa_stable_http_headers_without_weather_logic_fork():
+    source = (ROOT / "vendor" / "open-meteo" / "Sources" / "App" / "Gfs" / "GfsDownload.swift").read_text(
+        encoding="utf-8"
+    )
+    curl = (ROOT / "vendor" / "open-meteo" / "Sources" / "App" / "Helper" / "Download" / "Curl.swift").read_text(
+        encoding="utf-8"
+    )
+
+    assert "gfsNoaaDownloadHeaders" in source
+    assert '("User-Agent", "curl/8.5.0")' in source
+    assert '("Connection", "close")' in source
+    assert "client: application.http1Client" in source
+    assert "response.body.collect(upTo:" in curl
+
+
 def test_layer_scripts_are_documented_as_openmeteo_api_backed():
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     build_script = (ROOT / "scripts" / "build_openmeteo_layers.py").read_text(encoding="utf-8")

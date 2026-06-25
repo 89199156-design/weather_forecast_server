@@ -143,7 +143,7 @@ final class Curl: Sendable {
                 request.headers.add(contentsOf: headers)
                 let response = try await client.execute(request, timeout: .seconds(Int64(readTimeout)))
                 if response.status != .ok && response.status != .partialContent {
-                    // await print(try response.body.collect(upTo: 10000000).readStringImmutable())
+                    _ = try? await response.body.collect(upTo: 1024 * 1024)
                     if !retryUnauthorized && response.status == .unauthorized {
                         throw CurlErrorNonRetry.unauthorized
                     }
