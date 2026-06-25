@@ -92,10 +92,12 @@ def test_gfs_region_filtered_grids_are_not_shifted_as_global_grids():
     regional_branch = download.index("if GfsFilterDownload.usesRegionalGrid(domain: domain)")
     global_branch = download.index("else if isGlobal")
     assert regional_branch < global_branch
+    assert "flipLatitude()" not in download[regional_branch:global_branch]
 
     regional_domain_branch = download.index("if GfsFilterDownload.usesRegionalGrid(domain: domain)", regional_branch + 1)
     global_domain_branch = download.index("else if domain.isGlobal")
     assert regional_domain_branch < global_domain_branch
+    assert "flipLatitude()" not in download[regional_domain_branch:global_domain_branch]
 
 
 def test_gfs_download_imports_eccodes_when_using_grib_message_type():

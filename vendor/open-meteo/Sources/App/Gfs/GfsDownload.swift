@@ -162,7 +162,7 @@ struct GfsDownload: AsyncCommand {
         for (variable, message) in elevationMessages {
             try grib2d.load(message: message)
             if GfsFilterDownload.usesRegionalGrid(domain: domain) {
-                grib2d.array.flipLatitude()
+                // NOAA subregion GRIB is already west-to-east and south-to-north.
             } else if isGlobal {
                 grib2d.array.shift180LongitudeAndFlipLatitude()
             }
@@ -356,7 +356,7 @@ struct GfsDownload: AsyncCommand {
                     }
                     var grib2d = try message.to2D(nx: nx, ny: ny, shift180LongitudeAndFlipLatitudeIfRequired: false)
                     if GfsFilterDownload.usesRegionalGrid(domain: domain) {
-                        grib2d.array.flipLatitude()
+                        // NOAA subregion GRIB is already west-to-east and south-to-north.
                     } else if domain.isGlobal {
                         grib2d.array.shift180LongitudeAndFlipLatitude()
                     }
