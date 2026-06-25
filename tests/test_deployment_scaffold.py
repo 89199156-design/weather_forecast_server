@@ -40,3 +40,12 @@ def test_singapore_deploy_example_uses_new_path_and_openmeteo_container():
     assert "weather_server_gfs" not in script
     assert "weather-forecast-openmeteo" in script
     assert "satellite" not in script.lower()
+
+
+def test_singapore_deploy_makes_data_directory_writable_by_openmeteo_user():
+    script = (ROOT / "scripts" / "deploy_singapore_candidate.sh").read_text(encoding="utf-8")
+
+    assert "WEATHER_OPENMETEO_UID" in script
+    assert "WEATHER_OPENMETEO_GID" in script
+    assert "chown" in script
+    assert "$DATA_DIR" in script

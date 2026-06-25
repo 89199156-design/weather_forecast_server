@@ -8,9 +8,12 @@ CONTAINER_NAME="${WEATHER_OPENMETEO_CONTAINER:-weather-forecast-openmeteo-candid
 PORT="${WEATHER_OPENMETEO_PORT:-18080}"
 DATA_DIR="${WEATHER_OPENMETEO_DATA_DIR:-$APP_DIR/data/openmeteo}"
 ENV_FILE="${WEATHER_OPENMETEO_ENV_FILE:-$APP_DIR/config/singapore.example.env}"
+OPENMETEO_UID="${WEATHER_OPENMETEO_UID:-999}"
+OPENMETEO_GID="${WEATHER_OPENMETEO_GID:-999}"
 
 cd "$APP_DIR"
 mkdir -p "$DATA_DIR"
+chown "$OPENMETEO_UID:$OPENMETEO_GID" "$DATA_DIR"
 
 docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
 docker run -d \
