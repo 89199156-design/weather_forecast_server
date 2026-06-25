@@ -144,7 +144,7 @@ Generated inventory snapshot:
 - forecast pressure API variables: 660
 - GFS runtime surface variables: 45
 - GFS runtime pressure variables: 308
-- GFS point API surface variables: 94
+- GFS point API surface variables: 86
 - GFS point API pressure variables: 660
 - CAMS raw variables: 30
 - CAMS derived variables: 21
@@ -188,7 +188,10 @@ Explicitly reviewed required examples:
 - `vendor/open-meteo/Sources/App/Helper/Download/Curl.swift`
   - drains small non-success HTTP response bodies before retrying.
 - `scripts/openmeteo_api_inventory.py`
-  - writes the source-derived GFS/CAMS point API inventory.
+  - writes the source-derived GFS/CAMS point API inventory;
+  - keeps GFS point API validation on externally requestable
+    `ForecastSurfaceVariable` names supported by the GFS reader, excluding
+    GFS internal surface wind vector components that are raw download fields.
 - `scripts/validate_openmeteo_point_api.py`
   - validates field presence, null coverage, and optional reference-value
     equality for GFS/CAMS point APIs;
@@ -233,6 +236,26 @@ Results observed:
 - point API validation utility tests: passed;
 - validation gate runner tests: passed.
 - full Python test suite: `42 passed`.
+
+First Singapore candidate validation against official Open-Meteo stopped at
+the required 50-point GFS gate:
+
+- report:
+  `docs/validation/reports/openmeteo-official-20260626T050457Z/50x50-gfs.json`
+- checked values before stop: `664000`
+- failures: `5441`
+- primary failure classes: local 400 requests for validation chunks containing
+  internal GFS raw surface variables, reference request failures, all-null
+  variables, and value mismatches.
+
+Root cause for the local 400 class: the validation inventory used
+`GfsSurfaceVariable` directly as point API output. That enum contains
+Open-Meteo downloader/reader internals such as `wind_u_component_10m`,
+`wind_v_component_10m`, `categorical_freezing_rain`, and
+`frozen_precipitation_percent`. The external `/v1/forecast?hourly=...` API is
+driven by `ForecastSurfaceVariable`; GFS internal raw dependencies must not be
+sent as public hourly parameters. The next validation round uses the corrected
+source-derived point API inventory.
 
 ## Required Runtime Validation
 

@@ -76,6 +76,12 @@ def unique_ordered(items: list[str]) -> list[str]:
     return output
 
 
+def is_gfs_point_surface_api_variable(name: str, supported_names: set[str]) -> bool:
+    if name not in supported_names:
+        return False
+    return not re.match(r"^wind_[uv]_component_\d+m(_spread)?$", name)
+
+
 def build_inventory(repo_root: Path) -> dict[str, Any]:
     hourly_source = read_text(repo_root / "vendor" / "open-meteo" / "Sources" / "App" / "Controllers" / "VariableHourly.swift")
     gfs_variable_source = read_text(repo_root / "vendor" / "open-meteo" / "Sources" / "App" / "Gfs" / "GfsVariable.swift")
@@ -93,7 +99,10 @@ def build_inventory(repo_root: Path) -> dict[str, Any]:
     gfs025_levels = extract_gfs_domain_levels(gfs_domain_source, "gfs025")
     cams_raw = extract_enum_cases(cams_domain_source, "CamsVariable")
     cams_derived = extract_enum_cases(cams_reader_source, "CamsVariableDerived")
-    gfs_point_surface = unique_ordered(gfs_surface + gfs_derived_surface)
+    gfs_supported_surface_names = set(gfs_surface) | set(gfs_derived_surface)
+    gfs_point_surface = [
+        name for name in forecast_surface if is_gfs_point_surface_api_variable(name, gfs_supported_surface_names)
+    ]
     gfs_point_pressure = unique_ordered(
         pressure_api_names(gfs_pressure_types, gfs025_levels)
         + pressure_api_names(gfs_derived_pressure_types, gfs025_levels)
