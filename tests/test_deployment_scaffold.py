@@ -68,6 +68,25 @@ def test_runtime_data_download_covers_openmeteo_gfs_mixer_and_cams_global():
     assert "satellite" not in script.lower()
 
 
+def test_runtime_data_download_sources_env_before_runtime_defaults():
+    script = (ROOT / "scripts" / "download_openmeteo_runtime_data.sh").read_text(encoding="utf-8")
+
+    assert script.index('source "$ENV_FILE"') < script.index("GFS_MAX_FORECAST_HOUR=")
+    assert script.index('source "$ENV_FILE"') < script.index("CAMS_CONCURRENT=")
+
+
+def test_runtime_data_download_chunks_gfs025_upper_levels_and_can_resume():
+    script = (ROOT / "scripts" / "download_openmeteo_runtime_data.sh").read_text(encoding="utf-8")
+
+    assert "GFS_UPPER_LEVEL_CHUNK_SIZE" in script
+    assert "upper_level_only_variable_chunks" in script
+    assert "while IFS= read -r only_variables" in script
+    assert "download_gfs025_upper_level_variable" in script
+    assert "WEATHER_SKIP_GFS013_DOWNLOAD" in script
+    assert "WEATHER_SKIP_GFS025_SURFACE_DOWNLOAD" in script
+    assert "is_truthy" in script
+
+
 def test_layer_scripts_are_documented_as_openmeteo_api_backed():
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     build_script = (ROOT / "scripts" / "build_openmeteo_layers.py").read_text(encoding="utf-8")

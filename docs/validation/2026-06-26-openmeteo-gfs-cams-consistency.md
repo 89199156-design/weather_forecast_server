@@ -71,7 +71,19 @@ all `gfs025` variables returned repeated NOAA filter HTTP 500 responses. This
 was caused by our orchestration asking the Open-Meteo downloader for too many
 pressure-level filter items in one request. The fix keeps Open-Meteo's native
 download and conversion path, but calls it in smaller `--only-variables`
-batches by pressure variable family.
+batches by pressure variable family and pressure-level chunks.
+
+Follow-up evidence from the same NOAA filter endpoint:
+
+- single-level `var_TMP` requests for `850`, `70`, and `10` hPa returned HTTP
+  200;
+- a four-level `var_TMP` request for `1000`, `925`, `850`, and `700` hPa
+  returned HTTP 200;
+- the full-level `var_TMP` request returned HTTP 500 repeatedly.
+
+Conclusion: this is a download-request sizing issue in our orchestration. It is
+not evidence of an Open-Meteo decoding, interpolation, weather-code, or API
+logic mismatch.
 
 ## Source-Derived Inventory
 
@@ -123,7 +135,10 @@ Explicitly reviewed required examples:
   - downloads `gfs013` surface;
   - downloads `gfs025` surface;
   - downloads `gfs025` pressure-level variables in smaller Open-Meteo
-    `--only-variables` batches;
+    `--only-variables` batches by variable family and pressure-level chunk;
+  - supports runtime skip flags for already completed `gfs013`, `gfs025`
+    surface, `gfs025` pressure-level, and CAMS download scopes;
+  - sources the runtime env file before deriving download defaults;
   - downloads `cams_global` when CAMS credentials are configured.
 - `scripts/openmeteo_api_inventory.py`
   - writes the source-derived GFS/CAMS point API inventory.
@@ -156,7 +171,8 @@ python -m pytest -q
 Results observed:
 
 - deployment scaffold tests: passed after adding `gfs025` pressure-level
-  `--only-variables` batches;
+  `--only-variables` batches, pressure-level chunking, env-file-first
+  defaults, and resume skip flags;
 - API inventory tests: passed;
 - point API validation utility tests: passed;
 - validation gate runner tests: passed.
