@@ -529,29 +529,15 @@ private enum GfsFilterDownload {
             return nil
         }
 
-        let filterBase: String
-        switch domain {
-        case .gfs025:
-            filterBase = WeatherForecastServerSourceConfig.string(
-                "WEATHER_GFS_FILTER_0P25_URL",
-                fallback: "https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_0p25.pl"
-            )
-        case .gfs013:
-            filterBase = WeatherForecastServerSourceConfig.string(
-                "WEATHER_GFS_FILTER_SFLUX_URL",
-                fallback: "https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_sflux.pl"
-            )
-        default:
-            return nil
-        }
-
         let variableItems = noaaFilterVariableItems(variables: variables)
         guard !variableItems.isEmpty else {
             return nil
         }
 
         return sourceUrls.compactMap { sourceUrl in
-            guard let (file, dir) = fileAndDir(from: sourceUrl), var components = URLComponents(string: filterBase) else {
+            guard let (file, dir) = fileAndDir(from: sourceUrl),
+                  let filterBase = filterBase(domain: domain, file: file),
+                  var components = URLComponents(string: filterBase) else {
                 return nil
             }
             let region = WeatherForecastServerSourceConfig.region
@@ -565,6 +551,29 @@ private enum GfsFilterDownload {
                 URLQueryItem(name: "dir", value: dir),
             ] + variableItems
             return components.string
+        }
+    }
+
+    private static func filterBase(domain: GfsDomain, file: String) -> String? {
+        switch domain {
+        case .gfs025:
+            if file.contains("pgrb2b") {
+                return WeatherForecastServerSourceConfig.string(
+                    "WEATHER_GFS_FILTER_0P25B_URL",
+                    fallback: "https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_0p25b.pl"
+                )
+            }
+            return WeatherForecastServerSourceConfig.string(
+                "WEATHER_GFS_FILTER_0P25_URL",
+                fallback: "https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_0p25.pl"
+            )
+        case .gfs013:
+            return WeatherForecastServerSourceConfig.string(
+                "WEATHER_GFS_FILTER_SFLUX_URL",
+                fallback: "https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_sflux.pl"
+            )
+        default:
+            return nil
         }
     }
 

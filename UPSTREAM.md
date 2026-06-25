@@ -68,6 +68,10 @@ not from a separately maintained Python clone.
   - `WEATHER_HRRR_NOMADS_BASE_URL`
   - `WEATHER_HRRR_AWS_BASE_URL`
   - `WEATHER_NAM_NOMADS_BASE_URL`
+- Added environment-variable overrides for regional NOAA GFS filter endpoints:
+  - `WEATHER_GFS_FILTER_0P25_URL`
+  - `WEATHER_GFS_FILTER_0P25B_URL`
+  - `WEATHER_GFS_FILTER_SFLUX_URL`
 - Reason: allow Singapore to use our own lightweight mirror or regional
   pre-sliced download source without changing Open-Meteo reader, interpolation,
   weather-code, or API semantics.
@@ -78,11 +82,14 @@ not from a separately maintained Python clone.
   request headers:
   - `User-Agent: curl/8.5.0`
   - `Connection: close`
+- GFS025 regional filter downloads route `pgrb2b` files to NOAA's secondary
+  `filter_gfs_0p25b.pl` endpoint instead of the primary `filter_gfs_0p25.pl`.
 - Reason: Singapore runtime tests showed NOAA/Akamai can return repeated
   HTTP 302 responses to headerless GFS `.idx` requests from the container.
-  This patch is limited to the raw-data download transport path and does not
-  change Open-Meteo readers, interpolation, weather-code, unit conversion, or
-  API serialization.
+  The `pgrb2b` secondary pressure-level file also requires NOAA's secondary
+  filter endpoint for regional cropping. This patch is limited to the raw-data
+  download transport path and does not change Open-Meteo readers,
+  interpolation, weather-code, unit conversion, or API serialization.
 
 ### `vendor/open-meteo/Sources/App/Helper/Download/Curl.swift`
 

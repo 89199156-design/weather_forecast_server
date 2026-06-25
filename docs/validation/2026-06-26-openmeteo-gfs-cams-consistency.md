@@ -94,6 +94,10 @@ Follow-up evidence from the same NOAA filter endpoint:
   URL included `pgrb2b`-only levels such as `125hPa` or `175hPa`; those levels
   returned HTTP 500 even as single-level `pgrb2` filter requests, while
   `150hPa` and `200hPa` returned HTTP 200.
+- NOAA exposes `pgrb2b` through the secondary filter endpoint
+  `filter_gfs_0p25b.pl`. Direct probes against that endpoint returned HTTP 200
+  for pgrb2b pressure levels such as `125hPa`, `175hPa`, `225hPa`, and
+  `275hPa`.
 
 Conclusion: this is a download-request sizing issue in our orchestration. It is
 not evidence of an Open-Meteo decoding, interpolation, weather-code, or API
@@ -102,7 +106,8 @@ download transport path: HTTP/1.1 client, stable NOAA request headers, and
 draining small non-success response bodies before retry. The runtime script
 keeps Open-Meteo's `download-gfs` command, but groups pressure-level batches by
 the underlying NOAA GRIB file family before chunking so filter URLs do not mix
-`pgrb2` and `pgrb2b` levels.
+`pgrb2` and `pgrb2b` levels. The GFS025 filter URL selector routes `pgrb2b`
+files to NOAA's secondary filter endpoint.
 
 ## Source-Derived Inventory
 
@@ -165,7 +170,8 @@ Explicitly reviewed required examples:
   - downloads `cams_global` when CAMS credentials are configured.
 - `vendor/open-meteo/Sources/App/Gfs/GfsDownload.swift`
   - uses Open-Meteo's HTTP/1.1 client and stable NOAA headers for GFS raw-data
-    downloads only.
+    downloads only;
+  - routes GFS025 `pgrb2b` files to `filter_gfs_0p25b.pl`.
 - `vendor/open-meteo/Sources/App/Helper/Download/Curl.swift`
   - drains small non-success HTTP response bodies before retrying.
 - `scripts/openmeteo_api_inventory.py`

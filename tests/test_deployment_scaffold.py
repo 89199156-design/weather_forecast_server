@@ -85,6 +85,7 @@ def test_runtime_data_download_chunks_gfs025_upper_levels_and_can_resume():
     assert "GFS_UPPER_LEVEL_CONCURRENT" in script
     assert "WEATHER_GFS_UPPER_LEVEL_DOWNLOAD_CONCURRENT" in script
     assert "GFS_UPPER_LEVEL_PGRB2_LEVELS" in script
+    assert "925,950,975,1000" in script
     assert "level_is_in_csv" in script
     assert "primary_levels" in script
     assert "secondary_levels" in script
@@ -110,6 +111,9 @@ def test_gfs_downloader_uses_noaa_stable_http_headers_without_weather_logic_fork
     assert '("User-Agent", "curl/8.5.0")' in source
     assert '("Connection", "close")' in source
     assert "client: application.http1Client" in source
+    assert "WEATHER_GFS_FILTER_0P25B_URL" in source
+    assert "filter_gfs_0p25b.pl" in source
+    assert 'file.contains("pgrb2b")' in source
     assert "response.body.collect(upTo:" in curl
 
 
