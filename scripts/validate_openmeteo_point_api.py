@@ -48,7 +48,7 @@ def chunked(items: list[str], chunk_size: int) -> list[list[str]]:
 
 def variables_for_scope(inventory: dict[str, Any], scope: str) -> list[str]:
     if scope == "gfs":
-        return list(inventory["forecast"]["surface_api_variables"]) + list(inventory["forecast"]["pressure_api_variables"])
+        return list(inventory["gfs_point_api"]["surface_variables"]) + list(inventory["gfs_point_api"]["pressure_variables"])
     if scope == "cams":
         return list(inventory["air_quality"]["raw_variables"]) + list(inventory["air_quality"]["derived_variables"])
     raise ValueError(f"unknown validation scope: {scope}")

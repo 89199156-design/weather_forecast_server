@@ -27,6 +27,13 @@ def test_inventory_extracts_forecast_gfs_and_cams_variables_from_vendored_source
     assert "visibility" in inventory["gfs_runtime_data"]["surface_variables"]
     assert "cape" in inventory["gfs_runtime_data"]["surface_variables"]
     assert "temperature_850hPa" in inventory["gfs_runtime_data"]["pressure_variables"]
+    assert "uv_index" in inventory["gfs_point_api"]["surface_variables"]
+    assert "visibility" in inventory["gfs_point_api"]["surface_variables"]
+    assert "weather_code" in inventory["gfs_point_api"]["surface_variables"]
+    assert "wind_speed_850hPa" in inventory["gfs_point_api"]["pressure_variables"]
+    assert "relative_humidity_850hPa" in inventory["gfs_point_api"]["pressure_variables"]
+    assert "pm10" not in inventory["gfs_point_api"]["surface_variables"]
+    assert "wave_height" not in inventory["gfs_point_api"]["surface_variables"]
 
     assert inventory["air_quality"]["domain"] == "cams_global"
     assert "pm2_5" in inventory["air_quality"]["raw_variables"]
@@ -44,4 +51,3 @@ def test_inventory_records_minimum_runtime_download_domains():
     assert {"command": "download-gfs", "domain": "gfs025", "levels": "surface"} in commands
     assert {"command": "download-gfs", "domain": "gfs025", "levels": "surface+upper"} in commands
     assert {"command": "download-cams", "domain": "cams_global", "levels": "surface"} in commands
-

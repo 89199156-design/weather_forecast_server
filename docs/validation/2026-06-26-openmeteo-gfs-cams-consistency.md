@@ -124,6 +124,9 @@ Inventory source locations:
 - forecast pressure API names: `ForecastPressureVariableType` x
   `GfsDomain.gfs025.levels`
 - GFS runtime raw variables: `GfsSurfaceVariable` and `GfsPressureVariableType`
+- GFS point API variables used for validation: `GfsSurfaceVariable`,
+  `GfsVariableDerivedSurface`, `GfsPressureVariableType`, and
+  `GfsPressureVariableDerivedType`
 - CAMS raw names: `CamsVariable`
 - CAMS derived names: `CamsVariableDerived`
 
@@ -133,6 +136,8 @@ Generated inventory snapshot:
 - forecast pressure API variables: 660
 - GFS runtime surface variables: 45
 - GFS runtime pressure variables: 308
+- GFS point API surface variables: 94
+- GFS point API pressure variables: 660
 - CAMS raw variables: 30
 - CAMS derived variables: 21
 
@@ -178,7 +183,10 @@ Explicitly reviewed required examples:
   - writes the source-derived GFS/CAMS point API inventory.
 - `scripts/validate_openmeteo_point_api.py`
   - validates field presence, null coverage, and optional reference-value
-    equality for GFS/CAMS point APIs.
+    equality for GFS/CAMS point APIs;
+  - uses the GFS-specific raw/derived Open-Meteo reader inventory for
+    `models=gfs_global`, not the shared forecast enum that also contains
+    non-GFS air-quality, marine, wave, and ensemble-spread names.
 - `scripts/run_openmeteo_validation_gates.py`
   - runs 50, 100, then 500 point gates with 50 frames and stops on first
     failure.
@@ -210,7 +218,7 @@ Results observed:
 - API inventory tests: passed;
 - point API validation utility tests: passed;
 - validation gate runner tests: passed.
-- full Python test suite: `36 passed`.
+- full Python test suite: `39 passed`.
 
 ## Required Runtime Validation
 

@@ -65,9 +65,21 @@ def pressure_api_names(variable_types: list[str], levels: list[int]) -> list[str
     return [f"{variable}_{level}hPa" for variable in variable_types for level in levels]
 
 
+def unique_ordered(items: list[str]) -> list[str]:
+    seen = set()
+    output = []
+    for item in items:
+        if item in seen:
+            continue
+        seen.add(item)
+        output.append(item)
+    return output
+
+
 def build_inventory(repo_root: Path) -> dict[str, Any]:
     hourly_source = read_text(repo_root / "vendor" / "open-meteo" / "Sources" / "App" / "Controllers" / "VariableHourly.swift")
     gfs_variable_source = read_text(repo_root / "vendor" / "open-meteo" / "Sources" / "App" / "Gfs" / "GfsVariable.swift")
+    gfs_controller_source = read_text(repo_root / "vendor" / "open-meteo" / "Sources" / "App" / "Gfs" / "GfsController.swift")
     gfs_domain_source = read_text(repo_root / "vendor" / "open-meteo" / "Sources" / "App" / "Gfs" / "GfsDomain.swift")
     cams_domain_source = read_text(repo_root / "vendor" / "open-meteo" / "Sources" / "App" / "Cams" / "CamsDomain.swift")
     cams_reader_source = read_text(repo_root / "vendor" / "open-meteo" / "Sources" / "App" / "Cams" / "CamsReader.swift")
@@ -76,9 +88,16 @@ def build_inventory(repo_root: Path) -> dict[str, Any]:
     forecast_pressure_types = extract_enum_cases(hourly_source, "ForecastPressureVariableType")
     gfs_surface = extract_enum_cases(gfs_variable_source, "GfsSurfaceVariable")
     gfs_pressure_types = extract_enum_cases(gfs_variable_source, "GfsPressureVariableType")
+    gfs_derived_surface = extract_enum_cases(gfs_controller_source, "GfsVariableDerivedSurface")
+    gfs_derived_pressure_types = extract_enum_cases(gfs_controller_source, "GfsPressureVariableDerivedType")
     gfs025_levels = extract_gfs_domain_levels(gfs_domain_source, "gfs025")
     cams_raw = extract_enum_cases(cams_domain_source, "CamsVariable")
     cams_derived = extract_enum_cases(cams_reader_source, "CamsVariableDerived")
+    gfs_point_surface = unique_ordered(gfs_surface + gfs_derived_surface)
+    gfs_point_pressure = unique_ordered(
+        pressure_api_names(gfs_pressure_types, gfs025_levels)
+        + pressure_api_names(gfs_derived_pressure_types, gfs025_levels)
+    )
 
     return {
         "forecast": {
@@ -104,6 +123,22 @@ def build_inventory(repo_root: Path) -> dict[str, Any]:
             "counts": {
                 "surface_variables": len(gfs_surface),
                 "pressure_variables": len(gfs_pressure_types) * len(gfs025_levels),
+            },
+        },
+        "gfs_point_api": {
+            "endpoint": "/v1/forecast",
+            "model": "gfs_global",
+            "source_enums": {
+                "raw_surface": "GfsSurfaceVariable",
+                "derived_surface": "GfsVariableDerivedSurface",
+                "raw_pressure": "GfsPressureVariableType",
+                "derived_pressure": "GfsPressureVariableDerivedType",
+            },
+            "surface_variables": gfs_point_surface,
+            "pressure_variables": gfs_point_pressure,
+            "counts": {
+                "surface_variables": len(gfs_point_surface),
+                "pressure_variables": len(gfs_point_pressure),
             },
         },
         "air_quality": {

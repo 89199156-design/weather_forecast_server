@@ -30,8 +30,12 @@ def test_chunked_inventory_keeps_gfs_and_cams_variables_separate():
     validator = load_module()
     inventory = {
         "forecast": {
-            "surface_api_variables": ["temperature_2m", "uv_index"],
-            "pressure_api_variables": ["temperature_850hPa"],
+            "surface_api_variables": ["temperature_2m", "uv_index", "pm10", "wave_height"],
+            "pressure_api_variables": ["temperature_850hPa", "wave_height_850hPa"],
+        },
+        "gfs_point_api": {
+            "surface_variables": ["temperature_2m", "uv_index"],
+            "pressure_variables": ["temperature_850hPa"],
         },
         "air_quality": {
             "raw_variables": ["pm2_5"],
@@ -63,4 +67,3 @@ def test_summarize_variable_detects_missing_and_all_null_local_output():
     assert validator.summarize_variable(None, frames=2) == {"status": "missing", "frames": 0, "nulls": 2}
     assert validator.summarize_variable([None, None, 3], frames=2) == {"status": "all_null", "frames": 2, "nulls": 2}
     assert validator.summarize_variable([None, 1, 2], frames=2) == {"status": "ok", "frames": 2, "nulls": 1}
-
