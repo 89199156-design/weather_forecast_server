@@ -161,10 +161,10 @@ struct GfsDownload: AsyncCommand {
 
         for (variable, message) in elevationMessages {
             try grib2d.load(message: message)
-            if isGlobal {
-                grib2d.array.shift180LongitudeAndFlipLatitude()
-            } else if GfsFilterDownload.usesRegionalGrid(domain: domain) {
+            if GfsFilterDownload.usesRegionalGrid(domain: domain) {
                 grib2d.array.flipLatitude()
+            } else if isGlobal {
+                grib2d.array.shift180LongitudeAndFlipLatitude()
             }
             switch variable {
             case .height:
@@ -355,10 +355,10 @@ struct GfsDownload: AsyncCommand {
                         }
                     }
                     var grib2d = try message.to2D(nx: nx, ny: ny, shift180LongitudeAndFlipLatitudeIfRequired: false)
-                    if domain.isGlobal {
-                        grib2d.array.shift180LongitudeAndFlipLatitude()
-                    } else if GfsFilterDownload.usesRegionalGrid(domain: domain) {
+                    if GfsFilterDownload.usesRegionalGrid(domain: domain) {
                         grib2d.array.flipLatitude()
+                    } else if domain.isGlobal {
+                        grib2d.array.shift180LongitudeAndFlipLatitude()
                     }
                     // try message.debugGrid(grid: domain.grid, flipLatidude: domain.isGlobal, shift180Longitude: domain.isGlobal)
                     
