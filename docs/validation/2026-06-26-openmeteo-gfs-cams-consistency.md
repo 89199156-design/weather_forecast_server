@@ -80,6 +80,11 @@ Follow-up evidence from the same NOAA filter endpoint:
 - a four-level `var_TMP` request for `1000`, `925`, `850`, and `700` hPa
   returned HTTP 200;
 - the full-level `var_TMP` request returned HTTP 500 repeatedly.
+- after chunking, a `temperature_40hPa,temperature_50hPa,temperature_70hPa,
+  temperature_100hPa` request with download concurrency `4` reached NOAA
+  HTTP 302 retry loops at forecast hour `42`;
+- the same chunk with download concurrency `1` passed forecast hour `42` and
+  converted all four variables successfully.
 
 Conclusion: this is a download-request sizing issue in our orchestration. It is
 not evidence of an Open-Meteo decoding, interpolation, weather-code, or API
@@ -136,6 +141,8 @@ Explicitly reviewed required examples:
   - downloads `gfs025` surface;
   - downloads `gfs025` pressure-level variables in smaller Open-Meteo
     `--only-variables` batches by variable family and pressure-level chunk;
+  - uses a separate pressure-level download concurrency default of `1` to keep
+    NOAA/CDN redirects from breaking Open-Meteo's downloader retries;
   - supports runtime skip flags for already completed `gfs013`, `gfs025`
     surface, `gfs025` pressure-level, and CAMS download scopes;
   - sources the runtime env file before deriving download defaults;

@@ -77,14 +77,21 @@ def test_runtime_data_download_sources_env_before_runtime_defaults():
 
 def test_runtime_data_download_chunks_gfs025_upper_levels_and_can_resume():
     script = (ROOT / "scripts" / "download_openmeteo_runtime_data.sh").read_text(encoding="utf-8")
+    upper_function = script.split("download_gfs025_upper_level_variable()", 1)[1].split(
+        "# gfs_global", 1
+    )[0]
 
     assert "GFS_UPPER_LEVEL_CHUNK_SIZE" in script
+    assert "GFS_UPPER_LEVEL_CONCURRENT" in script
+    assert "WEATHER_GFS_UPPER_LEVEL_DOWNLOAD_CONCURRENT" in script
     assert "upper_level_only_variable_chunks" in script
     assert "while IFS= read -r only_variables" in script
     assert "download_gfs025_upper_level_variable" in script
     assert "WEATHER_SKIP_GFS013_DOWNLOAD" in script
     assert "WEATHER_SKIP_GFS025_SURFACE_DOWNLOAD" in script
     assert "is_truthy" in script
+    assert '--concurrent "$GFS_UPPER_LEVEL_CONCURRENT"' in upper_function
+    assert '--concurrent "$GFS_CONCURRENT"' not in upper_function
 
 
 def test_layer_scripts_are_documented_as_openmeteo_api_backed():
