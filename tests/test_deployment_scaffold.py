@@ -84,6 +84,10 @@ def test_runtime_data_download_chunks_gfs025_upper_levels_and_can_resume():
     assert "GFS_UPPER_LEVEL_CHUNK_SIZE" in script
     assert "GFS_UPPER_LEVEL_CONCURRENT" in script
     assert "WEATHER_GFS_UPPER_LEVEL_DOWNLOAD_CONCURRENT" in script
+    assert "GFS_UPPER_LEVEL_PGRB2_LEVELS" in script
+    assert "level_is_in_csv" in script
+    assert "primary_levels" in script
+    assert "secondary_levels" in script
     assert "upper_level_only_variable_chunks" in script
     assert "while IFS= read -r only_variables" in script
     assert "download_gfs025_upper_level_variable" in script

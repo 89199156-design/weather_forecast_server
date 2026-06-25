@@ -89,12 +89,20 @@ Follow-up evidence from the same NOAA filter endpoint:
   requests. Container-level curl probes showed empty/headerless requests can
   receive repeated 302 responses from NOAA/Akamai, while normal curl-style
   requests intermittently recover with HTTP 200.
+- after the HTTP transport patch, pressure-level downloads advanced to mixed
+  `pgrb2`/`pgrb2b` chunks. NOAA filter returned HTTP 500 when a `pgrb2` filter
+  URL included `pgrb2b`-only levels such as `125hPa` or `175hPa`; those levels
+  returned HTTP 500 even as single-level `pgrb2` filter requests, while
+  `150hPa` and `200hPa` returned HTTP 200.
 
 Conclusion: this is a download-request sizing issue in our orchestration. It is
 not evidence of an Open-Meteo decoding, interpolation, weather-code, or API
 logic mismatch. The local vendored patch is therefore restricted to the GFS
 download transport path: HTTP/1.1 client, stable NOAA request headers, and
-draining small non-success response bodies before retry.
+draining small non-success response bodies before retry. The runtime script
+keeps Open-Meteo's `download-gfs` command, but groups pressure-level batches by
+the underlying NOAA GRIB file family before chunking so filter URLs do not mix
+`pgrb2` and `pgrb2b` levels.
 
 ## Source-Derived Inventory
 
@@ -147,6 +155,8 @@ Explicitly reviewed required examples:
   - downloads `gfs025` surface;
   - downloads `gfs025` pressure-level variables in smaller Open-Meteo
     `--only-variables` batches by variable family and pressure-level chunk;
+  - keeps `pgrb2` and `pgrb2b` pressure-level groups separate before chunking
+    to avoid invalid NOAA filter URLs;
   - uses a separate pressure-level download concurrency default of `1` to keep
     NOAA/CDN redirects from breaking Open-Meteo's downloader retries;
   - supports runtime skip flags for already completed `gfs013`, `gfs025`

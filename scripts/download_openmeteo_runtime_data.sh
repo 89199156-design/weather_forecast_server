@@ -17,6 +17,7 @@ GFS_MAX_FORECAST_HOUR="${WEATHER_GFS_MAX_FORECAST_HOUR:-120}"
 GFS_CONCURRENT="${WEATHER_GFS_DOWNLOAD_CONCURRENT:-4}"
 CAMS_CONCURRENT="${WEATHER_CAMS_DOWNLOAD_CONCURRENT:-1}"
 GFS_UPPER_LEVELS="${WEATHER_GFS_UPPER_LEVELS:-10,15,20,30,40,50,70,100,125,150,175,200,225,250,275,300,325,350,375,400,425,450,475,500,525,550,575,600,625,650,675,700,725,750,775,800,825,850,875,900,925,950,975,1000}"
+GFS_UPPER_LEVEL_PGRB2_LEVELS="${WEATHER_GFS_UPPER_LEVEL_PGRB2_LEVELS:-10,15,20,30,40,50,70,100,150,200,250,300,350,400,450,500,550,600,650,700,750,800,850,900,925,975,1000}"
 GFS_UPPER_LEVEL_VARIABLES="${WEATHER_GFS_UPPER_LEVEL_VARIABLES:-temperature,wind_u_component,wind_v_component,geopotential_height,cloud_cover,relative_humidity,vertical_velocity}"
 GFS_UPPER_LEVEL_CHUNK_SIZE="${WEATHER_GFS_UPPER_LEVEL_CHUNK_SIZE:-4}"
 GFS_UPPER_LEVEL_CONCURRENT="${WEATHER_GFS_UPPER_LEVEL_DOWNLOAD_CONCURRENT:-1}"
@@ -42,18 +43,56 @@ run_openmeteo() {
     "$@"
 }
 
-upper_level_only_variable_chunks() {
+level_is_in_csv() {
+  local needle="$1"
+  local csv="$2"
+  local IFS=","
+  local level
+  local levels=()
+
+  read -ra levels <<< "$csv"
+  for level in "${levels[@]}"; do
+    level="${level//[[:space:]]/}"
+    if [[ "$level" == "$needle" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+emit_upper_level_only_variable_chunks() {
   local variable="$1"
+  shift
   local IFS=","
   local chunk=()
   local level
-  local levels=()
   local chunk_size="$GFS_UPPER_LEVEL_CHUNK_SIZE"
 
   if ! [[ "$chunk_size" =~ ^[0-9]+$ ]] || [[ "$chunk_size" -lt 1 ]]; then
     printf '%s\n' "WEATHER_GFS_UPPER_LEVEL_CHUNK_SIZE must be a positive integer." >&2
     exit 2
   fi
+
+  for level in "$@"; do
+    chunk+=("${variable}_${level}hPa")
+    if [[ "${#chunk[@]}" -ge "$chunk_size" ]]; then
+      printf '%s\n' "${chunk[*]}"
+      chunk=()
+    fi
+  done
+
+  if [[ "${#chunk[@]}" -gt 0 ]]; then
+    printf '%s\n' "${chunk[*]}"
+  fi
+}
+
+upper_level_only_variable_chunks() {
+  local variable="$1"
+  local IFS=","
+  local level
+  local levels=()
+  local primary_levels=()
+  local secondary_levels=()
 
   read -ra levels <<< "$GFS_UPPER_LEVELS"
   for level in "${levels[@]}"; do
@@ -65,16 +104,15 @@ upper_level_only_variable_chunks() {
       continue
     fi
 
-    chunk+=("${variable}_${level}hPa")
-    if [[ "${#chunk[@]}" -ge "$chunk_size" ]]; then
-      printf '%s\n' "${chunk[*]}"
-      chunk=()
+    if level_is_in_csv "$level" "$GFS_UPPER_LEVEL_PGRB2_LEVELS"; then
+      primary_levels+=("$level")
+    else
+      secondary_levels+=("$level")
     fi
   done
 
-  if [[ "${#chunk[@]}" -gt 0 ]]; then
-    printf '%s\n' "${chunk[*]}"
-  fi
+  emit_upper_level_only_variable_chunks "$variable" "${primary_levels[@]}"
+  emit_upper_level_only_variable_chunks "$variable" "${secondary_levels[@]}"
 }
 
 download_gfs025_upper_level_variable() {
