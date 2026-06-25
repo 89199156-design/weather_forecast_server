@@ -56,3 +56,12 @@ def test_gfs_region_filter_download_is_configurable_and_reuses_openmeteo_pipelin
     assert "downloadIndexAndDecode" in download
     assert "downloadGrib(url: url, bzip2Decode: false)" in download
     assert "RegularGrid(" in domain
+
+
+def test_gfs_download_imports_eccodes_when_using_grib_message_type():
+    download = (ROOT / "vendor" / "open-meteo" / "Sources" / "App" / "Gfs" / "GfsDownload.swift").read_text(
+        encoding="utf-8"
+    )
+
+    assert "message: GribMessage" in download
+    assert "import SwiftEccodes" in download

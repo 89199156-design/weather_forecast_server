@@ -2,6 +2,7 @@ import Foundation
 import Vapor
 import OmFileFormat
 import SwiftNetCDF
+@preconcurrency import SwiftEccodes
 
 /**
 NCEP GFS downloader
