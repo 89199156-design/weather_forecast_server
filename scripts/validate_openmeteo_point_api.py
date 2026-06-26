@@ -14,12 +14,23 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+try:
+    import requests
+except ImportError:  # pragma: no cover - requests is available in supported validation environments.
+    requests = None  # type: ignore[assignment]
+
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from openmeteo_api_inventory import build_inventory  # noqa: E402
+
+REQUESTS_SESSION = requests.Session() if requests is not None else None
+if REQUESTS_SESSION is not None:
+    REQUESTS_SESSION.trust_env = False
+
+URLLIB_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
 def generate_points(
@@ -128,10 +139,29 @@ def fetch_json(
     request_pause: float,
 ) -> Any:
     url = base_url.rstrip("/") + endpoint + "?" + urllib.parse.urlencode(params)
+    if REQUESTS_SESSION is not None:
+        for attempt in range(retries + 1):
+            try:
+                response = REQUESTS_SESSION.get(url, headers={"Accept": "application/json"}, timeout=timeout)
+                retryable = response.status_code == 429 or 500 <= response.status_code < 600
+                if response.ok:
+                    if request_pause > 0:
+                        time.sleep(request_pause)
+                    return response.json()
+                if not retryable or attempt >= retries:
+                    response.raise_for_status()
+            except requests.RequestException:
+                if attempt >= retries:
+                    raise
+
+            time.sleep(retry_delay * (2**attempt))
+
+        raise RuntimeError("unreachable retry state")
+
     request = urllib.request.Request(url, headers={"Accept": "application/json"})
     for attempt in range(retries + 1):
         try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
+            with URLLIB_OPENER.open(request, timeout=timeout) as response:
                 body = response.read().decode("utf-8")
             if request_pause > 0:
                 time.sleep(request_pause)
