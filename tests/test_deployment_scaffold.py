@@ -76,6 +76,10 @@ def test_singapore_deploy_requires_dem_source_for_openmeteo_parity():
 def test_runtime_data_download_covers_openmeteo_gfs_mixer_and_cams_global():
     script = (ROOT / "scripts" / "download_openmeteo_runtime_data.sh").read_text(encoding="utf-8")
 
+    assert "GFS_DOWNLOAD_MODE" in script
+    assert "sync_openmeteo_database ncep_gfs013" in script
+    assert "sync_openmeteo_database ncep_gfs025" in script
+    assert "WEATHER_OPENMETEO_SYNC_BASE_URL" in script
     assert "download-gfs gfs013" in script
     assert "download-gfs gfs025" in script
     assert "download_gfs025_upper_level_variable" in script
@@ -131,6 +135,25 @@ def test_runtime_data_download_can_pin_domain_runs_without_engine_fork():
     assert 'append_run_arg "$GFS013_RUN"' in script
     assert 'append_run_arg "$GFS025_RUN"' in script
     assert "--run" in script
+
+
+def test_runtime_data_download_sync_mode_uses_processed_openmeteo_database_for_parity():
+    script = (ROOT / "scripts" / "download_openmeteo_runtime_data.sh").read_text(encoding="utf-8")
+    singapore_env = (ROOT / "config" / "singapore.example.env").read_text(encoding="utf-8")
+
+    assert "WEATHER_GFS_DOWNLOAD_MODE=sync" in singapore_env
+    assert "WEATHER_GFS_FILTER_DOWNLOAD=false" in singapore_env
+    assert "WEATHER_OPENMETEO_SYNC_BASE_URL" in singapore_env
+    assert "NOAA raw/filter conversion does not exactly match" in singapore_env
+    assert "sync)" in script
+    assert "raw)" in script
+    assert 'run_openmeteo sync "$models" "$variables"' in script
+    assert '$(append_sync_server_arg)' in script
+    assert "--past-days \"$OPENMETEO_SYNC_PAST_DAYS\"" in script
+    assert "--concurrent \"$OPENMETEO_SYNC_CONCURRENT\"" in script
+    assert "GFS013_SYNC_VARIABLES" in script
+    assert "GFS025_SURFACE_SYNC_VARIABLES" in script
+    assert "gfs025_pressure_sync_variables" in script
 
 
 def test_runtime_data_download_filters_empty_env_values_before_docker_run():

@@ -58,6 +58,18 @@ def test_gfs_region_filter_download_is_configurable_and_reuses_openmeteo_pipelin
     assert "RegularGrid(" in domain
 
 
+def test_openmeteo_processed_database_sync_is_the_parity_download_mode():
+    script = (ROOT / "scripts" / "download_openmeteo_runtime_data.sh").read_text(encoding="utf-8")
+    singapore_env = (ROOT / "config" / "singapore.example.env").read_text(encoding="utf-8")
+
+    assert "WEATHER_GFS_DOWNLOAD_MODE=sync" in singapore_env
+    assert "WEATHER_OPENMETEO_SYNC_BASE_URL" in singapore_env
+    assert "Open-Meteo's processed `.om`" in singapore_env
+    assert "sync_openmeteo_database ncep_gfs013" in script
+    assert "sync_openmeteo_database ncep_gfs025" in script
+    assert "NOAA raw/filter conversion is not the parity baseline" in script
+
+
 def test_gfs_filtered_download_maps_noaa_filter_messages_back_to_openmeteo_index_matches():
     download = (ROOT / "vendor" / "open-meteo" / "Sources" / "App" / "Gfs" / "GfsDownload.swift").read_text(
         encoding="utf-8"

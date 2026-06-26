@@ -187,6 +187,11 @@ Explicitly reviewed required examples:
 ## Current Code Changes
 
 - `scripts/download_openmeteo_runtime_data.sh`
+  - supports `WEATHER_GFS_DOWNLOAD_MODE=sync` for point/API parity by using
+    Open-Meteo's processed `.om` database from
+    `WEATHER_OPENMETEO_SYNC_BASE_URL`;
+  - keeps `WEATHER_GFS_DOWNLOAD_MODE=raw` only for raw-source debugging or
+    approximate regional products;
   - downloads `gfs013` surface;
   - downloads `gfs025` surface;
   - downloads `gfs025` pressure-level variables in smaller Open-Meteo
@@ -382,6 +387,40 @@ files; upstream Open-Meteo does not do this pre-rounding. That local patch can
 shift bilinear interpolation results by 0.1 to 0.33 units for continuous
 fields. Corrective change: remove the pre-write rounding and preserve the
 Open-Meteo/eccodes decoded values.
+
+Fifth Singapore candidate validation stopped at the 50-point GFS gate after
+the decoded-precision fix. The blocking deterministic mismatch was not an
+Open-Meteo reader/API algorithm issue. It was isolated to the local NOAA
+raw/filter data-production path for `ncep_gfs013` masked coastal variables.
+
+Evidence:
+
+- failed validation report:
+  `docs/validation/reports/openmeteo-official-20260626T124608Z/50x50-gfs.json`
+  with `398` mismatched values after `1,865,000` checked values;
+- point `55.1,136.5` selected the same model coordinate locally and on the
+  public API: approximately `55.11877,136.52344`, elevation `0m`;
+- candidate data generated through NOAA raw regional conversion returned
+  `snow_depth=null` from `2026-06-27T09:00Z`;
+- a temporary Open-Meteo service using Open-Meteo's own `sync` command against
+  the processed `ncep_gfs013/snow_depth/*.om` database returned
+  `snow_depth=0.0` for the same point and frames;
+- the public Open-Meteo API also returned `snow_depth=0.0` for the same point
+  and frames.
+
+Conclusion: strict point/API parity must use Open-Meteo's processed `.om`
+database as the runtime data contract. NOAA raw GRIB download, especially with
+regional subsetting and local domain-grid slicing, is useful for approximate
+lightweight products but is not a valid parity baseline at masked coastal
+cells. The engine should not be modified to compensate for those differences.
+
+Corrective change: keep the vendored Open-Meteo reader and API engine intact
+and add `WEATHER_GFS_DOWNLOAD_MODE=sync` to the runtime wrapper. In `sync`
+mode, the wrapper calls Open-Meteo's native `sync` command for `ncep_gfs013`
+and `ncep_gfs025` variables, using `WEATHER_OPENMETEO_SYNC_BASE_URL` as the
+owned mirror of the processed Open-Meteo database. The previous NOAA raw
+download path remains available only as `WEATHER_GFS_DOWNLOAD_MODE=raw` for
+source-download diagnostics or non-parity regional products.
 
 ## Required Runtime Validation
 

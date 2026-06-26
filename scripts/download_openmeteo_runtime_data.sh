@@ -37,11 +37,17 @@ DATA_DIR="${WEATHER_OPENMETEO_DATA_DIR:-$APP_DIR/data/openmeteo}"
 GFS_MAX_FORECAST_HOUR="${WEATHER_GFS_MAX_FORECAST_HOUR:-120}"
 GFS_CONCURRENT="${WEATHER_GFS_DOWNLOAD_CONCURRENT:-4}"
 CAMS_CONCURRENT="${WEATHER_CAMS_DOWNLOAD_CONCURRENT:-1}"
+GFS_DOWNLOAD_MODE="${WEATHER_GFS_DOWNLOAD_MODE:-raw}"
+OPENMETEO_SYNC_BASE_URL="${WEATHER_OPENMETEO_SYNC_BASE_URL:-}"
+OPENMETEO_SYNC_PAST_DAYS="${WEATHER_OPENMETEO_SYNC_PAST_DAYS:-2}"
+OPENMETEO_SYNC_CONCURRENT="${WEATHER_OPENMETEO_SYNC_CONCURRENT:-4}"
 GFS_UPPER_LEVELS="${WEATHER_GFS_UPPER_LEVELS:-10,15,20,30,40,50,70,100,125,150,175,200,225,250,275,300,325,350,375,400,425,450,475,500,525,550,575,600,625,650,675,700,725,750,775,800,825,850,875,900,925,950,975,1000}"
 GFS_UPPER_LEVEL_PGRB2_LEVELS="${WEATHER_GFS_UPPER_LEVEL_PGRB2_LEVELS:-10,15,20,30,40,50,70,100,150,200,250,300,350,400,450,500,550,600,650,700,750,800,850,900,925,950,975,1000}"
 GFS_UPPER_LEVEL_VARIABLES="${WEATHER_GFS_UPPER_LEVEL_VARIABLES:-temperature,wind_u_component,wind_v_component,geopotential_height,cloud_cover,relative_humidity,vertical_velocity}"
 GFS_UPPER_LEVEL_CHUNK_SIZE="${WEATHER_GFS_UPPER_LEVEL_CHUNK_SIZE:-4}"
 GFS_UPPER_LEVEL_CONCURRENT="${WEATHER_GFS_UPPER_LEVEL_DOWNLOAD_CONCURRENT:-1}"
+GFS013_SYNC_VARIABLES="${WEATHER_GFS013_SYNC_VARIABLES:-temperature_2m,temperature_80m,temperature_100m,cloud_cover,cloud_cover_low,cloud_cover_mid,cloud_cover_high,pressure_msl,relative_humidity_2m,precipitation,wind_v_component_10m,wind_u_component_10m,wind_v_component_80m,wind_u_component_80m,wind_v_component_100m,wind_u_component_100m,surface_temperature,soil_temperature_0_to_10cm,soil_temperature_10_to_40cm,soil_temperature_40_to_100cm,soil_temperature_100_to_200cm,soil_moisture_0_to_10cm,soil_moisture_10_to_40cm,soil_moisture_40_to_100cm,soil_moisture_100_to_200cm,snow_depth,sensible_heat_flux,latent_heat_flux,showers,snowfall_water_equivalent,shortwave_radiation,diffuse_radiation,uv_index,uv_index_clear_sky,boundary_layer_height,total_column_integrated_water_vapour}"
+GFS025_SURFACE_SYNC_VARIABLES="${WEATHER_GFS025_SURFACE_SYNC_VARIABLES:-temperature_80m,temperature_100m,wind_u_component_80m,wind_v_component_80m,wind_u_component_100m,wind_v_component_100m,wind_gusts_10m,visibility,cape,lifted_index,convective_inhibition,freezing_level_height,categorical_freezing_rain}"
 GFS013_RUN="${WEATHER_GFS013_RUN:-}"
 GFS025_RUN="${WEATHER_GFS025_RUN:-}"
 SKIP_GFS013_DOWNLOAD="${WEATHER_SKIP_GFS013_DOWNLOAD:-false}"
@@ -84,6 +90,13 @@ run_openmeteo() {
     --volume "$DATA_DIR:/app/data" \
     "$IMAGE_NAME:$IMAGE_TAG" \
     "$@"
+}
+
+append_sync_server_arg() {
+  if [[ -n "$OPENMETEO_SYNC_BASE_URL" ]]; then
+    printf '%s\n' "--server"
+    printf '%s\n' "$OPENMETEO_SYNC_BASE_URL"
+  fi
 }
 
 has_local_dem_static_files() {
@@ -195,44 +208,109 @@ download_gfs025_upper_level_variable() {
   done < <(upper_level_only_variable_chunks "$variable")
 }
 
-# gfs_global in Open-Meteo mixes gfs013 with gfs025. gfs013 supplies the
-# high-resolution surface fields; gfs025 supplies variables absent from
-# sfluxgrbf, including visibility, gusts, CAPE, lifted index, CIN, freezing
-# rain flags and other weather-code dependencies. Pressure-level variables are
-# downloaded in smaller Open-Meteo only-variables batches to keep NOAA filter
-# requests stable while preserving Open-Meteo decoding and conversion.
-require_dem_source
+gfs025_pressure_sync_variables() {
+  local IFS=","
+  local variable
+  local level
+  local variables=()
+  local levels=()
+  local items=()
 
-if is_truthy "$SKIP_GFS013_DOWNLOAD"; then
-  printf '%s\n' "Skipping GFS013 download: WEATHER_SKIP_GFS013_DOWNLOAD is enabled."
-else
-  run_openmeteo download-gfs gfs013 \
-    $(append_run_arg "$GFS013_RUN") \
-    --max-forecast-hour "$GFS_MAX_FORECAST_HOUR" \
-    --concurrent "$GFS_CONCURRENT"
-fi
-
-if is_truthy "$SKIP_GFS025_SURFACE_DOWNLOAD"; then
-  printf '%s\n' "Skipping GFS025 surface download: WEATHER_SKIP_GFS025_SURFACE_DOWNLOAD is enabled."
-else
-  run_openmeteo download-gfs gfs025 \
-    $(append_run_arg "$GFS025_RUN") \
-    --max-forecast-hour "$GFS_MAX_FORECAST_HOUR" \
-    --concurrent "$GFS_CONCURRENT"
-fi
-
-if is_truthy "$SKIP_GFS025_UPPER_LEVEL_DOWNLOAD"; then
-  printf '%s\n' "Skipping GFS025 pressure-level download: WEATHER_SKIP_GFS025_UPPER_LEVEL_DOWNLOAD is enabled."
-else
-  IFS="," read -ra upper_variables <<< "$GFS_UPPER_LEVEL_VARIABLES"
-  for variable in "${upper_variables[@]}"; do
+  read -ra variables <<< "$GFS_UPPER_LEVEL_VARIABLES"
+  read -ra levels <<< "$GFS_UPPER_LEVELS"
+  for variable in "${variables[@]}"; do
     variable="${variable//[[:space:]]/}"
     if [[ -z "$variable" ]]; then
       continue
     fi
-    download_gfs025_upper_level_variable "$variable"
+    for level in "${levels[@]}"; do
+      level="${level//[[:space:]]/}"
+      if [[ -z "$level" ]]; then
+        continue
+      fi
+      if [[ "$variable" == "cloud_cover" && ( "$level" -lt 50 || "$level" == "70" ) ]]; then
+        continue
+      fi
+      items+=("${variable}_${level}hPa")
+    done
   done
-fi
+  (IFS=","; printf '%s\n' "${items[*]}")
+}
+
+sync_openmeteo_database() {
+  local models="$1"
+  local variables="$2"
+
+  run_openmeteo sync "$models" "$variables" \
+    $(append_sync_server_arg) \
+    --past-days "$OPENMETEO_SYNC_PAST_DAYS" \
+    --concurrent "$OPENMETEO_SYNC_CONCURRENT"
+}
+
+# gfs_global in Open-Meteo mixes gfs013 with gfs025. For strict parity with the
+# public Open-Meteo API, use WEATHER_GFS_DOWNLOAD_MODE=sync and point
+# WEATHER_OPENMETEO_SYNC_BASE_URL at the owned mirror of Open-Meteo's processed
+# database. The raw mode is retained for source-download debugging and regional
+# approximations, but NOAA raw/filter conversion is not the parity baseline.
+require_dem_source
+
+case "$GFS_DOWNLOAD_MODE" in
+  sync)
+    if is_truthy "$SKIP_GFS013_DOWNLOAD"; then
+      printf '%s\n' "Skipping GFS013 sync: WEATHER_SKIP_GFS013_DOWNLOAD is enabled."
+    else
+      sync_openmeteo_database ncep_gfs013 "$GFS013_SYNC_VARIABLES"
+    fi
+
+    if is_truthy "$SKIP_GFS025_SURFACE_DOWNLOAD"; then
+      printf '%s\n' "Skipping GFS025 surface sync: WEATHER_SKIP_GFS025_SURFACE_DOWNLOAD is enabled."
+    else
+      sync_openmeteo_database ncep_gfs025 "$GFS025_SURFACE_SYNC_VARIABLES"
+    fi
+
+    if is_truthy "$SKIP_GFS025_UPPER_LEVEL_DOWNLOAD"; then
+      printf '%s\n' "Skipping GFS025 pressure-level sync: WEATHER_SKIP_GFS025_UPPER_LEVEL_DOWNLOAD is enabled."
+    else
+      sync_openmeteo_database ncep_gfs025 "$(gfs025_pressure_sync_variables)"
+    fi
+    ;;
+  raw)
+    if is_truthy "$SKIP_GFS013_DOWNLOAD"; then
+      printf '%s\n' "Skipping GFS013 download: WEATHER_SKIP_GFS013_DOWNLOAD is enabled."
+    else
+      run_openmeteo download-gfs gfs013 \
+        $(append_run_arg "$GFS013_RUN") \
+        --max-forecast-hour "$GFS_MAX_FORECAST_HOUR" \
+        --concurrent "$GFS_CONCURRENT"
+    fi
+
+    if is_truthy "$SKIP_GFS025_SURFACE_DOWNLOAD"; then
+      printf '%s\n' "Skipping GFS025 surface download: WEATHER_SKIP_GFS025_SURFACE_DOWNLOAD is enabled."
+    else
+      run_openmeteo download-gfs gfs025 \
+        $(append_run_arg "$GFS025_RUN") \
+        --max-forecast-hour "$GFS_MAX_FORECAST_HOUR" \
+        --concurrent "$GFS_CONCURRENT"
+    fi
+
+    if is_truthy "$SKIP_GFS025_UPPER_LEVEL_DOWNLOAD"; then
+      printf '%s\n' "Skipping GFS025 pressure-level download: WEATHER_SKIP_GFS025_UPPER_LEVEL_DOWNLOAD is enabled."
+    else
+      IFS="," read -ra upper_variables <<< "$GFS_UPPER_LEVEL_VARIABLES"
+      for variable in "${upper_variables[@]}"; do
+        variable="${variable//[[:space:]]/}"
+        if [[ -z "$variable" ]]; then
+          continue
+        fi
+        download_gfs025_upper_level_variable "$variable"
+      done
+    fi
+    ;;
+  *)
+    printf '%s\n' "WEATHER_GFS_DOWNLOAD_MODE must be 'sync' or 'raw'." >&2
+    exit 2
+    ;;
+esac
 
 if is_truthy "$SKIP_CAMS_DOWNLOAD"; then
   printf '%s\n' "Skipping CAMS global download: WEATHER_SKIP_CAMS_DOWNLOAD is enabled."
