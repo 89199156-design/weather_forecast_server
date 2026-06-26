@@ -135,6 +135,19 @@ def test_runtime_data_download_filters_empty_env_values_before_docker_run():
     assert "$0 !~ /^[[:space:]]*[^#][^=]*=[[:space:]]*$/" in script
 
 
+def test_runtime_data_download_preserves_explicit_environment_over_config_file():
+    script = (ROOT / "scripts" / "download_openmeteo_runtime_data.sh").read_text(encoding="utf-8")
+
+    assert "capture_weather_env_overrides" in script
+    assert "restore_weather_env_overrides" in script
+    assert "WEATHER_ENV_OVERRIDES" in script
+    capture_call = script.index("\ncapture_weather_env_overrides\n")
+    source_call = script.index('source "$ENV_FILE"')
+    restore_call = script.index("\nrestore_weather_env_overrides\n")
+    assert capture_call < source_call < restore_call
+    assert restore_call < script.index("GFS_MAX_FORECAST_HOUR=")
+
+
 def test_gfs_downloader_uses_noaa_stable_http_headers_without_weather_logic_fork():
     source = (ROOT / "vendor" / "open-meteo" / "Sources" / "App" / "Gfs" / "GfsDownload.swift").read_text(
         encoding="utf-8"

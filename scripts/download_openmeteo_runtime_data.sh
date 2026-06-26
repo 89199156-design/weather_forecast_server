@@ -4,11 +4,32 @@ set -euo pipefail
 APP_DIR="${WEATHER_FORECAST_APP_DIR:-/opt/1panel/apps/weather_forecast_server}"
 ENV_FILE="${WEATHER_OPENMETEO_ENV_FILE:-$APP_DIR/config/singapore.example.env}"
 
+declare -A WEATHER_ENV_OVERRIDES=()
+
+capture_weather_env_overrides() {
+  local name
+  while IFS='=' read -r name _; do
+    if [[ "$name" == WEATHER_* ]]; then
+      WEATHER_ENV_OVERRIDES["$name"]="${!name}"
+    fi
+  done < <(env)
+}
+
+restore_weather_env_overrides() {
+  local name
+  for name in "${!WEATHER_ENV_OVERRIDES[@]}"; do
+    printf -v "$name" '%s' "${WEATHER_ENV_OVERRIDES[$name]}"
+    export "$name"
+  done
+}
+
+capture_weather_env_overrides
 if [[ -f "$ENV_FILE" ]]; then
   set -a
   source "$ENV_FILE"
   set +a
 fi
+restore_weather_env_overrides
 
 IMAGE_NAME="${WEATHER_OPENMETEO_IMAGE:-weather-forecast-openmeteo}"
 IMAGE_TAG="${WEATHER_OPENMETEO_TAG:-latest}"
