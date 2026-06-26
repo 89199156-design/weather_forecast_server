@@ -2,7 +2,7 @@ import Vapor
 import Synchronization
 
 /// Same as above, but not an actor
-final actor TransferAmountTracker: Sendable {
+final class TransferAmountTracker: Sendable {
     let transfered = Atomic(0)
     let transferedLastPrint = Atomic(0)
     let printDelta: Double = 20
@@ -96,7 +96,7 @@ struct TransferAmountTrackerStream<T: AsyncSequence>: Sendable, AsyncSequence wh
             guard let data = try await self.iterator.next() else {
                 return nil
             }
-            await tracker.add(data.readableBytes)
+            tracker.add(data.readableBytes)
             return data
         }
     }

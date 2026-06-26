@@ -998,9 +998,6 @@ extension MultiDomains {
             return .metnoNordic
         case .geosphere_arome_austria:
             return .geosphereAromeAustria
-        case .chmi_aladin_cz_1km:
-            // TODO: register chmi_aladin_cz_1km in the OpenMeteoSdk model enum
-            return .geosphereAromeAustria
         case .era5_seamless, .copernicus_era5_seamless:
             return .era5Seamless
         case .era5, .copernicus_era5:

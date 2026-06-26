@@ -1,9 +1,6 @@
 import OmFileFormat
 import Logging
 import Foundation
-import AsyncHTTPClient
-import NIOCore
-import Vapor
 
 /**
  multiple files
@@ -132,18 +129,17 @@ actor OmSpatialTimestepWriter {
     }
     
     /// Finalize and upload
-    func finalise(application: Application, completed: Bool, validTimes: [Timestamp], uploadS3Bucket: String?, uploadMeta: Bool = true) async throws -> [GenericVariableHandle] {
+    func finalise(completed: Bool, validTimes: [Timestamp], uploadS3Bucket: String?, uploadMeta: Bool = true) async throws -> [GenericVariableHandle] {
         let handles = try await finalise()
         guard handles.count > 0 else {
             return []
         }
-        try await writeMetaAndAWSUpload(application: application, completed: completed, validTimes: validTimes, uploadS3Bucket: uploadS3Bucket, uploadMeta: uploadMeta)
+        try await writeMetaAndAWSUpload(completed: completed, validTimes: validTimes, uploadS3Bucket: uploadS3Bucket, uploadMeta: uploadMeta)
         return handles
     }
     
-    /// Note: Meta JSON files are now uploaded using in-memory data. It is now safe to call this function out of sync with model downloading. Ideally one queue per bucket.
-    func writeMetaAndAWSUpload(application: Application, completed: Bool, validTimes: [Timestamp], uploadS3Bucket: String?, uploadMeta: Bool = true, forceAllTimestampUpload: Bool = false) async throws {
-        try await ensembleMean?.writer.writeMetaAndAWSUpload(application: application, completed: completed, validTimes: validTimes, uploadS3Bucket: uploadS3Bucket, uploadMeta: uploadMeta, forceAllTimestampUpload: forceAllTimestampUpload)
+    func writeMetaAndAWSUpload(completed: Bool, validTimes: [Timestamp], uploadS3Bucket: String?, uploadMeta: Bool = true, forceAllTimestampUpload: Bool = false) async throws {
+        try await ensembleMean?.writer.writeMetaAndAWSUpload(completed: completed, validTimes: validTimes, uploadS3Bucket: uploadS3Bucket, uploadMeta: uploadMeta, forceAllTimestampUpload: forceAllTimestampUpload)
         
         // Upload to AWS S3
         // The single OM file will be uploaded + meta JSON files
@@ -166,18 +162,16 @@ actor OmSpatialTimestepWriter {
         let metaInProgress = "\(directorySpatial)in-progress\(realm).json"
         let metaLatest = "\(directorySpatial)latest\(realm).json"
         
-        /// Note: ByteBuffer+readableBytesView fixes a release build issue
-        let metaData = ByteBuffer(data: try meta.jsonEncodedData()).readableBytesView
-        try metaData.writeAtomic(path: metaRunMeta)
+        try meta.writeTo(path: metaRunMeta)
         
         /// Only update `in-progress.json` if there is no older run currently generating files. E.g. HRRR downloads 2 runs in parallel with ~20 minutes overlap
         let canUpdateInProgress = completed || (try? DataSpatialJson.readFrom(path: metaInProgress).sameRunOrOlderThan5Minutes(run: run)) ?? true
         
         if canUpdateInProgress {
-            try metaData.writeAtomic(path: metaInProgress)
+            try meta.writeTo(path: metaInProgress)
         }
         if completed {
-            try metaData.writeAtomic(path: metaLatest)
+            try meta.writeTo(path: metaLatest)
         }
         
         guard let uploadS3Bucket else {
@@ -186,46 +180,38 @@ actor OmSpatialTimestepWriter {
         let domain = domain
         let run = run
         let time = time
-        for (bucket, profile) in domain.domainRegistry.parseBucket(uploadS3Bucket) {
-            if /*bucket == "openmeteo" &&*/ profile == "ceph" {
-                continue // skip upload to ceph storage for now
+        try await domain.domainRegistry.parseBucket(uploadS3Bucket).foreachConcurrent(nConcurrent: 4) { (bucket, profile) in
+            if bucket == "openmeteo" && profile == "ceph" {
+                return // skip upload to ceph storage for now
             }
             let start = DispatchTime.now()
-            let bucketPrefixed = bucket.starts(with: "s3") ? bucket : "s3://\(bucket)/"
-            let destDomain = "\(bucketPrefixed)data_spatial/\(domain.domainRegistry.rawValue)/"
+            let destDomain = "s3://\(bucket)/data_spatial/\(domain.domainRegistry.rawValue)/"
             let destRun = "\(destDomain)\(run.format_directoriesYYYYMMddhhmm)/"
             let destFile = "\(destRun)\(time.iso8601_YYYY_MM_dd_HHmm)\(realm).om"
             
             if forceAllTimestampUpload {
-                await application.s3UploadManager.sync(
-                    client: application.http1Client,
-                    bucketEndpoint: bucket,
-                    localDirectory: directorySpatial,
-                    server: bucket,
-                    basePath: "data_spatial/\(domain.domainRegistry.rawValue)/"
-                )
+                // Sync entire run directory
+                try Process.awsSync(src: directorySpatial, dest: destDomain, profile: profile)
             } else {
-                await application.s3UploadManager.uploadMultipart(
-                    client: application.http1Client,
-                    bucketEndpoint: bucket,
-                    file: filename,
-                    url: destFile
-                )
+                try Process.awsCopy(src: filename, dest: destFile, profile: profile)
             }
             
             if uploadMeta {
                 let destMeta = "\(destRun)meta\(realm).json"
-                await application.s3UploadManager.upload(client: application.http1Client, bucketEndpoint: bucket, data: metaData, url: destMeta)
+                try Process.awsCopy(src: metaRunMeta, dest: destMeta, profile: profile)
                 if canUpdateInProgress {
                     let destInProgress = "\(destDomain)in-progress\(realm).json"
-                    await application.s3UploadManager.upload(client: application.http1Client, bucketEndpoint: bucket, data: metaData, url: destInProgress)
+                    try Process.awsCopy(src: metaInProgress, dest: destInProgress, profile: profile)
                 }
                 if completed {
                     let destLatest = "\(destDomain)latest\(realm).json"
-                    await application.s3UploadManager.upload(client: application.http1Client, bucketEndpoint: bucket, data: metaData, url: destLatest)
+                    try Process.awsCopy(src: metaLatest, dest: destLatest, profile: profile)
+                    
+                    // Additional sync to make sure everything is uploaded
+                    try Process.awsSync(src: directorySpatial, dest: destDomain, profile: profile)
                 }
             }
-            self.logger.info("AWS Upload to \(bucket.stripHttpPassword()) [\(profile ?? "")] took \(start.timeElapsedPretty()) [Time \(Timestamp.now().iso8601_YYYY_MM_dd_HH_mm)]")
+            self.logger.info("AWS Upload to \(bucket) [\(profile ?? "")] took \(start.timeElapsedPretty()) [Time \(Timestamp.now().iso8601_YYYY_MM_dd_HH_mm)]")
         }
     }
     
@@ -326,13 +312,13 @@ actor OmSpatialMultistepWriter {
     
     /// Finalise the time step and return all handles
     /// If not validTimes are given, use all timestamps from the underlaying writer
-    func finalise(application: Application, completed: Bool, validTimes: [Timestamp]?, uploadS3Bucket: String?) async throws -> [GenericVariableHandle] {
+    func finalise(completed: Bool, validTimes: [Timestamp]?, uploadS3Bucket: String?) async throws -> [GenericVariableHandle] {
         let validTimes = validTimes ?? writer.map(\.time)
         // Only upload META JSON for the last timestamp
         let lastTimestamp = writer.last?.time
         let handles = try await writer.asyncFlatMap({
             let isLast = $0.time == lastTimestamp
-            return try await $0.finalise(application: application, completed: completed, validTimes: validTimes, uploadS3Bucket: uploadS3Bucket, uploadMeta: isLast)
+            return try await $0.finalise(completed: completed, validTimes: validTimes, uploadS3Bucket: uploadS3Bucket, uploadMeta: isLast)
         })
         return handles
     }
@@ -346,8 +332,8 @@ actor OmSpatialMultistepWriter {
     }
     
     // Upload om files to AWS from mutliple timesteps
-    func writeMetaAndAWSUpload(application: Application, completed: Bool, validTimes: [Timestamp], uploadS3Bucket: String?, uploadMeta: Bool = true) async throws {
-        try await writer.last?.writeMetaAndAWSUpload(application: application, completed: completed, validTimes: validTimes, uploadS3Bucket: uploadS3Bucket, uploadMeta: uploadMeta, forceAllTimestampUpload: true)
+    func writeMetaAndAWSUpload(completed: Bool, validTimes: [Timestamp], uploadS3Bucket: String?, uploadMeta: Bool = true) async throws {
+        try await writer.last?.writeMetaAndAWSUpload(completed: completed, validTimes: validTimes, uploadS3Bucket: uploadS3Bucket, uploadMeta: uploadMeta, forceAllTimestampUpload: true)
     }
 }
 

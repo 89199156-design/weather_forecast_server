@@ -17,38 +17,6 @@ public extension Float {
     }
 }
 
-private let _pow10: [Int] = [1, 10, 100, 1_000, 10_000, 100_000, 1_000_000, 10_000_000]
-
-extension Double {
-    /// Format to a fixed number of decimal places without Foundation/printf overhead.
-    func formatted(decimals: Int) -> String {
-        guard decimals > 0 else {
-            return String(Int(self.rounded()))
-        }
-        let factor = _pow10[decimals]
-        let abs_val = self < 0 ? -self : self
-        let scaled = Int((abs_val * Double(factor)).rounded())
-        let intPart = scaled / factor
-        let fracPart = scaled % factor
-        return self < 0 ? "-\(intPart).\(fracPart.zeroPadded(len: decimals))" : "\(intPart).\(fracPart.zeroPadded(len: decimals))"
-    }
-}
-
-extension Float {
-    /// Format to a fixed number of decimal places without Foundation/printf overhead.
-    func formatted(decimals: Int) -> String {
-        guard decimals > 0 else {
-            return String(Int(self.rounded()))
-        }
-        let factor = _pow10[decimals]
-        let abs_val = self < 0 ? -self : self
-        let scaled = Int((abs_val * Float(factor)).rounded())
-        let intPart = scaled / factor
-        let fracPart = scaled % factor
-        return self < 0 ? "-\(intPart).\(fracPart.zeroPadded(len: decimals))" : "\(intPart).\(fracPart.zeroPadded(len: decimals))"
-    }
-}
-
 extension Int {
     /// Integer division, but round up instead of floor
     @inlinable func divideRoundedUp(divisor: Int) -> Int {
@@ -56,10 +24,7 @@ extension Int {
     }
 
     func zeroPadded(len: Int) -> String {
-        let s = String(self)
-        let pad = len - s.count
-        guard pad > 0 else { return s }
-        return String(repeating: "0", count: pad) + s
+        return String(format: "%0\(len)d", self)
     }
 
     /// Performs mathematical module keeping the result positive

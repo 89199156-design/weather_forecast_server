@@ -560,7 +560,7 @@ Current rule:
 
 - `vendor/open-meteo` must match the upstream Open-Meteo commit selected for
   current public API parity byte-for-byte. The active candidate is
-  `acfb7eb13ffdca9d3772c57716c240d3a7d73da5`.
+  `036c1d940f2dd5af48f899c2d8162d00d12d3c49`.
 - Do not patch Open-Meteo model readers, grids, interpolation, weather-code
   derivation, downloader transport, API serialization, DEM handling, or SDK
   dependency wiring.
@@ -585,10 +585,14 @@ The earlier `d91c52f00665bb8ddd348f688fece556c933ffbb` candidate included the
 `single-runs-api.open-meteo.com` showed identical precipitation, showers, CAPE,
 cloud, and visibility inputs but `weather_code` mismatches where the candidate
 returned thunderstorm `95` and the public API returned drizzle `51/55`. The
-selected `acfb7eb13ffdca9d3772c57716c240d3a7d73da5` commit is the upstream
-commit immediately before that weather-code change and is therefore the next
-current-API parity candidate. This is a source-version selection, not a local
-weather-code patch.
+`acfb7eb13ffdca9d3772c57716c240d3a7d73da5` candidate is immediately before
+that weather-code change, but it still contains upstream commit
+`98a3e0f00bf13633c5511a6c7788462088bfe752`, which changed JSON/CSV float
+formatting. The selected `036c1d940f2dd5af48f899c2d8162d00d12d3c49` commit is
+the upstream parent of `98a3e0f0`, includes the earlier single-runs time
+alignment and weather-code fixes observed as required, and keeps the older
+text writer behavior that matches the current public API. This is a
+source-version selection, not a local weather-code or formatting patch.
 
 ## Current Target Validation Rule
 
@@ -719,12 +723,25 @@ Additional spot checks:
 
 Analysis:
 
-The remaining blocker is not a local weather-code, interpolation, or variable
-mapping patch. The vendored source now matches upstream `acfb7eb1`
-byte-for-byte, and the failed value is the raw GFS013 `temperature_2m` API
-output read from `REMOTE_DATA_DIRECTORY=https://openmeteo.s3.amazonaws.com/data/`.
-The current public `single-runs-api.open-meteo.com` returns the same fields from
-an internal reference path with `temperature_2m` rounded `0.1` C lower on many
-frames. Since all related derived fields and CAMS are passing, the next fix must
-focus on using the same GFS013 processed-data snapshot/source as the public API,
-not on changing Open-Meteo engine logic.
+The remaining blocker is not a local weather-code, interpolation, variable
+mapping, DEM, model selection, or processed-data snapshot problem. A direct
+flatbuffers comparison for a failing point showed identical raw
+`temperature_2m` values on local and public API:
+`[29.350000381469727, 29.549999237060547, ...]`. The mismatch is only in the
+text writers: the `acfb7eb1` candidate includes upstream `98a3e0f0`, whose
+new fast `Float.formatted(decimals:)` writes `29.549999...` as `29.6`, while
+the current public API still writes it as `29.5`. The next candidate must
+therefore use the upstream source version matching the public API writer,
+not a local formatting patch.
+
+## Next Candidate: upstream `036c1d94`
+
+Candidate source selection:
+
+- upstream Open-Meteo source:
+  `036c1d940f2dd5af48f899c2d8162d00d12d3c49`;
+- reason: parent of upstream `98a3e0f0`, preserving the public API's current
+  text serialization behavior while retaining earlier single-runs time
+  alignment and weather-code fixes;
+- vendored source audit: `missing=0`, `changed=0`, `extra=0` against the
+  upstream archive for `036c1d94`.

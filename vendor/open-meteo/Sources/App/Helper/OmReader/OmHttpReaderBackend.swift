@@ -109,7 +109,8 @@ final class OmHttpReaderBackend: OmFileReaderBackend, Sendable {
         try request.applyS3Credentials()
         logger.debug("Getting data range \(offset)-\(offset + count - 1) from \(request.url)")
         let backoff = ExponentialBackOff(factor: .milliseconds(500), maximum: .seconds(5))
-        let buffer = try await client.executeRetryAndCollect(request, logger: logger, upTo: count, deadline: .seconds(30), timeoutPerRequest: .seconds(10), backOffSettings: backoff)
+        let response = try await client.executeRetry(request, logger: logger, deadline: .seconds(30), timeoutPerRequest: .seconds(10), backOffSettings: backoff)
+        let buffer = try await response.body.collect(upTo: count)
         lastValidatedAtomic.store(Timestamp.now().timeIntervalSince1970, ordering: .relaxed)
         return buffer
     }

@@ -43,7 +43,7 @@ Singapore server:
 - current remote: `git@github.com:89199156-design/weather_server_gfs.git`
 - current old HEAD observed: `fe6d0e2 Document GFS alignment completion audit`
 - Open-Meteo checkout selected for current API parity:
-  `open-meteo/open-meteo@acfb7eb13ffdca9d3772c57716c240d3a7d73da5`
+  `open-meteo/open-meteo@036c1d940f2dd5af48f899c2d8162d00d12d3c49`
 - SDK checkout selected by that upstream `Package.resolved`:
   `open-meteo/sdk@a29c4b62dd8445128e6db30f0a6fb5509fa1259c`
 
@@ -172,7 +172,7 @@ recoverable from the old read-only repository.
    Add AGPL license, upstream record, migration design, and ignore rules.
 
 2. Open-Meteo baseline:
-   Import Open-Meteo source at `acfb7eb13ffdca9d3772c57716c240d3a7d73da5`.
+   Import Open-Meteo source at `036c1d940f2dd5af48f899c2d8162d00d12d3c49`.
    Keep upstream path and local patches auditable.
 
 3. Local integration layer:

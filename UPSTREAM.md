@@ -8,20 +8,24 @@ updated whenever upstream code is imported, rebased, or patched.
 - Repository: `https://github.com/open-meteo/open-meteo`
 - License: GNU Affero General Public License v3.0 or later
 - Baseline commit selected for migration:
-  `d91c52f00665bb8ddd348f688fece556c933ffbb`
-- Commit subject observed on Singapore:
-  `fix: missing pressure level in flatbuffers encoding (#1926)`
+  `036c1d940f2dd5af48f899c2d8162d00d12d3c49`
+- Commit subject:
+  `feat: option to generate data_run for IFS after only a certain amount of forecast hours (#1886)`
 - Reason for this baseline:
-  It matches the Open-Meteo source tree used during the previous GFS parity
-  audit on the Singapore server and is the latest source baseline found there
-  at migration start.
+  It is the upstream Open-Meteo commit immediately before
+  `98a3e0f00bf13633c5511a6c7788462088bfe752`, which changed JSON/CSV float
+  formatting. The current public `single-runs-api.open-meteo.com` API still
+  serializes GFS `temperature_2m` like the pre-`98a3e0f0` writer, while the
+  flatbuffers raw values match. This baseline also predates the later
+  thunderstorm weather-code parameterisation commits that did not match the
+  current public API during validation.
 
 ## Open-Meteo SDK
 
 - Repository: `https://github.com/open-meteo/sdk`
-- Baseline commit observed through Open-Meteo `Package.resolved` and Singapore
-  source checkout: `e6274cf9e10240b98219b16cf63cf0fae73347d9`
-- Commit subject observed on Singapore: `fix: bump release`
+- Baseline commit selected by Open-Meteo `Package.resolved`:
+  `a29c4b62dd8445128e6db30f0a6fb5509fa1259c`
+- Commit subject: `fix: use java version 17 for build (#262)`
 
 ## Previous Internal Source
 
