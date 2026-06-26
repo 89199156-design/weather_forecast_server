@@ -42,6 +42,20 @@ def test_singapore_deploy_example_uses_new_path_and_openmeteo_container():
     assert "satellite" not in script.lower()
 
 
+def test_fixed_snapshot_reference_script_runs_isolated_openmeteo_reference():
+    script = (ROOT / "scripts" / "run_fixed_snapshot_reference.sh").read_text(encoding="utf-8")
+
+    assert "weather-forecast-openmeteo-reference" in script
+    assert "REMOTE_DATA_DIRECTORY" in script
+    assert "WEATHER_DEM_REMOTE_DATA_DIRECTORY" in script
+    assert "CACHE_SIZE" in script
+    assert "CACHE_META_SIZE" in script
+    assert "127.0.0.1:${REFERENCE_PORT}:8080" in script
+    assert "serve --env production --hostname 0.0.0.0 --port 8080" in script
+    assert "weather_server_gfs" not in script
+    assert "satellite" not in script.lower()
+
+
 def test_singapore_deploy_makes_data_directory_writable_by_openmeteo_user():
     script = (ROOT / "scripts" / "deploy_singapore_candidate.sh").read_text(encoding="utf-8")
 

@@ -1,0 +1,209 @@
+{
+  "scope": "gfs",
+  "points": 100,
+  "frames": 50,
+  "variables": 746,
+  "reference_base_url": "https://api.open-meteo.com",
+  "start_hour": "2026-06-26T10:00",
+  "end_hour": "2026-06-28T11:00",
+  "failures": [
+    {
+      "point_index": 40,
+      "points": [
+        {
+          "latitude": 23.49,
+          "longitude": 98.35
+        },
+        {
+          "latitude": 24.07,
+          "longitude": 99.05
+        },
+        {
+          "latitude": 24.65,
+          "longitude": 99.75
+        },
+        {
+          "latitude": 25.23,
+          "longitude": 100.45
+        },
+        {
+          "latitude": 25.81,
+          "longitude": 101.15
+        },
+        {
+          "latitude": 26.39,
+          "longitude": 101.85
+        },
+        {
+          "latitude": 26.97,
+          "longitude": 102.55
+        },
+        {
+          "latitude": 27.55,
+          "longitude": 103.25
+        },
+        {
+          "latitude": 28.13,
+          "longitude": 103.95
+        },
+        {
+          "latitude": 28.71,
+          "longitude": 104.65
+        }
+      ],
+      "variables": [
+        "vertical_velocity_175hPa",
+        "vertical_velocity_200hPa",
+        "vertical_velocity_225hPa",
+        "vertical_velocity_250hPa",
+        "vertical_velocity_275hPa",
+        "vertical_velocity_300hPa",
+        "vertical_velocity_325hPa",
+        "vertical_velocity_350hPa",
+        "vertical_velocity_375hPa",
+        "vertical_velocity_400hPa",
+        "vertical_velocity_425hPa",
+        "vertical_velocity_450hPa",
+        "vertical_velocity_475hPa",
+        "vertical_velocity_500hPa",
+        "vertical_velocity_525hPa",
+        "vertical_velocity_550hPa",
+        "vertical_velocity_575hPa",
+        "vertical_velocity_600hPa",
+        "vertical_velocity_625hPa",
+        "vertical_velocity_650hPa",
+        "vertical_velocity_675hPa",
+        "vertical_velocity_700hPa",
+        "vertical_velocity_725hPa",
+        "vertical_velocity_750hPa",
+        "vertical_velocity_775hPa",
+        "vertical_velocity_800hPa",
+        "vertical_velocity_825hPa",
+        "vertical_velocity_850hPa",
+        "vertical_velocity_875hPa",
+        "vertical_velocity_900hPa"
+      ],
+      "reason": "reference_request_failed",
+      "error": "429 Client Error: Too Many Requests for url: https://api.open-meteo.com/v1/forecast?latitude=23.49%2C24.07%2C24.65%2C25.23%2C25.81%2C26.39%2C26.97%2C27.55%2C28.13%2C28.71&longitude=98.35%2C99.05%2C99.75%2C100.45%2C101.15%2C101.85%2C102.55%2C103.25%2C103.95%2C104.65&hourly=vertical_velocity_175hPa%2Cvertical_velocity_200hPa%2Cvertical_velocity_225hPa%2Cvertical_velocity_250hPa%2Cvertical_velocity_275hPa%2Cvertical_velocity_300hPa%2Cvertical_velocity_325hPa%2Cvertical_velocity_350hPa%2Cvertical_velocity_375hPa%2Cvertical_velocity_400hPa%2Cvertical_velocity_425hPa%2Cvertical_velocity_450hPa%2Cvertical_velocity_475hPa%2Cvertical_velocity_500hPa%2Cvertical_velocity_525hPa%2Cvertical_velocity_550hPa%2Cvertical_velocity_575hPa%2Cvertical_velocity_600hPa%2Cvertical_velocity_625hPa%2Cvertical_velocity_650hPa%2Cvertical_velocity_675hPa%2Cvertical_velocity_700hPa%2Cvertical_velocity_725hPa%2Cvertical_velocity_750hPa%2Cvertical_velocity_775hPa%2Cvertical_velocity_800hPa%2Cvertical_velocity_825hPa%2Cvertical_velocity_850hPa%2Cvertical_velocity_875hPa%2Cvertical_velocity_900hPa&timezone=UTC&timeformat=iso8601&start_hour=2026-06-26T10%3A00&end_hour=2026-06-28T11%3A00&models=gfs_global&wind_speed_unit=ms"
+    },
+    {
+      "point_index": 40,
+      "points": [
+        {
+          "latitude": 23.49,
+          "longitude": 98.35
+        },
+        {
+          "latitude": 24.07,
+          "longitude": 99.05
+        },
+        {
+          "latitude": 24.65,
+          "longitude": 99.75
+        },
+        {
+          "latitude": 25.23,
+          "longitude": 100.45
+        },
+        {
+          "latitude": 25.81,
+          "longitude": 101.15
+        },
+        {
+          "latitude": 26.39,
+          "longitude": 101.85
+        },
+        {
+          "latitude": 26.97,
+          "longitude": 102.55
+        },
+        {
+          "latitude": 27.55,
+          "longitude": 103.25
+        },
+        {
+          "latitude": 28.13,
+          "longitude": 103.95
+        },
+        {
+          "latitude": 28.71,
+          "longitude": 104.65
+        }
+      ],
+      "variables": [
+        "vertical_velocity_925hPa",
+        "vertical_velocity_950hPa",
+        "vertical_velocity_975hPa",
+        "vertical_velocity_1000hPa",
+        "windspeed_10hPa",
+        "windspeed_15hPa",
+        "windspeed_20hPa",
+        "windspeed_30hPa",
+        "windspeed_40hPa",
+        "windspeed_50hPa",
+        "windspeed_70hPa",
+        "windspeed_100hPa",
+        "windspeed_125hPa",
+        "windspeed_150hPa",
+        "windspeed_175hPa",
+        "windspeed_200hPa",
+        "windspeed_225hPa",
+        "windspeed_250hPa",
+        "windspeed_275hPa",
+        "windspeed_300hPa",
+        "windspeed_325hPa",
+        "windspeed_350hPa",
+        "windspeed_375hPa",
+        "windspeed_400hPa",
+        "windspeed_425hPa",
+        "windspeed_450hPa",
+        "windspeed_475hPa",
+        "windspeed_500hPa",
+        "windspeed_525hPa",
+        "windspeed_550hPa"
+      ],
+      "reason": "reference_request_failed",
+      "error": "429 Client Error: Too Many Requests for url: https://api.open-meteo.com/v1/forecast?latitude=23.49%2C24.07%2C24.65%2C25.23%2C25.81%2C26.39%2C26.97%2C27.55%2C28.13%2C28.71&longitude=98.35%2C99.05%2C99.75%2C100.45%2C101.15%2C101.85%2C102.55%2C103.25%2C103.95%2C104.65&hourly=vertical_velocity_925hPa%2Cvertical_velocity_950hPa%2Cvertical_velocity_975hPa%2Cvertical_velocity_1000hPa%2Cwindspeed_10hPa%2Cwindspeed_15hPa%2Cwindspeed_20hPa%2Cwindspeed_30hPa%2Cwindspeed_40hPa%2Cwindspeed_50hPa%2Cwindspeed_70hPa%2Cwindspeed_100hPa%2Cwindspeed_125hPa%2Cwindspeed_150hPa%2Cwindspeed_175hPa%2Cwindspeed_200hPa%2Cwindspeed_225hPa%2Cwindspeed_250hPa%2Cwindspeed_275hPa%2Cwindspeed_300hPa%2Cwindspeed_325hPa%2Cwindspeed_350hPa%2Cwindspeed_375hPa%2Cwindspeed_400hPa%2Cwindspeed_425hPa%2Cwindspeed_450hPa%2Cwindspeed_475hPa%2Cwindspeed_500hPa%2Cwindspeed_525hPa%2Cwindspeed_550hPa&timezone=UTC&timeformat=iso8601&start_hour=2026-06-26T10%3A00&end_hour=2026-06-28T11%3A00&models=gfs_global&wind_speed_unit=ms"
+    }
+  ],
+  "checked_values": 1672000,
+  "completed_chunks": 114,
+  "total_chunks": 250,
+  "elapsed_seconds": 4528.17,
+  "passed": false,
+  "incomplete": true,
+  "current_stage": "reference_request_start",
+  "last_point_offset": 40,
+  "last_variables": [
+    "windspeed_575hPa",
+    "windspeed_600hPa",
+    "windspeed_625hPa",
+    "windspeed_650hPa",
+    "windspeed_675hPa",
+    "windspeed_700hPa",
+    "windspeed_725hPa",
+    "windspeed_750hPa",
+    "windspeed_775hPa",
+    "windspeed_800hPa",
+    "windspeed_825hPa",
+    "windspeed_850hPa",
+    "windspeed_875hPa",
+    "windspeed_900hPa",
+    "windspeed_925hPa",
+    "windspeed_950hPa",
+    "windspeed_975hPa",
+    "windspeed_1000hPa",
+    "winddirection_10hPa",
+    "winddirection_15hPa",
+    "winddirection_20hPa",
+    "winddirection_30hPa",
+    "winddirection_40hPa",
+    "winddirection_50hPa",
+    "winddirection_70hPa",
+    "winddirection_100hPa",
+    "winddirection_125hPa",
+    "winddirection_150hPa",
+    "winddirection_175hPa",
+    "winddirection_200hPa"
+  ]
+}

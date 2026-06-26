@@ -1,0 +1,15 @@
+{
+  "scope": "gfs",
+  "points": 50,
+  "frames": 50,
+  "variables": 746,
+  "reference_base_url": "https://api.open-meteo.com",
+  "start_hour": "2026-06-26T10:00",
+  "end_hour": "2026-06-28T11:00",
+  "failures": [],
+  "checked_values": 1865000,
+  "completed_chunks": 375,
+  "total_chunks": 375,
+  "elapsed_seconds": 1869.981,
+  "passed": true
+}

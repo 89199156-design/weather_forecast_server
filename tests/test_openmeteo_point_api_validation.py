@@ -26,6 +26,17 @@ def test_generate_points_is_deterministic_inside_configured_region():
     ]
 
 
+def test_generate_points_can_offset_gate_samples_to_avoid_overlap():
+    validator = load_module()
+
+    baseline = validator.generate_points(50, left_lon=70, right_lon=140, bottom_lat=0, top_lat=58)
+    shifted = validator.generate_points(100, left_lon=70, right_lon=140, bottom_lat=0, top_lat=58, point_offset=0.25)
+
+    assert set(tuple(point.items()) for point in baseline).isdisjoint(
+        set(tuple(point.items()) for point in shifted)
+    )
+
+
 def test_chunked_inventory_keeps_gfs_and_cams_variables_separate():
     validator = load_module()
     inventory = {
@@ -112,6 +123,7 @@ def test_validate_scope_batches_points_and_compares_each_location(monkeypatch):
         frames=2,
         chunk_size=10,
         point_chunk_size=2,
+        sample_offset=0.0,
         tolerance=0.001,
         timeout=1,
         allow_all_null=False,
@@ -147,6 +159,7 @@ def test_validate_scope_allows_all_null_when_reference_matches(monkeypatch):
         frames=2,
         chunk_size=10,
         point_chunk_size=1,
+        sample_offset=0.0,
         tolerance=0.001,
         timeout=1,
         allow_all_null=False,
@@ -177,6 +190,7 @@ def test_validate_scope_rejects_all_null_when_reference_has_values(monkeypatch):
         frames=2,
         chunk_size=10,
         point_chunk_size=1,
+        sample_offset=0.0,
         tolerance=0.001,
         timeout=1,
         allow_all_null=False,

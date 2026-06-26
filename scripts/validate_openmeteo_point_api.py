@@ -41,12 +41,15 @@ def generate_points(
     right_lon: float,
     bottom_lat: float,
     top_lat: float,
+    point_offset: float = 0.0,
 ) -> list[dict[str, float]]:
     if count <= 0:
         raise ValueError("count must be positive")
+    if not 0.0 <= point_offset < 1.0:
+        raise ValueError("point_offset must be in [0, 1)")
     points = []
     for index in range(count):
-        fraction = (index + 0.5) / count
+        fraction = (index + 0.5 + point_offset) / count
         latitude = bottom_lat + (top_lat - bottom_lat) * fraction
         longitude = left_lon + (right_lon - left_lon) * fraction
         points.append({"latitude": round(latitude, 6), "longitude": round(longitude, 6)})
@@ -242,6 +245,7 @@ def validate_scope(
     frames: int,
     chunk_size: int,
     point_chunk_size: int,
+    sample_offset: float,
     start_hour: str | None = None,
     end_hour: str | None = None,
     tolerance: float,
@@ -257,6 +261,7 @@ def validate_scope(
     report: dict[str, Any] = {
         "scope": scope,
         "points": len(points),
+        "point_offset": sample_offset,
         "frames": frames,
         "variables": len(variables),
         "reference_base_url": reference_base_url,
@@ -465,6 +470,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--right-lon", type=float, default=140.0)
     parser.add_argument("--bottom-lat", type=float, default=0.0)
     parser.add_argument("--top-lat", type=float, default=58.0)
+    parser.add_argument("--point-offset", type=float, default=0.0)
     parser.add_argument("--output-report", required=True)
     return parser.parse_args()
 
@@ -496,6 +502,7 @@ def main() -> int:
         right_lon=args.right_lon,
         bottom_lat=args.bottom_lat,
         top_lat=args.top_lat,
+        point_offset=args.point_offset,
     )
     start_dt = parse_utc_hour(args.start_hour) if args.start_hour else default_start_hour()
     end_dt = parse_utc_hour(args.end_hour) if args.end_hour else start_dt + timedelta(hours=args.frames - 1)
@@ -510,6 +517,7 @@ def main() -> int:
         frames=args.frames,
         chunk_size=args.chunk_size,
         point_chunk_size=args.point_chunk_size,
+        sample_offset=args.point_offset,
         start_hour=start_hour,
         end_hour=end_hour,
         tolerance=args.tolerance,

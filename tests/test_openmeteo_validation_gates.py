@@ -44,6 +44,17 @@ def test_validation_gate_commands_stop_after_first_failed_gate():
     assert all("--point-chunk-size 25" in " ".join(command["argv"]) for command in commands)
     assert all("--request-retries 5" in " ".join(command["argv"]) for command in commands)
     assert all("--request-pause 0.25" in " ".join(command["argv"]) for command in commands)
+    assert "--point-offset 0.0" in " ".join(commands[0]["argv"])
+    assert "--point-offset 0.25" in " ".join(commands[2]["argv"])
+    assert "--point-offset 0.5" in " ".join(commands[-1]["argv"])
+
+
+def test_default_gate_offsets_keep_point_sets_disjoint():
+    runner = load_module()
+
+    offsets = runner.default_gate_offsets([50, 100, 500])
+
+    assert offsets == {50: 0.0, 100: 0.25, 500: 0.5}
 
 
 def test_validation_summary_marks_first_failure_and_skipped_gates():

@@ -274,8 +274,9 @@ Results observed:
 - API inventory tests: passed;
 - point API validation utility tests: passed;
 - validation gate runner tests: passed.
-- full Python test suite: `49 passed` after adding DEM-source guards and
-  reference request retry controls.
+- full Python test suite: `51 passed` after adding progress reports,
+  proxy-free validation requests, fixed validation windows, and shared
+  50-frame windows across point gates.
 
 First Singapore candidate validation against official Open-Meteo stopped at
 the required 50-point GFS gate:
@@ -433,7 +434,9 @@ with `WEATHER_`.
 
 ## Required Runtime Validation
 
-After deploying the complete runtime data chain, run:
+After deploying the complete runtime data chain, run against a fixed reference
+service that uses the same Open-Meteo source version and the same processed
+`.om` data snapshot as the candidate:
 
 ```bash
 python3 scripts/run_openmeteo_validation_gates.py \
@@ -441,6 +444,12 @@ python3 scripts/run_openmeteo_validation_gates.py \
   --reference-base-url http://127.0.0.1:18081 \
   --output-dir docs/validation/reports
 ```
+
+Do not use the rolling public `api.open-meteo.com` endpoint as the large-sample
+50/100/500 gate reference. It can be used only for small external spot checks.
+The public endpoint is rate limited and its GFS data updates independently of
+the public processed `.om` object store; a long gate can therefore compare
+different data snapshots even when the candidate engine is unchanged.
 
 Gate order:
 
@@ -455,9 +464,86 @@ Failure rule:
 - do not continue to the next point-count gate until the source/data issue is
   fixed and reviewed.
 
+Sixth Singapore candidate validation used Open-Meteo's native remote
+processed `.om` reader path for GFS, with the candidate reading the same
+Open-Meteo processed data contract as the public API for validation. The
+validation window was pinned once and reused for all local/reference requests:
+
+- `start_hour`: `2026-06-26T10:00`
+- `end_hour`: `2026-06-28T11:00`
+
+The GFS 50-point gate passed:
+
+- report:
+  `docs/validation/reports/local-tunnel-20260626T090807Z/50x50-gfs.json`
+- points x frames: `50 x 50`
+- checked values: `1,865,000`
+- completed chunks: `375 / 375`
+- failures: `0`
+
+The following 100-point gate did not complete. It stopped at the public
+Open-Meteo reference API rate limit, not at a data mismatch:
+
+- progress report:
+  `docs/validation/reports/local-tunnel-20260626T090807Z/100x50-gfs.progress.json`
+- checked values before stop: `1,672,000`
+- completed chunks: `114 / 250`
+- failure reason: `reference_request_failed`
+- upstream response class: HTTP `429 Too Many Requests`
+
+Root cause for this stop: both Singapore and local validation exits consumed
+the public Open-Meteo daily API allowance while repeatedly running large
+reference comparisons. The next validation run must use a fresh reference exit
+or a controlled same-version reference service. The partial 100-point run has
+no recorded value mismatch before the upstream rate limit.
+
+A later Seoul-exit 100-point run used a deliberately different point sample
+from the 50-point gate:
+
+- report:
+  `docs/validation/reports/seoul-100-different-20260626T115057Z/100x50-gfs.progress.json`
+- point offset: `0.25`
+- confirmed intersection with the 50-point sample: `0`
+- checked values before stop: `1,270,000`
+- completed chunks: `34 / 100`
+- failure records: `1,755`
+- mismatched scalar values inside those failed series: `71,870`
+- dominant failed variable groups:
+  - `geopotential_height`: `1,100` failed point-variable series;
+  - `wind_v_component`: `632` failed point-variable series;
+  - `cloud_cover`: `23` failed point-variable series.
+
+Small-sample probes on failed points showed:
+
+- candidate and official API chose the same model grid point and elevation;
+- `models=gfs025` still mismatched, so the issue is not `gfs_global` domain
+  mixing;
+- ground-level fields such as `temperature_2m` and `weather_code` matched in
+  the sampled failures;
+- the mismatch concentrated in GFS025 pressure-level fields;
+- a clean validation container reading the same public processed `.om` path
+  returned the same pressure-level values as the candidate for sampled failed
+  points.
+
+Conclusion: the Seoul 100-point failure is a data-reference problem, not a
+reason to change Open-Meteo's interpolation or weather-code engine. The rolling
+public API and the public processed `.om` object store are not guaranteed to be
+the same GFS025 pressure-level snapshot at validation time. Large-sample gates
+must use a controlled same-snapshot reference service; public API comparison is
+only a spot-check after the fixed-snapshot gates pass.
+
 ## Current Status
 
-Manual source review has identified the missing data-chain requirements. Local
-unit tests for the new tooling pass. Full runtime consistency has not yet been
-claimed because the Singapore runtime data and same-version reference service
-must still be deployed and validated.
+Do not describe the migration as a percentage complete. The auditable gate
+state is:
+
+- GFS point API: 50-point x 50-frame gate passed.
+- GFS point API: 100-point x 50-frame gate against the rolling public API is
+  invalid as a completion gate. It first hit HTTP 429 from public API quotas,
+  then failed on a different point sample because the public API and public
+  processed `.om` store were not on the same GFS025 pressure-level snapshot.
+- Validation tooling now records point sampling offset so 50/100/500 gates can
+  be proven to use distinct point sets.
+- CAMS point API: not validated yet.
+- Layer/API parity: not validated yet.
+- Shanghai mirror and Android client path: not started for final migration.

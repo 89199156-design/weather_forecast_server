@@ -11,10 +11,16 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
 from validate_openmeteo_point_api import default_start_hour, format_utc_hour, parse_utc_hour
 
 
-SCRIPT_DIR = Path(__file__).resolve().parent
+def default_gate_offsets(point_gates: list[int]) -> dict[int, float]:
+    preferred = {50: 0.0, 100: 0.25, 500: 0.5}
+    return {points: preferred.get(points, (index % 4) * 0.25) for index, points in enumerate(point_gates)}
 
 
 def build_gate_commands(
@@ -31,10 +37,12 @@ def build_gate_commands(
     request_retries: int,
     request_retry_delay: float,
     request_pause: float,
+    gate_offsets: dict[int, float] | None = None,
     chunk_size: int = 30,
 ) -> list[dict[str, Any]]:
     commands: list[dict[str, Any]] = []
     validator = SCRIPT_DIR / "validate_openmeteo_point_api.py"
+    offsets = gate_offsets or default_gate_offsets(point_gates)
     for points in point_gates:
         for scope in scopes:
             report = output_dir / f"{points}x{frames}-{scope}.json"
@@ -57,6 +65,8 @@ def build_gate_commands(
                 str(chunk_size),
                 "--point-chunk-size",
                 str(point_chunk_size),
+                "--point-offset",
+                str(offsets[points]),
                 "--request-retries",
                 str(request_retries),
                 "--request-retry-delay",
@@ -70,7 +80,16 @@ def build_gate_commands(
             ]
             if reference_base_url:
                 argv.extend(["--reference-base-url", reference_base_url])
-            commands.append({"points": points, "scope": scope, "frames": frames, "report": str(report), "argv": argv})
+            commands.append(
+                {
+                    "points": points,
+                    "scope": scope,
+                    "frames": frames,
+                    "point_offset": offsets[points],
+                    "report": str(report),
+                    "argv": argv,
+                }
+            )
     return commands
 
 
