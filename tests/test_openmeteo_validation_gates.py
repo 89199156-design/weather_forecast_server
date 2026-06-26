@@ -23,6 +23,8 @@ def test_validation_gate_commands_stop_after_first_failed_gate():
         scopes=["gfs", "cams"],
         point_gates=[50, 100, 500],
         frames=50,
+        start_hour="2026-06-26T10:00",
+        end_hour="2026-06-28T11:00",
         point_chunk_size=25,
         request_retries=5,
         request_retry_delay=3.0,
@@ -37,6 +39,8 @@ def test_validation_gate_commands_stop_after_first_failed_gate():
     assert commands[-1]["points"] == 500
     assert all("--reference-base-url" in " ".join(command["argv"]) for command in commands)
     assert all("--frames" in " ".join(command["argv"]) for command in commands)
+    assert all("--start-hour 2026-06-26T10:00" in " ".join(command["argv"]) for command in commands)
+    assert all("--end-hour 2026-06-28T11:00" in " ".join(command["argv"]) for command in commands)
     assert all("--point-chunk-size 25" in " ".join(command["argv"]) for command in commands)
     assert all("--request-retries 5" in " ".join(command["argv"]) for command in commands)
     assert all("--request-pause 0.25" in " ".join(command["argv"]) for command in commands)

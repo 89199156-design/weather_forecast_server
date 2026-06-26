@@ -7,8 +7,11 @@ import argparse
 import json
 import subprocess
 import sys
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
+
+from validate_openmeteo_point_api import default_start_hour, format_utc_hour, parse_utc_hour
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -22,6 +25,8 @@ def build_gate_commands(
     scopes: list[str],
     point_gates: list[int],
     frames: int,
+    start_hour: str,
+    end_hour: str,
     point_chunk_size: int,
     request_retries: int,
     request_retry_delay: float,
@@ -44,6 +49,10 @@ def build_gate_commands(
                 str(points),
                 "--frames",
                 str(frames),
+                "--start-hour",
+                start_hour,
+                "--end-hour",
+                end_hour,
                 "--chunk-size",
                 str(chunk_size),
                 "--point-chunk-size",
@@ -114,6 +123,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--scopes", default="gfs,cams")
     parser.add_argument("--point-gates", default="50,100,500")
     parser.add_argument("--frames", type=int, default=50)
+    parser.add_argument("--start-hour")
+    parser.add_argument("--end-hour")
     parser.add_argument("--chunk-size", type=int, default=30)
     parser.add_argument("--point-chunk-size", type=int, default=10)
     parser.add_argument("--request-retries", type=int, default=3)
@@ -128,6 +139,10 @@ def main() -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
     scopes = [scope.strip() for scope in args.scopes.split(",") if scope.strip()]
     point_gates = [int(value.strip()) for value in args.point_gates.split(",") if value.strip()]
+    start_dt = parse_utc_hour(args.start_hour) if args.start_hour else default_start_hour()
+    end_dt = parse_utc_hour(args.end_hour) if args.end_hour else start_dt + timedelta(hours=args.frames - 1)
+    start_hour = format_utc_hour(start_dt)
+    end_hour = format_utc_hour(end_dt)
     commands = build_gate_commands(
         api_base_url=args.api_base_url,
         reference_base_url=args.reference_base_url,
@@ -135,6 +150,8 @@ def main() -> int:
         scopes=scopes,
         point_gates=point_gates,
         frames=args.frames,
+        start_hour=start_hour,
+        end_hour=end_hour,
         chunk_size=args.chunk_size,
         point_chunk_size=args.point_chunk_size,
         request_retries=args.request_retries,
