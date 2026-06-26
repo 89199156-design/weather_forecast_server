@@ -2,18 +2,74 @@
 set -euo pipefail
 
 APP_DIR="${WEATHER_FORECAST_APP_DIR:-/opt/1panel/apps/weather_forecast_server}"
+ENV_FILE="${WEATHER_OPENMETEO_ENV_FILE:-$APP_DIR/config/singapore.example.env}"
+
+declare -A WEATHER_ENV_OVERRIDES=()
+
+capture_weather_env_overrides() {
+  local name
+  while IFS='=' read -r name _; do
+    if [[ "$name" == WEATHER_* ]]; then
+      WEATHER_ENV_OVERRIDES["$name"]="${!name}"
+    fi
+  done < <(env)
+}
+
+restore_weather_env_overrides() {
+  local name
+  for name in "${!WEATHER_ENV_OVERRIDES[@]}"; do
+    printf -v "$name" '%s' "${WEATHER_ENV_OVERRIDES[$name]}"
+    export "$name"
+  done
+}
+
+is_truthy() {
+  local value="${1:-}"
+  value="${value,,}"
+  [[ "$value" == "1" || "$value" == "true" || "$value" == "yes" || "$value" == "on" ]]
+}
+
+has_local_dem_static_files() {
+  compgen -G "$DATA_DIR/copernicus_dem90/static/lat_*.om" >/dev/null
+}
+
+require_dem_source() {
+  if ! is_truthy "$REQUIRE_DEM_SOURCE"; then
+    return
+  fi
+  if [[ -n "${WEATHER_DEM_REMOTE_DATA_DIRECTORY:-}" ]]; then
+    return
+  fi
+  if has_local_dem_static_files; then
+    return
+  fi
+
+  printf '%s\n' \
+    "Missing Copernicus DEM90 source. Set WEATHER_DEM_REMOTE_DATA_DIRECTORY to the owned DEM mirror, or pre-seed $DATA_DIR/copernicus_dem90/static/lat_*.om." >&2
+  exit 2
+}
+
+capture_weather_env_overrides
+if [[ -f "$ENV_FILE" ]]; then
+  set -a
+  source "$ENV_FILE"
+  set +a
+fi
+restore_weather_env_overrides
+
 IMAGE_NAME="${WEATHER_OPENMETEO_IMAGE:-weather-forecast-openmeteo}"
 IMAGE_TAG="${WEATHER_OPENMETEO_TAG:-latest}"
 CONTAINER_NAME="${WEATHER_OPENMETEO_CONTAINER:-weather-forecast-openmeteo-candidate}"
 PORT="${WEATHER_OPENMETEO_PORT:-18080}"
 DATA_DIR="${WEATHER_OPENMETEO_DATA_DIR:-$APP_DIR/data/openmeteo}"
-ENV_FILE="${WEATHER_OPENMETEO_ENV_FILE:-$APP_DIR/config/singapore.example.env}"
 OPENMETEO_UID="${WEATHER_OPENMETEO_UID:-999}"
 OPENMETEO_GID="${WEATHER_OPENMETEO_GID:-999}"
+REQUIRE_DEM_SOURCE="${WEATHER_REQUIRE_DEM_SOURCE:-true}"
 
 cd "$APP_DIR"
 mkdir -p "$DATA_DIR"
 chown "$OPENMETEO_UID:$OPENMETEO_GID" "$DATA_DIR"
+require_dem_source
 
 SANITIZED_ENV_FILE="$(mktemp)"
 cleanup_sanitized_env() {
@@ -21,10 +77,9 @@ cleanup_sanitized_env() {
 }
 trap cleanup_sanitized_env EXIT
 
-awk '
-  /^[[:space:]]*($|#)/ { print; next }
-  $0 !~ /^[[:space:]]*[^#][^=]*=[[:space:]]*$/ { print; next }
-' "$ENV_FILE" > "$SANITIZED_ENV_FILE"
+env | sort | awk -F= '
+  $1 ~ /^WEATHER_/ && $2 != "" { print }
+' > "$SANITIZED_ENV_FILE"
 
 docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
 docker run -d \

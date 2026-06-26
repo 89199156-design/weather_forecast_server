@@ -23,6 +23,9 @@ def build_gate_commands(
     point_gates: list[int],
     frames: int,
     point_chunk_size: int,
+    request_retries: int,
+    request_retry_delay: float,
+    request_pause: float,
 ) -> list[dict[str, Any]]:
     commands: list[dict[str, Any]] = []
     validator = SCRIPT_DIR / "validate_openmeteo_point_api.py"
@@ -42,6 +45,12 @@ def build_gate_commands(
                 str(frames),
                 "--point-chunk-size",
                 str(point_chunk_size),
+                "--request-retries",
+                str(request_retries),
+                "--request-retry-delay",
+                str(request_retry_delay),
+                "--request-pause",
+                str(request_pause),
                 "--output-report",
                 str(report),
             ]
@@ -101,6 +110,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--point-gates", default="50,100,500")
     parser.add_argument("--frames", type=int, default=50)
     parser.add_argument("--point-chunk-size", type=int, default=10)
+    parser.add_argument("--request-retries", type=int, default=3)
+    parser.add_argument("--request-retry-delay", type=float, default=2.0)
+    parser.add_argument("--request-pause", type=float, default=0.0)
     return parser.parse_args()
 
 
@@ -118,6 +130,9 @@ def main() -> int:
         point_gates=point_gates,
         frames=args.frames,
         point_chunk_size=args.point_chunk_size,
+        request_retries=args.request_retries,
+        request_retry_delay=args.request_retry_delay,
+        request_pause=args.request_pause,
     )
     results = run_commands(commands)
     summary = summarize_results(results, planned=commands)

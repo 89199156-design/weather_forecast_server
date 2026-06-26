@@ -91,7 +91,7 @@ def test_validate_scope_batches_points_and_compares_each_location(monkeypatch):
     validator = load_module()
     calls = []
 
-    def fake_fetch_json(base_url, endpoint, params, *, timeout):
+    def fake_fetch_json(base_url, endpoint, params, **_kwargs):
         calls.append((base_url, endpoint, params["latitude"], params["longitude"]))
         point_count = len(params["latitude"].split(","))
         return [{"hourly": {"temperature_2m": [1.0, 2.0]}} for _ in range(point_count)]
@@ -115,6 +115,9 @@ def test_validate_scope_batches_points_and_compares_each_location(monkeypatch):
         tolerance=0.001,
         timeout=1,
         allow_all_null=False,
+        request_retries=0,
+        request_retry_delay=0,
+        request_pause=0,
     )
 
     assert report["passed"] is True
@@ -130,7 +133,7 @@ def test_validate_scope_batches_points_and_compares_each_location(monkeypatch):
 def test_validate_scope_allows_all_null_when_reference_matches(monkeypatch):
     validator = load_module()
 
-    def fake_fetch_json(base_url, endpoint, params, *, timeout):
+    def fake_fetch_json(base_url, endpoint, params, **_kwargs):
         return {"hourly": {"mass_density_8m": [None, None]}}
 
     monkeypatch.setattr(validator, "fetch_json", fake_fetch_json)
@@ -147,6 +150,9 @@ def test_validate_scope_allows_all_null_when_reference_matches(monkeypatch):
         tolerance=0.001,
         timeout=1,
         allow_all_null=False,
+        request_retries=0,
+        request_retry_delay=0,
+        request_pause=0,
     )
 
     assert report["passed"] is True
@@ -156,7 +162,7 @@ def test_validate_scope_allows_all_null_when_reference_matches(monkeypatch):
 def test_validate_scope_rejects_all_null_when_reference_has_values(monkeypatch):
     validator = load_module()
 
-    def fake_fetch_json(base_url, endpoint, params, *, timeout):
+    def fake_fetch_json(base_url, endpoint, params, **_kwargs):
         values = [None, None] if base_url == "local" else [1.0, 2.0]
         return {"hourly": {"mass_density_8m": values}}
 
@@ -174,6 +180,9 @@ def test_validate_scope_rejects_all_null_when_reference_has_values(monkeypatch):
         tolerance=0.001,
         timeout=1,
         allow_all_null=False,
+        request_retries=0,
+        request_retry_delay=0,
+        request_pause=0,
     )
 
     assert report["passed"] is False

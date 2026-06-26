@@ -8,6 +8,7 @@ import json
 import math
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -116,12 +117,36 @@ def _numbers_close(local_value: Any, reference_value: Any, tolerance: float) -> 
     return abs(local_float - reference_float) <= tolerance
 
 
-def fetch_json(base_url: str, endpoint: str, params: dict[str, Any], *, timeout: float) -> Any:
+def fetch_json(
+    base_url: str,
+    endpoint: str,
+    params: dict[str, Any],
+    *,
+    timeout: float,
+    retries: int,
+    retry_delay: float,
+    request_pause: float,
+) -> Any:
     url = base_url.rstrip("/") + endpoint + "?" + urllib.parse.urlencode(params)
     request = urllib.request.Request(url, headers={"Accept": "application/json"})
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        body = response.read().decode("utf-8")
-    return json.loads(body)
+    for attempt in range(retries + 1):
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                body = response.read().decode("utf-8")
+            if request_pause > 0:
+                time.sleep(request_pause)
+            return json.loads(body)
+        except urllib.error.HTTPError as exc:
+            retryable = exc.code == 429 or 500 <= exc.code < 600
+            if not retryable or attempt >= retries:
+                raise
+        except (TimeoutError, urllib.error.URLError):
+            if attempt >= retries:
+                raise
+
+        time.sleep(retry_delay * (2**attempt))
+
+    raise RuntimeError("unreachable retry state")
 
 
 def extract_hourly(payload: Any) -> dict[str, Any]:
@@ -177,6 +202,9 @@ def validate_scope(
     tolerance: float,
     timeout: float,
     allow_all_null: bool,
+    request_retries: int,
+    request_retry_delay: float,
+    request_pause: float,
 ) -> dict[str, Any]:
     started = time.time()
     report: dict[str, Any] = {
@@ -194,7 +222,17 @@ def validate_scope(
         for variable_chunk in chunked(variables, chunk_size):
             endpoint, params = request_params(scope, point_chunk, variable_chunk, frames)
             try:
-                local_hourlies = extract_hourlies(fetch_json(api_base_url, endpoint, params, timeout=timeout))
+                local_hourlies = extract_hourlies(
+                    fetch_json(
+                        api_base_url,
+                        endpoint,
+                        params,
+                        timeout=timeout,
+                        retries=request_retries,
+                        retry_delay=request_retry_delay,
+                        request_pause=request_pause,
+                    )
+                )
             except Exception as exc:  # noqa: BLE001
                 report["failures"].append(
                     {
@@ -210,7 +248,17 @@ def validate_scope(
             reference_hourly = None
             if reference_base_url:
                 try:
-                    reference_hourlies = extract_hourlies(fetch_json(reference_base_url, endpoint, params, timeout=timeout))
+                    reference_hourlies = extract_hourlies(
+                        fetch_json(
+                            reference_base_url,
+                            endpoint,
+                            params,
+                            timeout=timeout,
+                            retries=request_retries,
+                            retry_delay=request_retry_delay,
+                            request_pause=request_pause,
+                        )
+                    )
                 except Exception as exc:  # noqa: BLE001
                     report["failures"].append(
                         {
@@ -301,6 +349,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--point-chunk-size", type=int, default=10)
     parser.add_argument("--tolerance", type=float, default=0.001)
     parser.add_argument("--timeout", type=float, default=60.0)
+    parser.add_argument("--request-retries", type=int, default=3)
+    parser.add_argument("--request-retry-delay", type=float, default=2.0)
+    parser.add_argument("--request-pause", type=float, default=0.0)
     parser.add_argument("--repo-root", default=Path(__file__).resolve().parents[1])
     parser.add_argument("--variables", help="Comma-separated override variable list.")
     parser.add_argument("--allow-all-null", action="store_true")
@@ -335,6 +386,9 @@ def main() -> int:
         tolerance=args.tolerance,
         timeout=args.timeout,
         allow_all_null=args.allow_all_null,
+        request_retries=args.request_retries,
+        request_retry_delay=args.request_retry_delay,
+        request_pause=args.request_pause,
     )
     output_path = Path(args.output_report)
     output_path.parent.mkdir(parents=True, exist_ok=True)

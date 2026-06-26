@@ -117,6 +117,24 @@ start with `http`, but not to be present and empty. The fix is limited to the
 deployment shell wrapper: it writes a temporary Docker env file that drops empty
 `KEY=` assignments before `docker run`. No Open-Meteo engine code was changed.
 
+Later point validation showed that GFS weather values can still diverge on
+land if the Copernicus DEM90 static files are absent. Without
+`copernicus_dem90/static/lat_*.om` or
+`WEATHER_DEM_REMOTE_DATA_DIRECTORY`, Open-Meteo falls back to model terrain for
+the target elevation. That changes `elevation`, `surface_pressure`, and
+elevation-sensitive derived outputs even when the GFS GRIB data and engine
+logic match. Example after the failed 50-point gate:
+
+- point `8.7,80.5`: local elevation `99m`, official elevation `92m`;
+  local `surface_pressure` `997.9 hPa`, official `998.7 hPa`;
+- after enabling the Open-Meteo DEM source for validation, the same point
+  returned local elevation `92m` and `surface_pressure` `998.7 hPa`, matching
+  official output.
+
+The correct production fix is to provide the same Open-Meteo DEM90 static data
+from an owned mirror, or pre-seed the local DEM static files. The vendored
+weather reader and meteorology formulas remain unchanged.
+
 ## Source-Derived Inventory
 
 The inventory must be generated from the selected vendored source:
@@ -180,7 +198,13 @@ Explicitly reviewed required examples:
   - supports runtime skip flags for already completed `gfs013`, `gfs025`
     surface, `gfs025` pressure-level, and CAMS download scopes;
   - sources the runtime env file before deriving download defaults;
-  - downloads `cams_global` when CAMS credentials are configured.
+  - downloads `cams_global` when CAMS credentials are configured;
+  - generates the Docker env file from the effective `WEATHER_*` environment
+    after config-file loading and explicit environment overrides, so owned
+    mirror URLs passed at runtime are actually visible inside the Open-Meteo
+    downloader container;
+  - requires a DEM source before runtime data download unless
+    `WEATHER_REQUIRE_DEM_SOURCE=false` is explicitly set.
 - `vendor/open-meteo/Sources/App/Gfs/GfsDownload.swift`
   - uses Open-Meteo's HTTP/1.1 client and stable NOAA headers for GFS raw-data
     downloads only;
@@ -197,16 +221,26 @@ Explicitly reviewed required examples:
     equality for GFS/CAMS point APIs;
   - uses the GFS-specific raw/derived Open-Meteo reader inventory for
     `models=gfs_global`, not the shared forecast enum that also contains
-    non-GFS air-quality, marine, wave, and ensemble-spread names.
+    non-GFS air-quality, marine, wave, and ensemble-spread names;
+  - retries retryable reference/API failures such as official HTTP 429 rate
+    limits so validation reports distinguish service throttling from value
+    mismatches.
 - `scripts/run_openmeteo_validation_gates.py`
   - runs 50, 100, then 500 point gates with 50 frames and stops on first
     failure;
-  - passes a point batch size to the validator so 500-point gates do not
-    require one HTTP request per point.
+  - passes point batch size and retry/pause controls to the validator so
+    500-point gates do not require one HTTP request per point and official API
+    throttling can be retried.
 - `scripts/deploy_singapore_candidate.sh`
   - filters empty env-file assignments before `docker run` so optional upstream
     Open-Meteo variables remain absent instead of present with invalid empty
-    values.
+    values;
+  - requires either an owned `WEATHER_DEM_REMOTE_DATA_DIRECTORY` mirror or
+    pre-seeded local `copernicus_dem90/static/lat_*.om` files before deploying
+    a parity candidate.
+- `config/singapore.example.env`
+  - documents `WEATHER_DEM_REMOTE_DATA_DIRECTORY` as required for land-point
+    parity and adds `WEATHER_REQUIRE_DEM_SOURCE=true`.
 - `scripts/build_openmeteo_layers.py`
   - uses `gfs_global` by default for layer export;
   - adds Open-Meteo weather-code-based categorical layer products for
@@ -235,7 +269,8 @@ Results observed:
 - API inventory tests: passed;
 - point API validation utility tests: passed;
 - validation gate runner tests: passed.
-- full Python test suite: `44 passed`.
+- full Python test suite: `49 passed` after adding DEM-source guards and
+  reference request retry controls.
 
 First Singapore candidate validation against official Open-Meteo stopped at
 the required 50-point GFS gate:
@@ -309,6 +344,32 @@ domain-level run pinning to the runtime download wrapper only:
 This makes official-API validation reproducible when the public API has
 different latest runs per GFS domain, without forking the Open-Meteo weather
 logic.
+
+Fourth Singapore candidate validation against official Open-Meteo stopped at
+the 50-point GFS gate after re-aligning GFS025 to the current official run:
+
+- report:
+  `docs/validation/reports/openmeteo-official-20260626T103046Z/50x50-gfs.json`
+- checked values before stop: `761000`
+- failure records: `5747`
+- mismatched values: `22798`
+- primary failure classes: `reference_mismatch` and official
+  `reference_request_failed` HTTP 429.
+
+Root cause for the largest deterministic mismatch class: missing Copernicus
+DEM90 static data on the candidate. Land target elevation fell back to model
+terrain, which shifted `surface_pressure` and elevation-sensitive derived
+variables. After setting
+`WEATHER_DEM_REMOTE_DATA_DIRECTORY=https://openmeteo.s3.amazonaws.com/data/`
+for validation and restarting the candidate, sampled land points matched the
+official API for `elevation`, `surface_pressure`, `dew_point_2m`,
+`wet_bulb_temperature_2m`, and `apparent_temperature`. Production must use the
+same DEM bytes from our mirror, not rely on the public Open-Meteo S3 endpoint.
+
+Corrective change: keep the Open-Meteo engine unchanged and enforce the DEM
+runtime data dependency in deployment/download wrappers. The validation tool
+also retries official 429 responses so rate limiting does not hide the first
+real value mismatch.
 
 ## Required Runtime Validation
 

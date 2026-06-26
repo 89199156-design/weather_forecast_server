@@ -24,6 +24,9 @@ def test_validation_gate_commands_stop_after_first_failed_gate():
         point_gates=[50, 100, 500],
         frames=50,
         point_chunk_size=25,
+        request_retries=5,
+        request_retry_delay=3.0,
+        request_pause=0.25,
     )
 
     assert commands[0]["points"] == 50
@@ -35,6 +38,8 @@ def test_validation_gate_commands_stop_after_first_failed_gate():
     assert all("--reference-base-url" in " ".join(command["argv"]) for command in commands)
     assert all("--frames" in " ".join(command["argv"]) for command in commands)
     assert all("--point-chunk-size 25" in " ".join(command["argv"]) for command in commands)
+    assert all("--request-retries 5" in " ".join(command["argv"]) for command in commands)
+    assert all("--request-pause 0.25" in " ".join(command["argv"]) for command in commands)
 
 
 def test_validation_summary_marks_first_failure_and_skipped_gates():

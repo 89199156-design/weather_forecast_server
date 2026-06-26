@@ -53,6 +53,12 @@ GFS point API uses Open-Meteo's `gfs_global` mixer, so both `gfs013` and `gfs025
 must be present locally. `gfs025` supplies variables missing from GFS013 sflux
 files, including visibility and several weather-code dependencies.
 
+Point-output parity also requires Open-Meteo's Copernicus DEM90 static data for
+land elevation correction. For lightweight nodes, configure
+`WEATHER_DEM_REMOTE_DATA_DIRECTORY` to an owned mirror with the Open-Meteo
+`data/copernicus_dem90/static/lat_*.om` layout instead of preloading the full
+DEM locally.
+
 ```bash
 bash scripts/download_openmeteo_runtime_data.sh
 ```

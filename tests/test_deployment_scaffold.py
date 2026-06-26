@@ -59,8 +59,18 @@ def test_singapore_deploy_filters_empty_env_values_before_docker_run():
     assert "cleanup_sanitized_env" in script
     assert "--env-file \"$SANITIZED_ENV_FILE\"" in script
     assert "--env-file \"$ENV_FILE\"" not in script
-    assert "next" in script
-    assert "$0 !~ /^[[:space:]]*[^#][^=]*=[[:space:]]*$/" in script
+    assert "env | sort | awk -F=" in script
+    assert "$1 ~ /^WEATHER_/" in script
+    assert '$2 != ""' in script
+
+
+def test_singapore_deploy_requires_dem_source_for_openmeteo_parity():
+    script = (ROOT / "scripts" / "deploy_singapore_candidate.sh").read_text(encoding="utf-8")
+
+    assert "require_dem_source" in script
+    assert "WEATHER_DEM_REMOTE_DATA_DIRECTORY" in script
+    assert "copernicus_dem90/static/lat_*.om" in script
+    assert "WEATHER_REQUIRE_DEM_SOURCE" in script
 
 
 def test_runtime_data_download_covers_openmeteo_gfs_mixer_and_cams_global():
@@ -131,8 +141,18 @@ def test_runtime_data_download_filters_empty_env_values_before_docker_run():
     assert "cleanup_sanitized_env" in script
     assert "--env-file \"$SANITIZED_ENV_FILE\"" in script
     assert "--env-file \"$ENV_FILE\"" not in script
-    assert "next" in script
-    assert "$0 !~ /^[[:space:]]*[^#][^=]*=[[:space:]]*$/" in script
+    assert "env | sort | awk -F=" in script
+    assert "$1 ~ /^WEATHER_/" in script
+    assert '$2 != ""' in script
+
+
+def test_runtime_data_download_requires_dem_source_for_openmeteo_parity():
+    script = (ROOT / "scripts" / "download_openmeteo_runtime_data.sh").read_text(encoding="utf-8")
+
+    assert "require_dem_source" in script
+    assert "WEATHER_DEM_REMOTE_DATA_DIRECTORY" in script
+    assert "copernicus_dem90/static/lat_*.om" in script
+    assert "WEATHER_REQUIRE_DEM_SOURCE" in script
 
 
 def test_runtime_data_download_preserves_explicit_environment_over_config_file():

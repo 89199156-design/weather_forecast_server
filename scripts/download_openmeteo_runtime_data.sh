@@ -48,6 +48,7 @@ SKIP_GFS013_DOWNLOAD="${WEATHER_SKIP_GFS013_DOWNLOAD:-false}"
 SKIP_GFS025_SURFACE_DOWNLOAD="${WEATHER_SKIP_GFS025_SURFACE_DOWNLOAD:-false}"
 SKIP_GFS025_UPPER_LEVEL_DOWNLOAD="${WEATHER_SKIP_GFS025_UPPER_LEVEL_DOWNLOAD:-false}"
 SKIP_CAMS_DOWNLOAD="${WEATHER_SKIP_CAMS_DOWNLOAD:-false}"
+REQUIRE_DEM_SOURCE="${WEATHER_REQUIRE_DEM_SOURCE:-true}"
 
 cd "$APP_DIR"
 mkdir -p "$DATA_DIR"
@@ -59,15 +60,9 @@ cleanup_sanitized_env() {
 }
 trap cleanup_sanitized_env EXIT
 
-if [[ -f "$ENV_FILE" ]]; then
-  awk '
-    /^[[:space:]]*#/ { print; next }
-    /^[[:space:]]*$/ { print; next }
-    $0 !~ /^[[:space:]]*[^#][^=]*=[[:space:]]*$/ { print; next }
-  ' "$ENV_FILE" > "$SANITIZED_ENV_FILE"
-else
-  : > "$SANITIZED_ENV_FILE"
-fi
+env | sort | awk -F= '
+  $1 ~ /^WEATHER_/ && $2 != "" { print }
+' > "$SANITIZED_ENV_FILE"
 
 is_truthy() {
   local value="${1:-}"
@@ -89,6 +84,26 @@ run_openmeteo() {
     --volume "$DATA_DIR:/app/data" \
     "$IMAGE_NAME:$IMAGE_TAG" \
     "$@"
+}
+
+has_local_dem_static_files() {
+  compgen -G "$DATA_DIR/copernicus_dem90/static/lat_*.om" >/dev/null
+}
+
+require_dem_source() {
+  if ! is_truthy "$REQUIRE_DEM_SOURCE"; then
+    return
+  fi
+  if [[ -n "${WEATHER_DEM_REMOTE_DATA_DIRECTORY:-}" ]]; then
+    return
+  fi
+  if has_local_dem_static_files; then
+    return
+  fi
+
+  printf '%s\n' \
+    "Missing Copernicus DEM90 source. Set WEATHER_DEM_REMOTE_DATA_DIRECTORY to the owned DEM mirror, or pre-seed $DATA_DIR/copernicus_dem90/static/lat_*.om." >&2
+  exit 2
 }
 
 level_is_in_csv() {
@@ -186,6 +201,8 @@ download_gfs025_upper_level_variable() {
 # rain flags and other weather-code dependencies. Pressure-level variables are
 # downloaded in smaller Open-Meteo only-variables batches to keep NOAA filter
 # requests stable while preserving Open-Meteo decoding and conversion.
+require_dem_source
+
 if is_truthy "$SKIP_GFS013_DOWNLOAD"; then
   printf '%s\n' "Skipping GFS013 download: WEATHER_SKIP_GFS013_DOWNLOAD is enabled."
 else
