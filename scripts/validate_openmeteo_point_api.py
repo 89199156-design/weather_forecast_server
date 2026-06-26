@@ -221,6 +221,22 @@ def validate_scope(
         "total_chunks": total_chunks,
     }
 
+    def finish_chunk(point_offset: int, variable_chunk: list[str]) -> None:
+        report["completed_chunks"] += 1
+        report["elapsed_seconds"] = round(time.time() - started, 3)
+        report["passed"] = not report["failures"]
+        if progress_path is None:
+            return
+        progress_payload = dict(report)
+        progress_payload["incomplete"] = True
+        progress_payload["last_point_offset"] = point_offset
+        progress_payload["last_variables"] = variable_chunk
+        progress_path.parent.mkdir(parents=True, exist_ok=True)
+        progress_path.write_text(
+            json.dumps(progress_payload, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+
     for point_offset in range(0, len(points), point_chunk_size):
         point_chunk = points[point_offset : point_offset + point_chunk_size]
         for variable_chunk in chunked(variables, chunk_size):
@@ -247,6 +263,7 @@ def validate_scope(
                         "error": str(exc),
                     }
                 )
+                finish_chunk(point_offset, variable_chunk)
                 continue
 
             reference_hourly = None
@@ -273,6 +290,7 @@ def validate_scope(
                             "error": str(exc),
                         }
                     )
+                    finish_chunk(point_offset, variable_chunk)
                     continue
             else:
                 reference_hourlies = []
@@ -288,6 +306,7 @@ def validate_scope(
                         "actual": len(local_hourlies),
                     }
                 )
+                finish_chunk(point_offset, variable_chunk)
                 continue
             if reference_base_url and len(reference_hourlies) != len(point_chunk):
                 report["failures"].append(
@@ -300,6 +319,7 @@ def validate_scope(
                         "actual": len(reference_hourlies),
                     }
                 )
+                finish_chunk(point_offset, variable_chunk)
                 continue
 
             for point_index, point in enumerate(point_chunk, start=point_offset):
@@ -337,19 +357,7 @@ def validate_scope(
                             }
                         )
 
-            report["completed_chunks"] += 1
-            report["elapsed_seconds"] = round(time.time() - started, 3)
-            report["passed"] = not report["failures"]
-            if progress_path is not None:
-                progress_payload = dict(report)
-                progress_payload["incomplete"] = True
-                progress_payload["last_point_offset"] = point_offset
-                progress_payload["last_variables"] = variable_chunk
-                progress_path.parent.mkdir(parents=True, exist_ok=True)
-                progress_path.write_text(
-                    json.dumps(progress_payload, indent=2, ensure_ascii=False) + "\n",
-                    encoding="utf-8",
-                )
+            finish_chunk(point_offset, variable_chunk)
 
     report["elapsed_seconds"] = round(time.time() - started, 3)
     report["passed"] = not report["failures"]
