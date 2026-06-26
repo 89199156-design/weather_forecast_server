@@ -111,6 +111,30 @@ def test_runtime_data_download_chunks_gfs025_upper_levels_and_can_resume():
     assert '--concurrent "$GFS_CONCURRENT"' not in upper_function
 
 
+def test_runtime_data_download_can_pin_domain_runs_without_engine_fork():
+    script = (ROOT / "scripts" / "download_openmeteo_runtime_data.sh").read_text(encoding="utf-8")
+
+    assert "GFS013_RUN" in script
+    assert "GFS025_RUN" in script
+    assert "WEATHER_GFS013_RUN" in script
+    assert "WEATHER_GFS025_RUN" in script
+    assert 'append_run_arg "$GFS013_RUN"' in script
+    assert 'append_run_arg "$GFS025_RUN"' in script
+    assert "--run" in script
+
+
+def test_runtime_data_download_filters_empty_env_values_before_docker_run():
+    script = (ROOT / "scripts" / "download_openmeteo_runtime_data.sh").read_text(encoding="utf-8")
+
+    assert "SANITIZED_ENV_FILE" in script
+    assert "mktemp" in script
+    assert "cleanup_sanitized_env" in script
+    assert "--env-file \"$SANITIZED_ENV_FILE\"" in script
+    assert "--env-file \"$ENV_FILE\"" not in script
+    assert "next" in script
+    assert "$0 !~ /^[[:space:]]*[^#][^=]*=[[:space:]]*$/" in script
+
+
 def test_gfs_downloader_uses_noaa_stable_http_headers_without_weather_logic_fork():
     source = (ROOT / "vendor" / "open-meteo" / "Sources" / "App" / "Gfs" / "GfsDownload.swift").read_text(
         encoding="utf-8"

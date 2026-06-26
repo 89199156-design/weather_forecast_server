@@ -21,6 +21,8 @@ GFS_UPPER_LEVEL_PGRB2_LEVELS="${WEATHER_GFS_UPPER_LEVEL_PGRB2_LEVELS:-10,15,20,3
 GFS_UPPER_LEVEL_VARIABLES="${WEATHER_GFS_UPPER_LEVEL_VARIABLES:-temperature,wind_u_component,wind_v_component,geopotential_height,cloud_cover,relative_humidity,vertical_velocity}"
 GFS_UPPER_LEVEL_CHUNK_SIZE="${WEATHER_GFS_UPPER_LEVEL_CHUNK_SIZE:-4}"
 GFS_UPPER_LEVEL_CONCURRENT="${WEATHER_GFS_UPPER_LEVEL_DOWNLOAD_CONCURRENT:-1}"
+GFS013_RUN="${WEATHER_GFS013_RUN:-}"
+GFS025_RUN="${WEATHER_GFS025_RUN:-}"
 SKIP_GFS013_DOWNLOAD="${WEATHER_SKIP_GFS013_DOWNLOAD:-false}"
 SKIP_GFS025_SURFACE_DOWNLOAD="${WEATHER_SKIP_GFS025_SURFACE_DOWNLOAD:-false}"
 SKIP_GFS025_UPPER_LEVEL_DOWNLOAD="${WEATHER_SKIP_GFS025_UPPER_LEVEL_DOWNLOAD:-false}"
@@ -29,15 +31,40 @@ SKIP_CAMS_DOWNLOAD="${WEATHER_SKIP_CAMS_DOWNLOAD:-false}"
 cd "$APP_DIR"
 mkdir -p "$DATA_DIR"
 
+SANITIZED_ENV_FILE="$(mktemp)"
+
+cleanup_sanitized_env() {
+  rm -f "$SANITIZED_ENV_FILE"
+}
+trap cleanup_sanitized_env EXIT
+
+if [[ -f "$ENV_FILE" ]]; then
+  awk '
+    /^[[:space:]]*#/ { print; next }
+    /^[[:space:]]*$/ { print; next }
+    $0 !~ /^[[:space:]]*[^#][^=]*=[[:space:]]*$/ { print; next }
+  ' "$ENV_FILE" > "$SANITIZED_ENV_FILE"
+else
+  : > "$SANITIZED_ENV_FILE"
+fi
+
 is_truthy() {
   local value="${1:-}"
   value="${value,,}"
   [[ "$value" == "1" || "$value" == "true" || "$value" == "yes" || "$value" == "on" ]]
 }
 
+append_run_arg() {
+  local run_value="${1:-}"
+  if [[ -n "$run_value" ]]; then
+    printf '%s\n' "--run"
+    printf '%s\n' "$run_value"
+  fi
+}
+
 run_openmeteo() {
   docker run --rm \
-    --env-file "$ENV_FILE" \
+    --env-file "$SANITIZED_ENV_FILE" \
     --volume "$DATA_DIR:/app/data" \
     "$IMAGE_NAME:$IMAGE_TAG" \
     "$@"
@@ -126,6 +153,7 @@ download_gfs025_upper_level_variable() {
 
     run_openmeteo download-gfs gfs025 \
       --only-variables "$only_variables" \
+      $(append_run_arg "$GFS025_RUN") \
       --max-forecast-hour "$GFS_MAX_FORECAST_HOUR" \
       --concurrent "$GFS_UPPER_LEVEL_CONCURRENT"
   done < <(upper_level_only_variable_chunks "$variable")
@@ -141,6 +169,7 @@ if is_truthy "$SKIP_GFS013_DOWNLOAD"; then
   printf '%s\n' "Skipping GFS013 download: WEATHER_SKIP_GFS013_DOWNLOAD is enabled."
 else
   run_openmeteo download-gfs gfs013 \
+    $(append_run_arg "$GFS013_RUN") \
     --max-forecast-hour "$GFS_MAX_FORECAST_HOUR" \
     --concurrent "$GFS_CONCURRENT"
 fi
@@ -149,6 +178,7 @@ if is_truthy "$SKIP_GFS025_SURFACE_DOWNLOAD"; then
   printf '%s\n' "Skipping GFS025 surface download: WEATHER_SKIP_GFS025_SURFACE_DOWNLOAD is enabled."
 else
   run_openmeteo download-gfs gfs025 \
+    $(append_run_arg "$GFS025_RUN") \
     --max-forecast-hour "$GFS_MAX_FORECAST_HOUR" \
     --concurrent "$GFS_CONCURRENT"
 fi

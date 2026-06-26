@@ -273,6 +273,43 @@ consistency validation, all-null is only a failure if the reference has values
 or a different null pattern. The validator now compares local and reference
 series first whenever a reference base URL is provided.
 
+Third Singapore candidate validation against official Open-Meteo again stopped
+at the 50-point GFS gate after the all-null comparison fix:
+
+- report:
+  `docs/validation/reports/openmeteo-official-20260626T061339Z/50x50-gfs.json`
+- checked values before stop: `791000`
+- failures: `5726`
+- primary failure classes: reference mismatches and reference request failures;
+  local request failures and all-null false positives were no longer present.
+
+Root cause for the remaining value mismatch class: the official public forecast
+API could not be pinned to a GFS run, and its `gfs025` data was one model run
+behind the freshly downloaded Singapore data. Source/API inspection showed that
+public `api.open-meteo.com`, `previous-runs-api.open-meteo.com`, and
+`historical-forecast-api.open-meteo.com` reject `run`. The public
+`single-runs-api.open-meteo.com` accepted `run`, but at the time of inspection
+`ncep_gfs013` had `2026-06-25T18:00Z` while `ncep_gfs025` only had
+`2026-06-25T12:00Z`. For the same sample point and valid time,
+`api.open-meteo.com` `models=gfs025` matched `single-runs-api` 12Z values, not
+the local 18Z download. `models=gfs013` matched 18Z on both local and official
+API. The Open-Meteo engine/API reader path is therefore not the identified
+cause; the mismatch is a domain-level data-run alignment issue.
+
+Corrective change: keep the vendored Open-Meteo engine unchanged and add
+domain-level run pinning to the runtime download wrapper only:
+
+- `WEATHER_GFS013_RUN` can pin the `download-gfs gfs013` run;
+- `WEATHER_GFS025_RUN` can pin both `gfs025` surface and pressure-level
+  downloads;
+- Docker download commands now use the same sanitized env-file handling as the
+  candidate deploy script, preventing empty config values from overriding
+  Open-Meteo defaults.
+
+This makes official-API validation reproducible when the public API has
+different latest runs per GFS domain, without forking the Open-Meteo weather
+logic.
+
 ## Required Runtime Validation
 
 After deploying the complete runtime data chain, run:
