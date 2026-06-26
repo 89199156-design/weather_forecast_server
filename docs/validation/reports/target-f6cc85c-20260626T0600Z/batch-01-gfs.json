@@ -1,0 +1,740 @@
+{
+  "scope": "gfs",
+  "points": 10,
+  "point_offset": 0.0,
+  "frames": 24,
+  "variables": 26,
+  "reference_base_url": "https://single-runs-api.open-meteo.com",
+  "reference_ssh_host": "seoul",
+  "run": "2026-06-26T06:00",
+  "request_forecast_hours": 24,
+  "start_hour": "2026-06-26T06:00",
+  "end_hour": "2026-06-27T05:00",
+  "failures": [
+    {
+      "point_index": 0,
+      "point": {
+        "latitude": 0.029,
+        "longitude": 70.035
+      },
+      "variable": "temperature_2m",
+      "reason": "reference_mismatch",
+      "mismatch_count": 16,
+      "first_mismatches": [
+        {
+          "frame": 1,
+          "local": 28.2,
+          "reference": 28.1,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 2,
+          "local": 28.2,
+          "reference": 28.1,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 3,
+          "local": 28.2,
+          "reference": 28.1,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 4,
+          "local": 28.2,
+          "reference": 28.1,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 5,
+          "local": 28.2,
+          "reference": 28.1,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 6,
+          "local": 28.2,
+          "reference": 28.1,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 7,
+          "local": 28.2,
+          "reference": 28.1,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 9,
+          "local": 28.2,
+          "reference": 28.1,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 10,
+          "local": 28.3,
+          "reference": 28.2,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 11,
+          "local": 27.7,
+          "reference": 27.6,
+          "reason": "value_mismatch"
+        }
+      ]
+    },
+    {
+      "point_index": 1,
+      "point": {
+        "latitude": 0.087,
+        "longitude": 70.105
+      },
+      "variable": "temperature_2m",
+      "reason": "reference_mismatch",
+      "mismatch_count": 16,
+      "first_mismatches": [
+        {
+          "frame": 1,
+          "local": 28.2,
+          "reference": 28.1,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 2,
+          "local": 28.2,
+          "reference": 28.1,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 3,
+          "local": 28.2,
+          "reference": 28.1,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 4,
+          "local": 28.2,
+          "reference": 28.1,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 5,
+          "local": 28.2,
+          "reference": 28.1,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 6,
+          "local": 28.2,
+          "reference": 28.1,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 7,
+          "local": 28.2,
+          "reference": 28.1,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 9,
+          "local": 28.2,
+          "reference": 28.1,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 10,
+          "local": 28.3,
+          "reference": 28.2,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 11,
+          "local": 27.7,
+          "reference": 27.6,
+          "reason": "value_mismatch"
+        }
+      ]
+    },
+    {
+      "point_index": 2,
+      "point": {
+        "latitude": 0.145,
+        "longitude": 70.175
+      },
+      "variable": "temperature_2m",
+      "reason": "reference_mismatch",
+      "mismatch_count": 16,
+      "first_mismatches": [
+        {
+          "frame": 0,
+          "local": 28.6,
+          "reference": 28.5,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 2,
+          "local": 28.3,
+          "reference": 28.2,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 3,
+          "local": 28.2,
+          "reference": 28.1,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 4,
+          "local": 28.2,
+          "reference": 28.1,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 5,
+          "local": 28.1,
+          "reference": 28.0,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 6,
+          "local": 28.2,
+          "reference": 28.1,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 7,
+          "local": 28.2,
+          "reference": 28.1,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 8,
+          "local": 28.1,
+          "reference": 28.0,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 9,
+          "local": 28.1,
+          "reference": 28.0,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 10,
+          "local": 27.6,
+          "reference": 27.5,
+          "reason": "value_mismatch"
+        }
+      ]
+    },
+    {
+      "point_index": 3,
+      "point": {
+        "latitude": 0.203,
+        "longitude": 70.245
+      },
+      "variable": "temperature_2m",
+      "reason": "reference_mismatch",
+      "mismatch_count": 16,
+      "first_mismatches": [
+        {
+          "frame": 0,
+          "local": 28.6,
+          "reference": 28.5,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 2,
+          "local": 28.3,
+          "reference": 28.2,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 3,
+          "local": 28.2,
+          "reference": 28.1,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 4,
+          "local": 28.2,
+          "reference": 28.1,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 5,
+          "local": 28.1,
+          "reference": 28.0,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 6,
+          "local": 28.2,
+          "reference": 28.1,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 7,
+          "local": 28.2,
+          "reference": 28.1,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 8,
+          "local": 28.1,
+          "reference": 28.0,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 9,
+          "local": 28.1,
+          "reference": 28.0,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 10,
+          "local": 27.6,
+          "reference": 27.5,
+          "reason": "value_mismatch"
+        }
+      ]
+    },
+    {
+      "point_index": 4,
+      "point": {
+        "latitude": 0.261,
+        "longitude": 70.315
+      },
+      "variable": "temperature_2m",
+      "reason": "reference_mismatch",
+      "mismatch_count": 16,
+      "first_mismatches": [
+        {
+          "frame": 3,
+          "local": 28.3,
+          "reference": 28.2,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 4,
+          "local": 28.2,
+          "reference": 28.1,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 5,
+          "local": 28.2,
+          "reference": 28.1,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 6,
+          "local": 28.2,
+          "reference": 28.1,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 7,
+          "local": 28.2,
+          "reference": 28.1,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 8,
+          "local": 28.2,
+          "reference": 28.1,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 10,
+          "local": 27.3,
+          "reference": 27.2,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 11,
+          "local": 27.7,
+          "reference": 27.6,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 13,
+          "local": 27.7,
+          "reference": 27.6,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 14,
+          "local": 27.3,
+          "reference": 27.2,
+          "reason": "value_mismatch"
+        }
+      ]
+    },
+    {
+      "point_index": 5,
+      "point": {
+        "latitude": 0.319,
+        "longitude": 70.385
+      },
+      "variable": "temperature_2m",
+      "reason": "reference_mismatch",
+      "mismatch_count": 13,
+      "first_mismatches": [
+        {
+          "frame": 1,
+          "local": 28.6,
+          "reference": 28.5,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 4,
+          "local": 28.3,
+          "reference": 28.2,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 5,
+          "local": 28.3,
+          "reference": 28.2,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 6,
+          "local": 28.3,
+          "reference": 28.2,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 7,
+          "local": 28.3,
+          "reference": 28.2,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 8,
+          "local": 28.3,
+          "reference": 28.2,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 9,
+          "local": 28.3,
+          "reference": 28.2,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 10,
+          "local": 27.6,
+          "reference": 27.5,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 17,
+          "local": 27.6,
+          "reference": 27.5,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 18,
+          "local": 27.6,
+          "reference": 27.5,
+          "reason": "value_mismatch"
+        }
+      ]
+    },
+    {
+      "point_index": 6,
+      "point": {
+        "latitude": 0.377,
+        "longitude": 70.455
+      },
+      "variable": "temperature_2m",
+      "reason": "reference_mismatch",
+      "mismatch_count": 13,
+      "first_mismatches": [
+        {
+          "frame": 4,
+          "local": 28.3,
+          "reference": 28.2,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 5,
+          "local": 28.3,
+          "reference": 28.2,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 6,
+          "local": 28.3,
+          "reference": 28.2,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 7,
+          "local": 28.3,
+          "reference": 28.2,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 8,
+          "local": 28.3,
+          "reference": 28.2,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 9,
+          "local": 28.3,
+          "reference": 28.2,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 10,
+          "local": 28.1,
+          "reference": 28.0,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 11,
+          "local": 28.2,
+          "reference": 28.1,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 12,
+          "local": 28.1,
+          "reference": 28.0,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 13,
+          "local": 28.1,
+          "reference": 28.0,
+          "reason": "value_mismatch"
+        }
+      ]
+    },
+    {
+      "point_index": 7,
+      "point": {
+        "latitude": 0.435,
+        "longitude": 70.525
+      },
+      "variable": "temperature_2m",
+      "reason": "reference_mismatch",
+      "mismatch_count": 15,
+      "first_mismatches": [
+        {
+          "frame": 2,
+          "local": 28.6,
+          "reference": 28.5,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 5,
+          "local": 28.3,
+          "reference": 28.2,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 6,
+          "local": 28.3,
+          "reference": 28.2,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 7,
+          "local": 28.3,
+          "reference": 28.2,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 8,
+          "local": 28.3,
+          "reference": 28.2,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 9,
+          "local": 28.3,
+          "reference": 28.2,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 10,
+          "local": 28.2,
+          "reference": 28.1,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 11,
+          "local": 28.2,
+          "reference": 28.1,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 12,
+          "local": 28.2,
+          "reference": 28.1,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 13,
+          "local": 28.1,
+          "reference": 28.0,
+          "reason": "value_mismatch"
+        }
+      ]
+    },
+    {
+      "point_index": 8,
+      "point": {
+        "latitude": 0.493,
+        "longitude": 70.595
+      },
+      "variable": "temperature_2m",
+      "reason": "reference_mismatch",
+      "mismatch_count": 12,
+      "first_mismatches": [
+        {
+          "frame": 5,
+          "local": 28.3,
+          "reference": 28.2,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 6,
+          "local": 28.3,
+          "reference": 28.2,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 7,
+          "local": 28.3,
+          "reference": 28.2,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 8,
+          "local": 28.3,
+          "reference": 28.2,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 11,
+          "local": 28.3,
+          "reference": 28.2,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 12,
+          "local": 28.3,
+          "reference": 28.2,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 13,
+          "local": 28.2,
+          "reference": 28.1,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 14,
+          "local": 27.7,
+          "reference": 27.6,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 15,
+          "local": 27.7,
+          "reference": 27.6,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 16,
+          "local": 27.7,
+          "reference": 27.6,
+          "reason": "value_mismatch"
+        }
+      ]
+    },
+    {
+      "point_index": 9,
+      "point": {
+        "latitude": 0.551,
+        "longitude": 70.665
+      },
+      "variable": "temperature_2m",
+      "reason": "reference_mismatch",
+      "mismatch_count": 13,
+      "first_mismatches": [
+        {
+          "frame": 0,
+          "local": 28.6,
+          "reference": 28.5,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 3,
+          "local": 28.6,
+          "reference": 28.5,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 5,
+          "local": 28.3,
+          "reference": 28.2,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 6,
+          "local": 28.3,
+          "reference": 28.2,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 7,
+          "local": 28.3,
+          "reference": 28.2,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 11,
+          "local": 28.3,
+          "reference": 28.2,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 12,
+          "local": 28.2,
+          "reference": 28.1,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 13,
+          "local": 28.2,
+          "reference": 28.1,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 14,
+          "local": 27.7,
+          "reference": 27.6,
+          "reason": "value_mismatch"
+        },
+        {
+          "frame": 17,
+          "local": 27.3,
+          "reference": 27.2,
+          "reason": "value_mismatch"
+        }
+      ]
+    }
+  ],
+  "checked_values": 6240,
+  "completed_chunks": 1,
+  "total_chunks": 1,
+  "elapsed_seconds": 60.163,
+  "passed": false
+}

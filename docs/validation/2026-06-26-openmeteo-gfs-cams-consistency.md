@@ -655,3 +655,76 @@ The ordinary public Open-Meteo API currently returns HTTP `429` with
 `Daily API request limit exceeded. Please try again tomorrow.` from the Seoul
 exit. Strict validation therefore uses `single-runs-api.open-meteo.com` with a
 pinned `run=` value until the ordinary public API quota is available again.
+
+## Target Validation Attempt: `f6cc85c` / `acfb7eb1`
+
+Candidate:
+
+- project commit: `f6cc85c5cba38cf9b67e891af8b34401a195f217`
+- upstream Open-Meteo source: `acfb7eb13ffdca9d3772c57716c240d3a7d73da5`
+- Singapore image: `weather-forecast-openmeteo:f6cc85c`
+- image ID: `0c789a1de31f`
+- candidate container: `09e46cdfa623`
+
+Formal command:
+
+```bash
+python scripts/run_openmeteo_target_validation.py \
+  --api-base-url http://127.0.0.1:18081 \
+  --gfs-reference-base-url https://single-runs-api.open-meteo.com \
+  --cams-reference-base-url https://air-quality-api.open-meteo.com \
+  --reference-ssh-host seoul \
+  --gfs-api-host-header single-runs-api.open-meteo.com \
+  --gfs-reference-host-header single-runs-api.open-meteo.com \
+  --cams-api-host-header air-quality-api.open-meteo.com \
+  --cams-reference-host-header air-quality-api.open-meteo.com \
+  --gfs-run 2026-06-26T06:00 \
+  --start-hour 2026-06-26T06:00 \
+  --batches 100 \
+  --points-per-batch 10 \
+  --frames 24 \
+  --failure-limit 3 \
+  --request-retries 1 \
+  --request-retry-delay 2 \
+  --request-pause 0.3 \
+  --output-dir docs/validation/reports/target-f6cc85c-20260626T0600Z
+```
+
+Result:
+
+- summary:
+  `docs/validation/reports/target-f6cc85c-20260626T0600Z/summary-100x10x24.json`
+- planned gate: `100` batches x `10` unique points x `24` frames;
+- stopped after `3` completed batches because the failure limit was reached;
+- completed points: `30 / 1000`;
+- CAMS: `3` batches passed, `8640` checked values, `0` mismatches;
+- GFS: `3` batches failed, `18720` checked values, `30` failed
+  point-variable series;
+- all GFS failures were `temperature_2m` reference mismatches;
+- representative mismatch shape: local value is `0.1` C higher than
+  `single-runs-api.open-meteo.com` on affected frames.
+
+Additional spot checks:
+
+- `weather_code` mismatch from the `d91c52f` candidate disappeared after
+  switching to `acfb7eb1`;
+- GFS `weather_code`, precipitation, rain, showers, snowfall, snow depth, CAPE,
+  cloud cover, wind, visibility, pressure, UV, and day/night outputs did not
+  produce failures in the three completed batches;
+- querying `gfs_global` and `gfs013` separately showed the same temperature
+  offset, while `gfs025` does not supply `temperature_2m` for this request;
+- `cell_selection=nearest|land|sea` did not change either side;
+- the same `0.1` C pattern reproduced on `2026-06-26T00:00` and
+  `2026-06-26T06:00` runs.
+
+Analysis:
+
+The remaining blocker is not a local weather-code, interpolation, or variable
+mapping patch. The vendored source now matches upstream `acfb7eb1`
+byte-for-byte, and the failed value is the raw GFS013 `temperature_2m` API
+output read from `REMOTE_DATA_DIRECTORY=https://openmeteo.s3.amazonaws.com/data/`.
+The current public `single-runs-api.open-meteo.com` returns the same fields from
+an internal reference path with `temperature_2m` rounded `0.1` C lower on many
+frames. Since all related derived fields and CAMS are passing, the next fix must
+focus on using the same GFS013 processed-data snapshot/source as the public API,
+not on changing Open-Meteo engine logic.

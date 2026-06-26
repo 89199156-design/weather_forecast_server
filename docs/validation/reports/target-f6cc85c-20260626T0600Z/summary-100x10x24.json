@@ -1,0 +1,245 @@
+{
+  "passed": false,
+  "planned_batches": 100,
+  "completed_batches": 3,
+  "points_per_batch": 10,
+  "planned_points": 1000,
+  "completed_points": 30,
+  "frames": 24,
+  "failed_batches": 3,
+  "failure_limit": 3,
+  "stopped_reason": "failure_limit_reached",
+  "variables_by_scope": {
+    "gfs": [
+      "temperature_2m",
+      "relative_humidity_2m",
+      "dew_point_2m",
+      "apparent_temperature",
+      "precipitation",
+      "rain",
+      "showers",
+      "snowfall",
+      "snow_depth",
+      "weather_code",
+      "visibility",
+      "cape",
+      "wind_speed_10m",
+      "wind_direction_10m",
+      "wind_gusts_10m",
+      "wind_u_component_10m",
+      "wind_v_component_10m",
+      "cloud_cover",
+      "cloud_cover_high",
+      "cloud_cover_mid",
+      "cloud_cover_low",
+      "pressure_msl",
+      "surface_pressure",
+      "uv_index",
+      "uv_index_clear_sky",
+      "is_day"
+    ],
+    "cams": [
+      "pm2_5",
+      "pm10",
+      "carbon_monoxide",
+      "nitrogen_dioxide",
+      "sulphur_dioxide",
+      "ozone",
+      "aerosol_optical_depth",
+      "dust",
+      "uv_index",
+      "uv_index_clear_sky",
+      "us_aqi",
+      "european_aqi"
+    ]
+  },
+  "batch_results": [
+    {
+      "batch": 1,
+      "passed": false,
+      "points": [
+        {
+          "latitude": 0.029,
+          "longitude": 70.035
+        },
+        {
+          "latitude": 0.087,
+          "longitude": 70.105
+        },
+        {
+          "latitude": 0.145,
+          "longitude": 70.175
+        },
+        {
+          "latitude": 0.203,
+          "longitude": 70.245
+        },
+        {
+          "latitude": 0.261,
+          "longitude": 70.315
+        },
+        {
+          "latitude": 0.319,
+          "longitude": 70.385
+        },
+        {
+          "latitude": 0.377,
+          "longitude": 70.455
+        },
+        {
+          "latitude": 0.435,
+          "longitude": 70.525
+        },
+        {
+          "latitude": 0.493,
+          "longitude": 70.595
+        },
+        {
+          "latitude": 0.551,
+          "longitude": 70.665
+        }
+      ],
+      "scopes": [
+        {
+          "scope": "gfs",
+          "passed": false,
+          "failures": 10,
+          "checked_values": 6240,
+          "report": "docs\\validation\\reports\\target-f6cc85c-20260626T0600Z\\batch-01-gfs.json"
+        },
+        {
+          "scope": "cams",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 2880,
+          "report": "docs\\validation\\reports\\target-f6cc85c-20260626T0600Z\\batch-01-cams.json"
+        }
+      ]
+    },
+    {
+      "batch": 2,
+      "passed": false,
+      "points": [
+        {
+          "latitude": 0.609,
+          "longitude": 70.735
+        },
+        {
+          "latitude": 0.667,
+          "longitude": 70.805
+        },
+        {
+          "latitude": 0.725,
+          "longitude": 70.875
+        },
+        {
+          "latitude": 0.783,
+          "longitude": 70.945
+        },
+        {
+          "latitude": 0.841,
+          "longitude": 71.015
+        },
+        {
+          "latitude": 0.899,
+          "longitude": 71.085
+        },
+        {
+          "latitude": 0.957,
+          "longitude": 71.155
+        },
+        {
+          "latitude": 1.015,
+          "longitude": 71.225
+        },
+        {
+          "latitude": 1.073,
+          "longitude": 71.295
+        },
+        {
+          "latitude": 1.131,
+          "longitude": 71.365
+        }
+      ],
+      "scopes": [
+        {
+          "scope": "gfs",
+          "passed": false,
+          "failures": 10,
+          "checked_values": 6240,
+          "report": "docs\\validation\\reports\\target-f6cc85c-20260626T0600Z\\batch-02-gfs.json"
+        },
+        {
+          "scope": "cams",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 2880,
+          "report": "docs\\validation\\reports\\target-f6cc85c-20260626T0600Z\\batch-02-cams.json"
+        }
+      ]
+    },
+    {
+      "batch": 3,
+      "passed": false,
+      "points": [
+        {
+          "latitude": 1.189,
+          "longitude": 71.435
+        },
+        {
+          "latitude": 1.247,
+          "longitude": 71.505
+        },
+        {
+          "latitude": 1.305,
+          "longitude": 71.575
+        },
+        {
+          "latitude": 1.363,
+          "longitude": 71.645
+        },
+        {
+          "latitude": 1.421,
+          "longitude": 71.715
+        },
+        {
+          "latitude": 1.479,
+          "longitude": 71.785
+        },
+        {
+          "latitude": 1.537,
+          "longitude": 71.855
+        },
+        {
+          "latitude": 1.595,
+          "longitude": 71.925
+        },
+        {
+          "latitude": 1.653,
+          "longitude": 71.995
+        },
+        {
+          "latitude": 1.711,
+          "longitude": 72.065
+        }
+      ],
+      "scopes": [
+        {
+          "scope": "gfs",
+          "passed": false,
+          "failures": 10,
+          "checked_values": 6240,
+          "report": "docs\\validation\\reports\\target-f6cc85c-20260626T0600Z\\batch-03-gfs.json"
+        },
+        {
+          "scope": "cams",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 2880,
+          "report": "docs\\validation\\reports\\target-f6cc85c-20260626T0600Z\\batch-03-cams.json"
+        }
+      ]
+    }
+  ],
+  "elapsed_seconds": 163.052
+}
