@@ -558,8 +558,9 @@ accepted direction.
 
 Current rule:
 
-- `vendor/open-meteo` must match upstream Open-Meteo commit
-  `d91c52f00665bb8ddd348f688fece556c933ffbb` byte-for-byte.
+- `vendor/open-meteo` must match the upstream Open-Meteo commit selected for
+  current public API parity byte-for-byte. The active candidate is
+  `acfb7eb13ffdca9d3772c57716c240d3a7d73da5`.
 - Do not patch Open-Meteo model readers, grids, interpolation, weather-code
   derivation, downloader transport, API serialization, DEM handling, or SDK
   dependency wiring.
@@ -577,3 +578,80 @@ Current rule:
 Validation after this correction must be run again from the rebuilt unmodified
 engine image. Older 50-point pass records from the patched engine are retained
 as historical evidence only and are not completion evidence.
+
+The earlier `d91c52f00665bb8ddd348f688fece556c933ffbb` candidate included the
+2026-06-15 upstream thunderstorm weather-code parameterisation changes
+(`10e3cc39`/`2ccf980f`). A 10-point smoke test against the current
+`single-runs-api.open-meteo.com` showed identical precipitation, showers, CAPE,
+cloud, and visibility inputs but `weather_code` mismatches where the candidate
+returned thunderstorm `95` and the public API returned drizzle `51/55`. The
+selected `acfb7eb13ffdca9d3772c57716c240d3a7d73da5` commit is the upstream
+commit immediately before that weather-code change and is therefore the next
+current-API parity candidate. This is a source-version selection, not a local
+weather-code patch.
+
+## Current Target Validation Rule
+
+The active completion gate is no longer the older `50/100/500 x 50-frame`
+sequence.
+
+Run targeted API parity in 100 batches:
+
+- each batch contains 10 points;
+- all 1000 points across the 100 batches must be unique;
+- each point validates 24 consecutive hourly frames;
+- 24 frames is only the validation window and must not change product/API
+  output length;
+- stop after 3 failed batches and analyze the failure cause before another
+  modification round;
+- validate only client-used GFS/CAMS layer variables and professional
+  weather-app point outputs, not soil or unrelated specialist outputs.
+
+GFS target variables:
+
+- `temperature_2m`
+- `relative_humidity_2m`
+- `dew_point_2m`
+- `apparent_temperature`
+- `precipitation`
+- `rain`
+- `showers`
+- `snowfall`
+- `snow_depth`
+- `weather_code`
+- `visibility`
+- `cape`
+- `wind_speed_10m`
+- `wind_direction_10m`
+- `wind_gusts_10m`
+- `wind_u_component_10m`
+- `wind_v_component_10m`
+- `cloud_cover`
+- `cloud_cover_high`
+- `cloud_cover_mid`
+- `cloud_cover_low`
+- `pressure_msl`
+- `surface_pressure`
+- `uv_index`
+- `uv_index_clear_sky`
+- `is_day`
+
+CAMS target variables:
+
+- `pm2_5`
+- `pm10`
+- `carbon_monoxide`
+- `nitrogen_dioxide`
+- `sulphur_dioxide`
+- `ozone`
+- `aerosol_optical_depth`
+- `dust`
+- `uv_index`
+- `uv_index_clear_sky`
+- `us_aqi`
+- `european_aqi`
+
+The ordinary public Open-Meteo API currently returns HTTP `429` with
+`Daily API request limit exceeded. Please try again tomorrow.` from the Seoul
+exit. Strict validation therefore uses `single-runs-api.open-meteo.com` with a
+pinned `run=` value until the ordinary public API quota is available again.

@@ -287,8 +287,6 @@ struct GfsReader: GenericReaderDerived, GenericReaderProtocol {
                 try await prefetchData(raw: .surface(.wind_gusts_10m), time: time)
                 try await prefetchData(raw: .surface(.visibility), time: time)
                 try await prefetchData(raw: .surface(.lifted_index), time: time)
-                try await prefetchData(raw: .surface(.convective_inhibition), time: time)
-                try await prefetchData(raw: .surface(.boundary_layer_height), time: time)
             case .is_day:
                 break
             case .temperature_120m:
@@ -459,8 +457,6 @@ struct GfsReader: GenericReaderDerived, GenericReaderProtocol {
                 let visibility = try await get(raw: .surface(.visibility), time: time).data
                 let categoricalFreezingRain = try await get(raw: .surface(.categorical_freezing_rain), time: time).data
                 let liftedIndex = try await get(raw: .surface(.lifted_index), time: time).data
-                let convective_inhibition = try await get(raw: .surface(.convective_inhibition), time: time).data
-                let boundary_layer_height = try await get(raw: .surface(.boundary_layer_height), time: time).data
                 return DataAndUnit(WeatherCode.calculate(
                     cloudcover: cloudcover,
                     precipitation: precipitation,
@@ -469,12 +465,9 @@ struct GfsReader: GenericReaderDerived, GenericReaderProtocol {
                     gusts: gusts,
                     cape: cape,
                     liftedIndex: liftedIndex,
-                    convectiveInhibition: convective_inhibition,
-                    pblHeight: boundary_layer_height,
                     visibilityMeters: visibility,
                     categoricalFreezingRain: categoricalFreezingRain,
-                    modelDtSeconds: time.dtSeconds,
-                    latitude: reader.modelLat), .wmoCode
+                    modelDtSeconds: time.dtSeconds), .wmoCode
                 )
             case .is_day:
                 return DataAndUnit(Zensun.calculateIsDay(timeRange: time.time, lat: reader.modelLat, lon: reader.modelLon), .dimensionlessInteger)

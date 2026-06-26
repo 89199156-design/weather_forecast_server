@@ -94,12 +94,9 @@ struct IconReader: GenericReaderDerived, GenericReaderProtocol {
                     gusts: gusts,
                     cape: cape,
                     liftedIndex: nil,
-                    convectiveInhibition: nil,
-                    pblHeight: nil,
                     visibilityMeters: nil,
                     categoricalFreezingRain: nil,
-                    modelDtSeconds: time.dtSeconds,
-                    latitude: reader.modelLat), .wmoCode
+                    modelDtSeconds: time.dtSeconds), .wmoCode
                 )
             }
 

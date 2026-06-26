@@ -4,8 +4,11 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import math
+import shlex
+import subprocess
 import sys
 import time
 import urllib.error
@@ -32,6 +35,44 @@ if REQUESTS_SESSION is not None:
     REQUESTS_SESSION.trust_env = False
 
 URLLIB_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+REMOTE_FETCH_CODE = r"""
+import json
+import sys
+import time
+import urllib.error
+import urllib.request
+
+payload = json.load(sys.stdin)
+opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+last_error = None
+for attempt in range(payload["retries"] + 1):
+    request = urllib.request.Request(payload["url"], headers=payload["headers"])
+    try:
+        with opener.open(request, timeout=payload["timeout"]) as response:
+            body = response.read().decode("utf-8")
+        if payload["request_pause"] > 0:
+            time.sleep(payload["request_pause"])
+        sys.stdout.write(body)
+        raise SystemExit(0)
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", "replace")
+        last_error = f"HTTP {exc.code} {exc.reason}: {body[:500]}"
+        retryable = exc.code == 429 or 500 <= exc.code < 600
+        if not retryable or attempt >= payload["retries"]:
+            break
+    except Exception as exc:  # noqa: BLE001
+        last_error = f"{type(exc).__name__}: {exc}"
+        if attempt >= payload["retries"]:
+            break
+
+    time.sleep(payload["retry_delay"] * (2**attempt))
+
+print(last_error or "remote fetch failed", file=sys.stderr)
+raise SystemExit(1)
+"""
+
+REMOTE_FETCH_BOOTSTRAP = "exec(__import__('base64').b64decode('{code}'))"
 
 
 def generate_points(
@@ -187,6 +228,46 @@ def fetch_json(
     raise RuntimeError("unreachable retry state")
 
 
+def fetch_json_via_ssh(
+    ssh_host: str,
+    base_url: str,
+    endpoint: str,
+    params: dict[str, Any],
+    *,
+    host_header: str | None = None,
+    timeout: float,
+    retries: int,
+    retry_delay: float,
+    request_pause: float,
+) -> Any:
+    url = base_url.rstrip("/") + endpoint + "?" + urllib.parse.urlencode(params)
+    headers = {"Accept": "application/json", "User-Agent": "weather-forecast-validation/1.0"}
+    if host_header:
+        headers["Host"] = host_header
+    payload = {
+        "url": url,
+        "headers": headers,
+        "timeout": timeout,
+        "retries": retries,
+        "retry_delay": retry_delay,
+        "request_pause": request_pause,
+    }
+    remote_code = REMOTE_FETCH_BOOTSTRAP.format(
+        code=base64.b64encode(REMOTE_FETCH_CODE.encode("utf-8")).decode("ascii")
+    )
+    completed = subprocess.run(
+        ["ssh", ssh_host, f"python3 -c {shlex.quote(remote_code)}"],
+        input=json.dumps(payload),
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=(timeout + retry_delay) * (retries + 1) + 30,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(f"ssh reference fetch failed via {ssh_host}: {completed.stderr.strip()}")
+    return json.loads(completed.stdout)
+
+
 def extract_hourly(payload: Any) -> dict[str, Any]:
     if isinstance(payload, list):
         if not payload:
@@ -277,6 +358,7 @@ def validate_scope(
     request_pause: float,
     api_host_header: str | None = None,
     reference_host_header: str | None = None,
+    reference_ssh_host: str | None = None,
     run: str | None = None,
     request_forecast_hours: int | None = None,
     progress_path: Path | None = None,
@@ -290,6 +372,7 @@ def validate_scope(
         "frames": frames,
         "variables": len(variables),
         "reference_base_url": reference_base_url,
+        "reference_ssh_host": reference_ssh_host,
         "run": run,
         "request_forecast_hours": request_forecast_hours,
         "start_hour": start_hour,
@@ -368,8 +451,9 @@ def validate_scope(
             if reference_base_url:
                 write_progress(point_offset, variable_chunk, "reference_request_start")
                 try:
-                    reference_hourlies = extract_hourlies(
-                        fetch_json(
+                    reference_payload = (
+                        fetch_json_via_ssh(
+                            reference_ssh_host,
                             reference_base_url,
                             endpoint,
                             params,
@@ -379,6 +463,20 @@ def validate_scope(
                             retry_delay=request_retry_delay,
                             request_pause=request_pause,
                         )
+                        if reference_ssh_host
+                        else fetch_json(
+                            reference_base_url,
+                            endpoint,
+                            params,
+                            host_header=reference_host_header,
+                            timeout=timeout,
+                            retries=request_retries,
+                            retry_delay=request_retry_delay,
+                            request_pause=request_pause,
+                        )
+                    )
+                    reference_hourlies = extract_hourlies(
+                        reference_payload
                     )
                     if run and start_hour:
                         reference_hourlies = [
@@ -504,6 +602,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--request-pause", type=float, default=0.0)
     parser.add_argument("--api-host-header")
     parser.add_argument("--reference-host-header")
+    parser.add_argument("--reference-ssh-host", help="Fetch the reference API through this SSH host.")
     parser.add_argument("--run", help="Pinned model run for single-runs API mode, e.g. 2026-06-26T00:00.")
     parser.add_argument("--repo-root", default=Path(__file__).resolve().parents[1])
     parser.add_argument("--variables", help="Comma-separated override variable list.")
@@ -577,6 +676,7 @@ def main() -> int:
         request_pause=args.request_pause,
         api_host_header=args.api_host_header,
         reference_host_header=args.reference_host_header,
+        reference_ssh_host=args.reference_ssh_host,
         run=format_utc_hour(parse_utc_hour(args.run)) if args.run else None,
         request_forecast_hours=request_forecast_hours,
         progress_path=Path(args.progress_report) if args.progress_report else None,

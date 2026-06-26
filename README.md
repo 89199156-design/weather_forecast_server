@@ -37,8 +37,8 @@ The implementation order is:
 3. Export point API packages from Open-Meteo-derived data.
 4. Export layers from the same Open-Meteo-derived data.
 5. Deploy to Singapore and remove old satellite code/tasks there.
-6. Validate 50, then 100, then 500 points x 50 forecast frames for point API
-   and layer consistency.
+6. Validate 100 batches of 10 unique points x 24 consecutive hourly frames for
+   the client-used GFS/CAMS point and layer variables.
 
 ## Layer Export
 
@@ -69,13 +69,18 @@ python3 scripts/openmeteo_api_inventory.py \
   --output docs/validation/openmeteo-api-inventory.json
 ```
 
-Run the required point validation gates. The runner stops on the first failed
-gate, so a failed 50-point gate prevents 100/500-point validation:
+Run the required targeted point validation batches. The runner stops after 3
+failed batches and writes per-batch reports:
 
 ```bash
-python3 scripts/run_openmeteo_validation_gates.py \
+python3 scripts/run_openmeteo_target_validation.py \
   --api-base-url http://127.0.0.1:18080 \
-  --reference-base-url http://127.0.0.1:18081 \
+  --gfs-reference-base-url https://single-runs-api.open-meteo.com \
+  --cams-reference-base-url https://air-quality-api.open-meteo.com \
+  --gfs-run 2026-06-26T00:00 \
+  --frames 24 \
+  --batches 100 \
+  --points-per-batch 10 \
   --output-dir docs/validation/reports
 ```
 
@@ -100,6 +105,6 @@ python3 scripts/validate_openmeteo_layers.py \
   --max-times 50
 ```
 
-Run the validation gates in order: 50 points x 50 frames, then 100 x 50, then
-500 x 50. Stop on the first mismatch and record the changed revision, report,
-and source-chain analysis before changing code again.
+Run the current validation gate as 100 batches of 10 unique points x 24 frames.
+Stop after 3 failed batches and record the changed revision, report, and
+source-chain analysis before changing code again.

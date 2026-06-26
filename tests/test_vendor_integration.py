@@ -11,7 +11,7 @@ def read_vendor(path: str) -> str:
 def test_openmeteo_package_uses_upstream_sdk_dependency():
     package = read_vendor("Package.swift")
 
-    assert 'url: "https://github.com/open-meteo/sdk.git", from: "1.27.2"' in package
+    assert 'url: "https://github.com/open-meteo/sdk.git", from: "1.26.0"' in package
     assert '.package(path: "../openmeteo-sdk")' not in package
     assert '.product(name: "OpenMeteoSdk", package: "sdk")' in package
     assert '.product(name: "OpenMeteoSdk", package: "openmeteo-sdk")' not in package
