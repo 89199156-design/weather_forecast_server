@@ -1,0 +1,94 @@
+{
+  "batch": 8,
+  "passed": true,
+  "points": [
+    {
+      "flat": 20833,
+      "y": 34,
+      "x": 535,
+      "lat": 4.041653,
+      "lon": 132.773438
+    },
+    {
+      "flat": 21129,
+      "y": 35,
+      "x": 234,
+      "lat": 4.158802,
+      "lon": 97.5
+    },
+    {
+      "flat": 21424,
+      "y": 35,
+      "x": 529,
+      "lat": 4.158802,
+      "lon": 132.070312
+    },
+    {
+      "flat": 21720,
+      "y": 36,
+      "x": 228,
+      "lat": 4.275951,
+      "lon": 96.796875
+    },
+    {
+      "flat": 22015,
+      "y": 36,
+      "x": 523,
+      "lat": 4.275951,
+      "lon": 131.367188
+    },
+    {
+      "flat": 22311,
+      "y": 37,
+      "x": 222,
+      "lat": 4.393101,
+      "lon": 96.09375
+    },
+    {
+      "flat": 22606,
+      "y": 37,
+      "x": 517,
+      "lat": 4.393101,
+      "lon": 130.664062
+    },
+    {
+      "flat": 22902,
+      "y": 38,
+      "x": 216,
+      "lat": 4.51025,
+      "lon": 95.390625
+    },
+    {
+      "flat": 23197,
+      "y": 38,
+      "x": 511,
+      "lat": 4.51025,
+      "lon": 129.960938
+    },
+    {
+      "flat": 23493,
+      "y": 39,
+      "x": 210,
+      "lat": 4.627399,
+      "lon": 94.6875
+    }
+  ],
+  "frames": 24,
+  "layers": [
+    "pm2_5",
+    "pm10",
+    "carbon_monoxide",
+    "nitrogen_dioxide",
+    "sulphur_dioxide",
+    "ozone",
+    "aerosol_optical_depth",
+    "dust",
+    "uv_index",
+    "uv_index_clear_sky",
+    "us_aqi",
+    "european_aqi"
+  ],
+  "checked_values": 2880,
+  "mismatch_count": 0,
+  "mismatches": []
+}

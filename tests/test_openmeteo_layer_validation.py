@@ -78,6 +78,21 @@ def test_grid_index_uses_manifest_lat_lon_values():
     assert validator.grid_center(grid, y=1, x=0) == (11.0, 100.0)
 
 
+def test_manifest_path_prefers_gfs_then_cams(tmp_path):
+    validator = load_module()
+
+    layer_dir = tmp_path / "layers"
+    layer_dir.mkdir()
+    cams = layer_dir / "cams_global_data.json"
+    cams.write_text("{}", encoding="utf-8")
+    assert validator.manifest_path_for_layer_dir(layer_dir, None) == cams
+
+    gfs = layer_dir / "gfs013_surface_data.json"
+    gfs.write_text("{}", encoding="utf-8")
+    assert validator.manifest_path_for_layer_dir(layer_dir, None) == gfs
+    assert validator.manifest_path_for_layer_dir(layer_dir, "cams_global_data.json") == cams
+
+
 def test_decode_scalar_and_wind_pixels_match_builder_encoding():
     validator = load_module()
     builder_spec = importlib.util.spec_from_file_location("build_openmeteo_layers", ROOT / "scripts" / "build_openmeteo_layers.py")

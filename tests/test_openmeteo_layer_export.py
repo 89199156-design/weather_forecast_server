@@ -76,6 +76,28 @@ def test_layer_definitions_are_api_variables_not_legacy_grib_fields():
         assert legacy_dependency not in source
 
 
+def test_cams_layer_definitions_cover_client_air_quality_layers():
+    layers = load_module()
+
+    api_variables = set(layers.required_api_variables(layers.CAMS_LAYER_DEFINITIONS))
+
+    assert api_variables == {
+        "pm2_5",
+        "pm10",
+        "carbon_monoxide",
+        "nitrogen_dioxide",
+        "sulphur_dioxide",
+        "ozone",
+        "aerosol_optical_depth",
+        "dust",
+        "uv_index",
+        "uv_index_clear_sky",
+        "us_aqi",
+        "european_aqi",
+    }
+    assert layers.manifest_filename_for_scope("cams") == "cams_global_data.json"
+
+
 def test_layer_manifest_preserves_encoder_vmin_for_decoding():
     layers = load_module()
     grid = layers.compute_gfs013_region_grid(
@@ -179,3 +201,25 @@ def test_api_request_params_preserve_openmeteo_point_semantics():
     assert params["cell_selection"] == "land"
     assert params["wind_speed_unit"] == "ms"
     assert "elevation" not in params
+
+
+def test_cams_api_request_params_use_air_quality_domain():
+    layers = load_module()
+
+    params = layers.build_layer_api_params(
+        scope="cams",
+        latitudes=[31.23],
+        longitudes=[121.47],
+        variables=["pm2_5", "us_aqi"],
+        model=None,
+        domain="cams_global",
+        start_hour="2026-06-25T07:00",
+        end_hour="2026-06-26T06:00",
+    )
+
+    assert params["latitude"] == "31.230000"
+    assert params["longitude"] == "121.470000"
+    assert params["hourly"] == "pm2_5,us_aqi"
+    assert params["domains"] == "cams_global"
+    assert "models" not in params
+    assert params["timezone"] == "UTC"

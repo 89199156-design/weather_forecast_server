@@ -18,10 +18,13 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 import build_openmeteo_layers as layer_builder
+from validate_openmeteo_point_api import fetch_json, fetch_json_via_ssh
 
 
 DEFAULT_LAYER_DIR = layer_builder.DEFAULT_OUTPUT_DIR
 DEFAULT_API_BASE_URL = layer_builder.DEFAULT_API_BASE_URL
+DEFAULT_GFS_MANIFEST = layer_builder.manifest_filename_for_scope("gfs")
+DEFAULT_CAMS_MANIFEST = layer_builder.manifest_filename_for_scope("cams")
 
 
 def evenly_spaced_flat_indices(total: int, max_points: int) -> list[int]:
@@ -110,7 +113,7 @@ def decode_wind_pixel(pixel: Sequence[int]) -> tuple[float | None, float | None]
     return -100.0 + float(u_encoded) / 10.0, -100.0 + float(v_encoded) / 10.0
 
 
-@lru_cache(maxsize=256)
+@lru_cache(maxsize=1024)
 def load_rgba_image(path: str) -> np.ndarray:
     return np.asarray(Image.open(path).convert("RGBA"))
 
@@ -124,6 +127,33 @@ def variables_from_manifest(layers: dict[str, Any]) -> list[str]:
                 seen.add(variable)
                 variables.append(variable)
     return variables
+
+
+def endpoint_for_scope(scope: str) -> str:
+    if scope == "gfs":
+        return "/v1/forecast"
+    if scope == "cams":
+        return "/v1/air-quality"
+    raise ValueError(f"unknown layer scope: {scope}")
+
+
+def split_api_base_url(api_base_url: str, scope: str) -> tuple[str, str]:
+    endpoint = endpoint_for_scope(scope)
+    if api_base_url.rstrip("/").endswith(endpoint):
+        return api_base_url.rstrip()[: -len(endpoint)], endpoint
+    return api_base_url.rstrip("/"), endpoint
+
+
+def manifest_path_for_layer_dir(layer_dir: Path, manifest_name: str | None) -> Path:
+    if manifest_name:
+        return layer_dir / manifest_name
+    gfs_path = layer_dir / DEFAULT_GFS_MANIFEST
+    cams_path = layer_dir / DEFAULT_CAMS_MANIFEST
+    if gfs_path.exists():
+        return gfs_path
+    if cams_path.exists():
+        return cams_path
+    raise FileNotFoundError(f"missing {DEFAULT_GFS_MANIFEST} or {DEFAULT_CAMS_MANIFEST} in {layer_dir}")
 
 
 def selected_layer_items(layers: dict[str, Any], names: str | None) -> dict[str, Any]:
@@ -172,22 +202,88 @@ def decode_layer_value(layer_dir: Path, layer_name: str, layer: dict[str, Any], 
     return decode_scalar_pixel(pixel, vmin=float(layer.get("vmin", 0.0)), scale=float(layer["scale"]))
 
 
+def fetch_api_chunk_for_manifest(
+    *,
+    manifest: dict[str, Any],
+    api_base_url: str,
+    latitudes: Sequence[float],
+    longitudes: Sequence[float],
+    variables: Sequence[str],
+    timeout_seconds: float,
+    api_host_header: str | None,
+    reference_ssh_host: str | None,
+    request_retries: int,
+    request_retry_delay: float,
+    request_pause: float,
+) -> list[dict[str, Any]]:
+    scope = str(manifest.get("scope", "gfs"))
+    params = layer_builder.build_layer_api_params(
+        scope=scope,
+        latitudes=latitudes,
+        longitudes=longitudes,
+        variables=variables,
+        model=str(manifest.get("model", layer_builder.DEFAULT_LAYER_MODEL)),
+        domain=manifest.get("domain"),
+        start_hour=str(manifest["start_hour"]),
+        end_hour=str(manifest["end_hour"]),
+        api_options={str(key): str(value) for key, value in (manifest.get("api_options") or {}).items()},
+        run=manifest.get("run"),
+        request_forecast_hours=manifest.get("request_forecast_hours"),
+    )
+    root_url, endpoint = split_api_base_url(api_base_url, scope)
+    payload = (
+        fetch_json_via_ssh(
+            reference_ssh_host,
+            root_url,
+            endpoint,
+            params,
+            host_header=api_host_header,
+            timeout=timeout_seconds,
+            retries=request_retries,
+            retry_delay=request_retry_delay,
+            request_pause=request_pause,
+        )
+        if reference_ssh_host
+        else fetch_json(
+            root_url,
+            endpoint,
+            params,
+            host_header=api_host_header,
+            timeout=timeout_seconds,
+            retries=request_retries,
+            retry_delay=request_retry_delay,
+            request_pause=request_pause,
+        )
+    )
+    if isinstance(payload, dict):
+        return [payload]
+    if not isinstance(payload, list):
+        raise ValueError(f"unexpected Open-Meteo response type: {type(payload)!r}")
+    return payload
+
+
 def verify_layers(
     *,
     layer_dir: Path,
     api_base_url: str,
+    manifest_name: str | None = None,
+    api_host_header: str | None = None,
+    reference_ssh_host: str | None = None,
     max_points: int,
     max_times: int,
     chunk_size: int,
     layers_filter: str | None,
     timeout_seconds: float,
+    request_retries: int = 3,
+    request_retry_delay: float = 2.0,
+    request_pause: float = 0.0,
 ) -> dict[str, Any]:
-    manifest_path = layer_dir / "gfs013_surface_data.json"
+    manifest_path = manifest_path_for_layer_dir(layer_dir, manifest_name)
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     grid = manifest["grid"]
     layers = selected_layer_items(manifest["layers"], layers_filter)
     variables = variables_from_manifest(layers)
-    manifest_api_options = manifest.get("api_options") or layer_builder.LAYER_API_OPTIONS
+    manifest_api_options = manifest["api_options"] if "api_options" in manifest else layer_builder.LAYER_API_OPTIONS
     api_options = {str(key): str(value) for key, value in manifest_api_options.items()}
     points = point_cases(grid, max_points)
     selected_time_indices = time_indices(manifest.get("times") or [], max_times)
@@ -199,16 +295,18 @@ def verify_layers(
     started = time.time()
     for chunk_start in range(0, len(points), chunk_size):
         chunk = points[chunk_start : chunk_start + chunk_size]
-        response = layer_builder.fetch_forecast_chunk(
+        response = fetch_api_chunk_for_manifest(
+            manifest=manifest,
             api_base_url=api_base_url,
             latitudes=[case["lat"] for case in chunk],
             longitudes=[case["lon"] for case in chunk],
             variables=variables,
-            model=str(manifest.get("model", "gfs013")),
-            start_hour=str(manifest["start_hour"]),
-            end_hour=str(manifest["end_hour"]),
-            api_options=api_options,
             timeout_seconds=timeout_seconds,
+            api_host_header=api_host_header,
+            reference_ssh_host=reference_ssh_host,
+            request_retries=request_retries,
+            request_retry_delay=request_retry_delay,
+            request_pause=request_pause,
         )
         if len(response) != len(chunk):
             raise ValueError(f"API point count mismatch: got {len(response)} expected {len(chunk)}")
@@ -279,8 +377,13 @@ def verify_layers(
 
     return {
         "layer_dir": str(layer_dir),
+        "manifest": str(manifest_path),
+        "scope": manifest.get("scope", "gfs"),
         "api_base_url": api_base_url,
+        "api_host_header": api_host_header,
+        "reference_ssh_host": reference_ssh_host,
         "model": manifest.get("model"),
+        "domain": manifest.get("domain"),
         "api_options": api_options,
         "points": len(points),
         "frames": len(selected_time_indices),
@@ -297,8 +400,13 @@ def write_report(report: dict[str, Any], report_path: Path) -> None:
         "# Open-Meteo Layer Validation",
         "",
         f"- layer_dir: `{report['layer_dir']}`",
+        f"- manifest: `{report['manifest']}`",
+        f"- scope: `{report['scope']}`",
         f"- api_base_url: `{report['api_base_url']}`",
+        f"- api_host_header: `{report.get('api_host_header')}`",
+        f"- reference_ssh_host: `{report.get('reference_ssh_host')}`",
         f"- model: `{report['model']}`",
+        f"- domain: `{report.get('domain')}`",
         f"- api_options: `{json.dumps(report.get('api_options') or {}, ensure_ascii=False, sort_keys=True)}`",
         f"- points: {report['points']}",
         f"- frames: {report['frames']}",
@@ -322,12 +430,18 @@ def write_report(report: dict[str, Any], report_path: Path) -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Validate Open-Meteo API-backed WebP layers against the local API.")
     parser.add_argument("--layer-dir", default=DEFAULT_LAYER_DIR)
+    parser.add_argument("--manifest-name")
     parser.add_argument("--api-base-url", default=DEFAULT_API_BASE_URL)
+    parser.add_argument("--api-host-header")
+    parser.add_argument("--reference-ssh-host")
     parser.add_argument("--max-points", type=int, required=True)
     parser.add_argument("--max-times", type=int, default=50)
     parser.add_argument("--chunk-size", type=int, default=200)
     parser.add_argument("--layers", default=None)
     parser.add_argument("--timeout-seconds", type=float, default=120.0)
+    parser.add_argument("--request-retries", type=int, default=3)
+    parser.add_argument("--request-retry-delay", type=float, default=2.0)
+    parser.add_argument("--request-pause", type=float, default=0.0)
     parser.add_argument("--report", default=None)
     return parser.parse_args()
 
@@ -337,11 +451,17 @@ def main() -> None:
     report = verify_layers(
         layer_dir=Path(args.layer_dir),
         api_base_url=args.api_base_url,
+        manifest_name=args.manifest_name,
+        api_host_header=args.api_host_header,
+        reference_ssh_host=args.reference_ssh_host,
         max_points=args.max_points,
         max_times=args.max_times,
         chunk_size=args.chunk_size,
         layers_filter=args.layers,
         timeout_seconds=args.timeout_seconds,
+        request_retries=args.request_retries,
+        request_retry_delay=args.request_retry_delay,
+        request_pause=args.request_pause,
     )
     if args.report:
         write_report(report, Path(args.report))
