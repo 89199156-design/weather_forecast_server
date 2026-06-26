@@ -95,6 +95,18 @@ python3 scripts/build_openmeteo_layers.py \
   --end-hour 2026-06-27T08:00
 ```
 
+Build the server layer products used by production:
+
+```bash
+bash scripts/build_server_openmeteo_layers.sh
+```
+
+The server flow writes GFS WebP layers to
+`data/openmeteo_layers/gfs013_surface` and CAMS WebP layers to
+`data/openmeteo_layers/cams_global`. It defaults to 50 hourly frames from the
+current UTC hour and can be pinned with `WEATHER_OPENMETEO_LAYER_START_HOUR`,
+`WEATHER_OPENMETEO_LAYER_END_HOUR`, or `WEATHER_OPENMETEO_LAYER_FRAME_COUNT`.
+
 Validate generated layers against the same Open-Meteo API before promotion:
 
 ```bash

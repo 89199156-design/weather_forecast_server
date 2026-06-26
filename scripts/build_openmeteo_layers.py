@@ -135,6 +135,7 @@ DEFAULT_LAYER_DEFINITIONS: tuple[LayerDefinition, ...] = (
     LayerDefinition("cloud_mid_1", "cloud_mid_1", ("cloud_cover_mid",), "mcc", "%", 100.0, (0.0, 100.0)),
     LayerDefinition("cloud_low_1", "cloud_low_1", ("cloud_cover_low",), "lcc", "%", 100.0, (0.0, 100.0)),
     LayerDefinition("t2m", "t2m", ("temperature_2m",), "t2m", "C", 100.0, (-100.0, 100.0), vmin=-100.0),
+    LayerDefinition("d2m", "d2m", ("dew_point_2m",), "d2m", "C", 100.0, (-100.0, 100.0), vmin=-100.0),
     LayerDefinition("r2", "r2", ("relative_humidity_2m",), "r2", "%", 100.0, (0.0, 100.0)),
     LayerDefinition(
         "wind",
@@ -150,7 +151,6 @@ DEFAULT_LAYER_DEFINITIONS: tuple[LayerDefinition, ...] = (
     LayerDefinition("snod", "snod", ("snow_depth",), "snod", "mm", 10.0, (0.0, 2000.0), api_multiplier=1000.0),
     LayerDefinition("gust", "gust", ("wind_gusts_10m",), "gust", "m/s", 100.0, (0.0, 200.0)),
     LayerDefinition("vis", "vis", ("visibility",), "vis", "m", 0.1, (0.0, 100000.0)),
-    LayerDefinition("weather_code", "weather_code", ("weather_code",), "weather_code", "wmo code", 1.0, (0.0, 100.0), data_type="categorical"),
     LayerDefinition(
         "precip_phase",
         "precip_phase",
@@ -173,6 +173,7 @@ DEFAULT_LAYER_DEFINITIONS: tuple[LayerDefinition, ...] = (
         data_type="categorical",
         derive="thunderstorm_code_from_weather_code",
     ),
+    LayerDefinition("cape", "cape", ("cape",), "cape", "J/kg", 1.0, (0.0, 65535.0)),
     LayerDefinition(
         "prmsl",
         "prmsl",
@@ -184,38 +185,25 @@ DEFAULT_LAYER_DEFINITIONS: tuple[LayerDefinition, ...] = (
         vmin=50000.0,
         api_multiplier=100.0,
     ),
+    LayerDefinition(
+        "sp",
+        "sp",
+        ("surface_pressure",),
+        "sp",
+        "Pa",
+        1.0,
+        (50000.0, 115000.0),
+        vmin=50000.0,
+        api_multiplier=100.0,
+    ),
+    LayerDefinition("uv_index", "uv_index", ("uv_index",), "uv_index", "index", 100.0, (0.0, 100.0)),
 )
 
 CAMS_LAYER_DEFINITIONS: tuple[LayerDefinition, ...] = (
     LayerDefinition("pm2_5", "pm2_5", ("pm2_5",), "pm2_5", "ug/m3", 10.0, (0.0, 6000.0)),
     LayerDefinition("pm10", "pm10", ("pm10",), "pm10", "ug/m3", 10.0, (0.0, 6000.0)),
-    LayerDefinition("carbon_monoxide", "carbon_monoxide", ("carbon_monoxide",), "co", "ug/m3", 1.0, (0.0, 50000.0)),
-    LayerDefinition("nitrogen_dioxide", "nitrogen_dioxide", ("nitrogen_dioxide",), "no2", "ug/m3", 10.0, (0.0, 6000.0)),
-    LayerDefinition("sulphur_dioxide", "sulphur_dioxide", ("sulphur_dioxide",), "so2", "ug/m3", 10.0, (0.0, 6000.0)),
-    LayerDefinition("ozone", "ozone", ("ozone",), "o3", "ug/m3", 10.0, (0.0, 6000.0)),
     LayerDefinition("aerosol_optical_depth", "aerosol_optical_depth", ("aerosol_optical_depth",), "aod", "1", 1000.0, (0.0, 65.0)),
     LayerDefinition("dust", "dust", ("dust",), "dust", "ug/m3", 10.0, (0.0, 6000.0)),
-    LayerDefinition("uv_index", "uv_index", ("uv_index",), "uv_index", "index", 100.0, (0.0, 100.0)),
-    LayerDefinition(
-        "uv_index_clear_sky",
-        "uv_index_clear_sky",
-        ("uv_index_clear_sky",),
-        "uv_index_clear_sky",
-        "index",
-        100.0,
-        (0.0, 100.0),
-    ),
-    LayerDefinition("us_aqi", "us_aqi", ("us_aqi",), "us_aqi", "index", 1.0, (0.0, 500.0), data_type="categorical"),
-    LayerDefinition(
-        "european_aqi",
-        "european_aqi",
-        ("european_aqi",),
-        "european_aqi",
-        "index",
-        1.0,
-        (0.0, 500.0),
-        data_type="categorical",
-    ),
 )
 
 

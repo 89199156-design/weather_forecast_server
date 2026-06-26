@@ -46,14 +46,36 @@ def test_default_layer_model_uses_openmeteo_gfs_global_mixer():
 def test_layer_definitions_are_api_variables_not_legacy_grib_fields():
     layers = load_module()
 
+    layer_names = tuple(layer.name for layer in layers.DEFAULT_LAYER_DEFINITIONS)
     api_variables = set(layers.required_api_variables(layers.DEFAULT_LAYER_DEFINITIONS))
 
+    assert layer_names == (
+        "cloud_total_1",
+        "cloud_high_1",
+        "cloud_mid_1",
+        "cloud_low_1",
+        "t2m",
+        "d2m",
+        "r2",
+        "wind",
+        "tp",
+        "snod",
+        "gust",
+        "vis",
+        "precip_phase",
+        "thunderstorm_code",
+        "cape",
+        "prmsl",
+        "sp",
+        "uv_index",
+    )
     assert api_variables == {
         "cloud_cover",
         "cloud_cover_high",
         "cloud_cover_mid",
         "cloud_cover_low",
         "temperature_2m",
+        "dew_point_2m",
         "relative_humidity_2m",
         "wind_u_component_10m",
         "wind_v_component_10m",
@@ -62,7 +84,10 @@ def test_layer_definitions_are_api_variables_not_legacy_grib_fields():
         "wind_gusts_10m",
         "visibility",
         "weather_code",
+        "cape",
         "pressure_msl",
+        "surface_pressure",
+        "uv_index",
     }
 
     source = SCRIPT.read_text(encoding="utf-8")
@@ -79,21 +104,20 @@ def test_layer_definitions_are_api_variables_not_legacy_grib_fields():
 def test_cams_layer_definitions_cover_client_air_quality_layers():
     layers = load_module()
 
+    layer_names = tuple(layer.name for layer in layers.CAMS_LAYER_DEFINITIONS)
     api_variables = set(layers.required_api_variables(layers.CAMS_LAYER_DEFINITIONS))
 
+    assert layer_names == (
+        "pm2_5",
+        "pm10",
+        "aerosol_optical_depth",
+        "dust",
+    )
     assert api_variables == {
         "pm2_5",
         "pm10",
-        "carbon_monoxide",
-        "nitrogen_dioxide",
-        "sulphur_dioxide",
-        "ozone",
         "aerosol_optical_depth",
         "dust",
-        "uv_index",
-        "uv_index_clear_sky",
-        "us_aqi",
-        "european_aqi",
     }
     assert layers.manifest_filename_for_scope("cams") == "cams_global_data.json"
 
@@ -111,8 +135,12 @@ def test_layer_manifest_preserves_encoder_vmin_for_decoding():
 
     assert manifests["cloud_total_1"]["vmin"] == 0.0
     assert manifests["t2m"]["vmin"] == -100.0
+    assert manifests["d2m"]["vmin"] == -100.0
     assert manifests["prmsl"]["vmin"] == 50000.0
-    assert manifests["weather_code"]["data_type"] == "categorical"
+    assert manifests["sp"]["vmin"] == 50000.0
+    assert manifests["cape"]["unit"] == "J/kg"
+    assert manifests["uv_index"]["unit"] == "index"
+    assert "weather_code" not in manifests
     assert manifests["precip_phase"]["derive"] == "precip_phase_from_weather_code"
     assert manifests["thunderstorm_code"]["derive"] == "thunderstorm_code_from_weather_code"
 
@@ -210,7 +238,7 @@ def test_cams_api_request_params_use_air_quality_domain():
         scope="cams",
         latitudes=[31.23],
         longitudes=[121.47],
-        variables=["pm2_5", "us_aqi"],
+        variables=["pm2_5", "dust"],
         model=None,
         domain="cams_global",
         start_hour="2026-06-25T07:00",
@@ -219,7 +247,7 @@ def test_cams_api_request_params_use_air_quality_domain():
 
     assert params["latitude"] == "31.230000"
     assert params["longitude"] == "121.470000"
-    assert params["hourly"] == "pm2_5,us_aqi"
+    assert params["hourly"] == "pm2_5,dust"
     assert params["domains"] == "cams_global"
     assert "models" not in params
     assert params["timezone"] == "UTC"
