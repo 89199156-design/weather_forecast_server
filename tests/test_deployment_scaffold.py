@@ -61,6 +61,8 @@ def test_singapore_deploy_filters_empty_env_values_before_docker_run():
     assert "--env-file \"$ENV_FILE\"" not in script
     assert "env | sort | awk -F=" in script
     assert "$1 ~ /^WEATHER_/" in script
+    assert 'REMOTE_DATA_DIRECTORY' in script
+    assert 'CACHE_SIZE' in script
     assert '$2 != ""' in script
 
 
@@ -144,6 +146,8 @@ def test_runtime_data_download_sync_mode_uses_processed_openmeteo_database_for_p
     assert "WEATHER_GFS_DOWNLOAD_MODE=sync" in singapore_env
     assert "WEATHER_GFS_FILTER_DOWNLOAD=false" in singapore_env
     assert "WEATHER_OPENMETEO_SYNC_BASE_URL" in singapore_env
+    assert "REMOTE_DATA_DIRECTORY=" in singapore_env
+    assert "CACHE_SIZE=10GB" in singapore_env
     assert "NOAA raw/filter conversion does not exactly match" in singapore_env
     assert "sync)" in script
     assert "raw)" in script
@@ -166,6 +170,8 @@ def test_runtime_data_download_filters_empty_env_values_before_docker_run():
     assert "--env-file \"$ENV_FILE\"" not in script
     assert "env | sort | awk -F=" in script
     assert "$1 ~ /^WEATHER_/" in script
+    assert 'REMOTE_DATA_DIRECTORY' in script
+    assert 'CACHE_SIZE' in script
     assert '$2 != ""' in script
 
 

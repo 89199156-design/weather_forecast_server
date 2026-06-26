@@ -64,6 +64,8 @@ def test_openmeteo_processed_database_sync_is_the_parity_download_mode():
 
     assert "WEATHER_GFS_DOWNLOAD_MODE=sync" in singapore_env
     assert "WEATHER_OPENMETEO_SYNC_BASE_URL" in singapore_env
+    assert "REMOTE_DATA_DIRECTORY=" in singapore_env
+    assert "CACHE_SIZE=10GB" in singapore_env
     assert "Open-Meteo's processed `.om`" in singapore_env
     assert "sync_openmeteo_database ncep_gfs013" in script
     assert "sync_openmeteo_database ncep_gfs025" in script

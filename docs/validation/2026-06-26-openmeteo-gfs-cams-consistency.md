@@ -422,6 +422,15 @@ owned mirror of the processed Open-Meteo database. The previous NOAA raw
 download path remains available only as `WEATHER_GFS_DOWNLOAD_MODE=raw` for
 source-download diagnostics or non-parity regional products.
 
+For lightweight Singapore deployment, prefer Open-Meteo's built-in
+`REMOTE_DATA_DIRECTORY` reader pointed at the same owned processed `.om`
+mirror, with bounded `CACHE_SIZE`/`CACHE_META_SIZE`. This preserves the
+Open-Meteo runtime data contract without storing the full global GFS database
+on the Singapore disk. The deployment wrappers must therefore pass
+`REMOTE_DATA_DIRECTORY` and cache environment variables through to the
+container; these variables are upstream Open-Meteo settings and do not start
+with `WEATHER_`.
+
 ## Required Runtime Validation
 
 After deploying the complete runtime data chain, run:

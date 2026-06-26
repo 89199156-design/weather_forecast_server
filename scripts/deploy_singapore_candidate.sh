@@ -9,7 +9,7 @@ declare -A WEATHER_ENV_OVERRIDES=()
 capture_weather_env_overrides() {
   local name
   while IFS='=' read -r name _; do
-    if [[ "$name" == WEATHER_* ]]; then
+    if [[ "$name" == WEATHER_* || "$name" == "REMOTE_DATA_DIRECTORY" || "$name" == "REMOTE_DATA_DIRECTORY_MINIMUM_AGE" || "$name" == "CACHE_FILE" || "$name" == "CACHE_SIZE" || "$name" == "BLOCK_SIZE" || "$name" == "CACHE_META_FILE" || "$name" == "CACHE_META_SIZE" ]]; then
       WEATHER_ENV_OVERRIDES["$name"]="${!name}"
     fi
   done < <(env)
@@ -78,7 +78,7 @@ cleanup_sanitized_env() {
 trap cleanup_sanitized_env EXIT
 
 env | sort | awk -F= '
-  $1 ~ /^WEATHER_/ && $2 != "" { print }
+  ($1 ~ /^WEATHER_/ || $1 == "REMOTE_DATA_DIRECTORY" || $1 == "REMOTE_DATA_DIRECTORY_MINIMUM_AGE" || $1 == "CACHE_FILE" || $1 == "CACHE_SIZE" || $1 == "BLOCK_SIZE" || $1 == "CACHE_META_FILE" || $1 == "CACHE_META_SIZE") && $2 != "" { print }
 ' > "$SANITIZED_ENV_FILE"
 
 docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
