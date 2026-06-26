@@ -98,6 +98,44 @@ def test_request_params_batches_multiple_points():
     assert params["models"] == "gfs_global"
 
 
+def test_request_params_for_pinned_run_uses_forecast_hours_without_start_end():
+    validator = load_module()
+    endpoint, params = validator.request_params(
+        "gfs",
+        [{"latitude": 10.0, "longitude": 100.0}],
+        ["temperature_2m"],
+        50,
+        start_hour="2026-06-26T10:00",
+        end_hour="2026-06-28T11:00",
+        run="2026-06-26T00:00",
+        request_forecast_hours=60,
+    )
+
+    assert endpoint == "/v1/forecast"
+    assert params["run"] == "2026-06-26T00:00"
+    assert params["forecast_hours"] == 60
+    assert "start_hour" not in params
+    assert "end_hour" not in params
+
+
+def test_trim_hourly_window_slices_single_run_response_to_target_frames():
+    validator = load_module()
+
+    trimmed = validator.trim_hourly_window(
+        {
+            "time": ["2026-06-26T00:00", "2026-06-26T01:00", "2026-06-26T02:00"],
+            "temperature_2m": [20.0, 21.0, 22.0],
+        },
+        start_hour="2026-06-26T01:00",
+        frames=2,
+    )
+
+    assert trimmed == {
+        "time": ["2026-06-26T01:00", "2026-06-26T02:00"],
+        "temperature_2m": [21.0, 22.0],
+    }
+
+
 def test_validate_scope_batches_points_and_compares_each_location(monkeypatch):
     validator = load_module()
     calls = []
@@ -140,6 +178,49 @@ def test_validate_scope_batches_points_and_compares_each_location(monkeypatch):
         ("local", "/v1/forecast", "30.0", "120.0"),
         ("reference", "/v1/forecast", "30.0", "120.0"),
     ]
+
+
+def test_validate_scope_can_compare_single_run_window_with_host_headers(monkeypatch):
+    validator = load_module()
+    calls = []
+
+    def fake_fetch_json(base_url, endpoint, params, **kwargs):
+        calls.append((base_url, endpoint, params.copy(), kwargs.get("host_header")))
+        return {"hourly": {"time": ["2026-06-26T00:00", "2026-06-26T01:00"], "temperature_2m": [20.0, 21.0]}}
+
+    monkeypatch.setattr(validator, "fetch_json", fake_fetch_json)
+
+    report = validator.validate_scope(
+        api_base_url="local",
+        reference_base_url="reference",
+        scope="gfs",
+        variables=["temperature_2m"],
+        points=[{"latitude": 10.0, "longitude": 100.0}],
+        frames=1,
+        chunk_size=10,
+        point_chunk_size=1,
+        sample_offset=0.0,
+        start_hour="2026-06-26T01:00",
+        end_hour="2026-06-26T01:00",
+        tolerance=0.001,
+        timeout=1,
+        allow_all_null=False,
+        request_retries=0,
+        request_retry_delay=0,
+        request_pause=0,
+        api_host_header="single-runs-api.open-meteo.com",
+        reference_host_header="single-runs-api.open-meteo.com",
+        run="2026-06-26T00:00",
+        request_forecast_hours=2,
+    )
+
+    assert report["passed"] is True
+    assert report["checked_values"] == 1
+    assert calls[0][2]["run"] == "2026-06-26T00:00"
+    assert calls[0][2]["forecast_hours"] == 2
+    assert "start_hour" not in calls[0][2]
+    assert calls[0][3] == "single-runs-api.open-meteo.com"
+    assert calls[1][3] == "single-runs-api.open-meteo.com"
 
 
 def test_validate_scope_allows_all_null_when_reference_matches(monkeypatch):

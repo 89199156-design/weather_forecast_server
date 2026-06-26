@@ -37,7 +37,7 @@ require_dem_source() {
   if ! is_truthy "$REQUIRE_DEM_SOURCE"; then
     return
   fi
-  if [[ -n "${WEATHER_DEM_REMOTE_DATA_DIRECTORY:-}" ]]; then
+  if [[ -n "${REMOTE_DATA_DIRECTORY:-}" ]]; then
     return
   fi
   if has_local_dem_static_files; then
@@ -45,7 +45,7 @@ require_dem_source() {
   fi
 
   printf '%s\n' \
-    "Missing Copernicus DEM90 source. Set WEATHER_DEM_REMOTE_DATA_DIRECTORY to the owned DEM mirror, or pre-seed $DATA_DIR/copernicus_dem90/static/lat_*.om." >&2
+    "Missing Copernicus DEM90 source. Set REMOTE_DATA_DIRECTORY to the Open-Meteo data URL, or pre-seed $DATA_DIR/copernicus_dem90/static/lat_*.om." >&2
   exit 2
 }
 

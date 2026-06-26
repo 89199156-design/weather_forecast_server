@@ -547,3 +547,33 @@ state is:
 - CAMS point API: not validated yet.
 - Layer/API parity: not validated yet.
 - Shanghai mirror and Android client path: not started for final migration.
+
+## Correction: Upstream Engine Boundary
+
+The earlier notes in this file mention local engine patches such as
+`WEATHER_DEM_REMOTE_DATA_DIRECTORY`, `WeatherForecastServerSourceConfig`,
+custom GFS download base URLs, NOAA filter overrides, and regional grid slicing
+inside `GfsDomain.swift`/`GfsDownload.swift`. Those changes are no longer the
+accepted direction.
+
+Current rule:
+
+- `vendor/open-meteo` must match upstream Open-Meteo commit
+  `d91c52f00665bb8ddd348f688fece556c933ffbb` byte-for-byte.
+- Do not patch Open-Meteo model readers, grids, interpolation, weather-code
+  derivation, downloader transport, API serialization, DEM handling, or SDK
+  dependency wiring.
+- Use upstream `REMOTE_DATA_DIRECTORY` for Open-Meteo processed data when remote
+  reads are needed. In `single-runs` mode upstream derives `data_run` from that
+  same URL.
+- Keep public, commercial-safe, no-key Open-Meteo download/data sources
+  unchanged. Replace a source only where the upstream dataset requires our
+  authorization, credentials, or licensed mirror.
+- China/surrounding-region bounds are product/export and mirror-selection
+  bounds only. They must not change Open-Meteo source-grid semantics.
+- Any owned regional mirror must preserve the upstream Open-Meteo `data/` and
+  `data_run/` object layout and values for the selected model/window.
+
+Validation after this correction must be run again from the rebuilt unmodified
+engine image. Older 50-point pass records from the patched engine are retained
+as historical evidence only and are not completion evidence.

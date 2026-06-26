@@ -8,8 +8,7 @@ maintaining a Python reimplementation of Open-Meteo weather logic. Our local
 code is limited to:
 
 - China and surrounding-region domain selection.
-- GFS download source configuration and regional slicing for a lightweight
-  server.
+- External mirror/sync configuration for lightweight regional data serving.
 - Point-package and layer-product export formats used by our clients.
 - Deployment, scheduling, and validation tooling.
 
@@ -34,7 +33,7 @@ excluded because it has been split to another server.
 The implementation order is:
 
 1. Vendor and document the Open-Meteo engine baseline.
-2. Add our regional GFS download/source configuration.
+2. Configure external Open-Meteo data mirrors without modifying the engine.
 3. Export point API packages from Open-Meteo-derived data.
 4. Export layers from the same Open-Meteo-derived data.
 5. Deploy to Singapore and remove old satellite code/tasks there.
@@ -54,10 +53,10 @@ must be present locally. `gfs025` supplies variables missing from GFS013 sflux
 files, including visibility and several weather-code dependencies.
 
 Point-output parity also requires Open-Meteo's Copernicus DEM90 static data for
-land elevation correction. For lightweight nodes, configure
-`WEATHER_DEM_REMOTE_DATA_DIRECTORY` to an owned mirror with the Open-Meteo
-`data/copernicus_dem90/static/lat_*.om` layout instead of preloading the full
-DEM locally.
+land elevation correction. The upstream engine reads it through the standard
+`REMOTE_DATA_DIRECTORY`, or from local preseeded files. Keep upstream
+Open-Meteo public, commercial-safe, no-key data URLs unchanged. Use our own
+authorized source only for datasets that require credentials or a license key.
 
 ```bash
 bash scripts/download_openmeteo_runtime_data.sh

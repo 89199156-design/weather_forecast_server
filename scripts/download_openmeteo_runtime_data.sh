@@ -107,7 +107,7 @@ require_dem_source() {
   if ! is_truthy "$REQUIRE_DEM_SOURCE"; then
     return
   fi
-  if [[ -n "${WEATHER_DEM_REMOTE_DATA_DIRECTORY:-}" ]]; then
+  if [[ -n "${REMOTE_DATA_DIRECTORY:-}" ]]; then
     return
   fi
   if has_local_dem_static_files; then
@@ -115,7 +115,7 @@ require_dem_source() {
   fi
 
   printf '%s\n' \
-    "Missing Copernicus DEM90 source. Set WEATHER_DEM_REMOTE_DATA_DIRECTORY to the owned DEM mirror, or pre-seed $DATA_DIR/copernicus_dem90/static/lat_*.om." >&2
+    "Missing Copernicus DEM90 source. Set REMOTE_DATA_DIRECTORY to the Open-Meteo data URL, or pre-seed $DATA_DIR/copernicus_dem90/static/lat_*.om." >&2
   exit 2
 }
 
@@ -248,10 +248,11 @@ sync_openmeteo_database() {
 }
 
 # gfs_global in Open-Meteo mixes gfs013 with gfs025. For strict parity with the
-# public Open-Meteo API, use WEATHER_GFS_DOWNLOAD_MODE=sync and point
-# WEATHER_OPENMETEO_SYNC_BASE_URL at the owned mirror of Open-Meteo's processed
-# database. The raw mode is retained for source-download debugging and regional
-# approximations, but NOAA raw/filter conversion is not the parity baseline.
+# public Open-Meteo API, use WEATHER_GFS_DOWNLOAD_MODE=sync. Leave
+# WEATHER_OPENMETEO_SYNC_BASE_URL empty for Open-Meteo's upstream public data
+# source, or set it only for datasets that require our authorized mirror. The
+# raw mode is retained for source-download debugging and regional approximations,
+# but NOAA raw/filter conversion is not the parity baseline.
 require_dem_source
 
 case "$GFS_DOWNLOAD_MODE" in

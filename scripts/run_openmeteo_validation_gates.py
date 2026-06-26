@@ -37,6 +37,9 @@ def build_gate_commands(
     request_retries: int,
     request_retry_delay: float,
     request_pause: float,
+    api_host_header: str | None = None,
+    reference_host_header: str | None = None,
+    run: str | None = None,
     gate_offsets: dict[int, float] | None = None,
     chunk_size: int = 30,
 ) -> list[dict[str, Any]]:
@@ -80,6 +83,12 @@ def build_gate_commands(
             ]
             if reference_base_url:
                 argv.extend(["--reference-base-url", reference_base_url])
+            if api_host_header:
+                argv.extend(["--api-host-header", api_host_header])
+            if reference_host_header:
+                argv.extend(["--reference-host-header", reference_host_header])
+            if run:
+                argv.extend(["--run", run])
             commands.append(
                 {
                     "points": points,
@@ -138,6 +147,9 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run Open-Meteo 50/100/500 point API validation gates.")
     parser.add_argument("--api-base-url", required=True)
     parser.add_argument("--reference-base-url")
+    parser.add_argument("--api-host-header")
+    parser.add_argument("--reference-host-header")
+    parser.add_argument("--run")
     parser.add_argument("--output-dir", default="docs/validation/reports")
     parser.add_argument("--scopes", default="gfs,cams")
     parser.add_argument("--point-gates", default="50,100,500")
@@ -176,6 +188,9 @@ def main() -> int:
         request_retries=args.request_retries,
         request_retry_delay=args.request_retry_delay,
         request_pause=args.request_pause,
+        api_host_header=args.api_host_header,
+        reference_host_header=args.reference_host_header,
+        run=args.run,
     )
     results = run_commands(commands)
     summary = summarize_results(results, planned=commands)

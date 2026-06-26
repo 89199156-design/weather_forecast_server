@@ -11,6 +11,7 @@
 /secrets/
 /vendor/open-meteo/.git/
 /vendor/openmeteo-sdk/.git/
+/docs/validation/reports/**/*.progress.json
 
 *.py[cod]
 __pycache__/

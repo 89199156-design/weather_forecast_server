@@ -27,20 +27,6 @@ enum OpenMeteo {
         }
         return nil
     }()
-
-    /// Remote data directory used only for Copernicus DEM90 static elevation files.
-    static let demRemoteDataDirectory: String? = {
-        if let dir = Environment.get("WEATHER_DEM_REMOTE_DATA_DIRECTORY") {
-            guard dir.starts(with: "http") else {
-                fatalError("WEATHER_DEM_REMOTE_DATA_DIRECTORY must start with 'http'")
-            }
-            guard dir.last == "/" else {
-                fatalError("WEATHER_DEM_REMOTE_DATA_DIRECTORY must end with a trailing slash")
-            }
-            return dir
-        }
-        return nil
-    }()
     
     /// Cache remote data if `REMOTE_DATA_DIRECTORY` is set. Default 10GB stored in `cache.bin` inside the data directory.
     static let dataBlockCache: AtomicCacheCoordinator<MmapFile> = { () -> AtomicCacheCoordinator<MmapFile> in

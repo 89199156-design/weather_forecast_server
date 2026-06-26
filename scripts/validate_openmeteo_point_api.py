@@ -137,16 +137,20 @@ def fetch_json(
     endpoint: str,
     params: dict[str, Any],
     *,
+    host_header: str | None = None,
     timeout: float,
     retries: int,
     retry_delay: float,
     request_pause: float,
 ) -> Any:
     url = base_url.rstrip("/") + endpoint + "?" + urllib.parse.urlencode(params)
+    headers = {"Accept": "application/json"}
+    if host_header:
+        headers["Host"] = host_header
     if REQUESTS_SESSION is not None:
         for attempt in range(retries + 1):
             try:
-                response = REQUESTS_SESSION.get(url, headers={"Accept": "application/json"}, timeout=timeout)
+                response = REQUESTS_SESSION.get(url, headers=headers, timeout=timeout)
                 retryable = response.status_code == 429 or 500 <= response.status_code < 600
                 if response.ok:
                     if request_pause > 0:
@@ -162,7 +166,7 @@ def fetch_json(
 
         raise RuntimeError("unreachable retry state")
 
-    request = urllib.request.Request(url, headers={"Accept": "application/json"})
+    request = urllib.request.Request(url, headers=headers)
     for attempt in range(retries + 1):
         try:
             with URLLIB_OPENER.open(request, timeout=timeout) as response:
@@ -200,6 +204,18 @@ def extract_hourlies(payload: Any) -> list[dict[str, Any]]:
     return [extract_hourly(payload)]
 
 
+def trim_hourly_window(hourly: dict[str, Any], *, start_hour: str, frames: int) -> dict[str, Any]:
+    times = list(hourly.get("time") or [])
+    if start_hour not in times:
+        return hourly
+    start = times.index(start_hour)
+    end = start + frames
+    trimmed: dict[str, Any] = {}
+    for key, value in hourly.items():
+        trimmed[key] = value[start:end] if isinstance(value, list) else value
+    return trimmed
+
+
 def format_points(points: list[dict[str, float]], key: str) -> str:
     return ",".join(str(point[key]) for point in points)
 
@@ -212,6 +228,8 @@ def request_params(
     *,
     start_hour: str | None = None,
     end_hour: str | None = None,
+    run: str | None = None,
+    request_forecast_hours: int | None = None,
 ) -> tuple[str, dict[str, Any]]:
     params: dict[str, Any] = {
         "latitude": format_points(points, "latitude"),
@@ -220,7 +238,10 @@ def request_params(
         "timezone": "UTC",
         "timeformat": "iso8601",
     }
-    if start_hour and end_hour:
+    if run:
+        params["run"] = run
+        params["forecast_hours"] = request_forecast_hours or frames
+    elif start_hour and end_hour:
         params["start_hour"] = start_hour
         params["end_hour"] = end_hour
     else:
@@ -254,6 +275,10 @@ def validate_scope(
     request_retries: int,
     request_retry_delay: float,
     request_pause: float,
+    api_host_header: str | None = None,
+    reference_host_header: str | None = None,
+    run: str | None = None,
+    request_forecast_hours: int | None = None,
     progress_path: Path | None = None,
 ) -> dict[str, Any]:
     started = time.time()
@@ -265,6 +290,8 @@ def validate_scope(
         "frames": frames,
         "variables": len(variables),
         "reference_base_url": reference_base_url,
+        "run": run,
+        "request_forecast_hours": request_forecast_hours,
         "start_hour": start_hour,
         "end_hour": end_hour,
         "failures": [],
@@ -303,6 +330,8 @@ def validate_scope(
                 frames,
                 start_hour=start_hour,
                 end_hour=end_hour,
+                run=run,
+                request_forecast_hours=request_forecast_hours,
             )
             write_progress(point_offset, variable_chunk, "local_request_start")
             try:
@@ -311,12 +340,17 @@ def validate_scope(
                         api_base_url,
                         endpoint,
                         params,
+                        host_header=api_host_header,
                         timeout=timeout,
                         retries=request_retries,
                         retry_delay=request_retry_delay,
                         request_pause=request_pause,
                     )
                 )
+                if run and start_hour:
+                    local_hourlies = [
+                        trim_hourly_window(hourly, start_hour=start_hour, frames=frames) for hourly in local_hourlies
+                    ]
             except Exception as exc:  # noqa: BLE001
                 report["failures"].append(
                     {
@@ -339,12 +373,18 @@ def validate_scope(
                             reference_base_url,
                             endpoint,
                             params,
+                            host_header=reference_host_header,
                             timeout=timeout,
                             retries=request_retries,
                             retry_delay=request_retry_delay,
                             request_pause=request_pause,
                         )
                     )
+                    if run and start_hour:
+                        reference_hourlies = [
+                            trim_hourly_window(hourly, start_hour=start_hour, frames=frames)
+                            for hourly in reference_hourlies
+                        ]
                 except Exception as exc:  # noqa: BLE001
                     report["failures"].append(
                         {
@@ -462,6 +502,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--request-retries", type=int, default=3)
     parser.add_argument("--request-retry-delay", type=float, default=2.0)
     parser.add_argument("--request-pause", type=float, default=0.0)
+    parser.add_argument("--api-host-header")
+    parser.add_argument("--reference-host-header")
+    parser.add_argument("--run", help="Pinned model run for single-runs API mode, e.g. 2026-06-26T00:00.")
     parser.add_argument("--repo-root", default=Path(__file__).resolve().parents[1])
     parser.add_argument("--variables", help="Comma-separated override variable list.")
     parser.add_argument("--allow-all-null", action="store_true")
@@ -508,6 +551,12 @@ def main() -> int:
     end_dt = parse_utc_hour(args.end_hour) if args.end_hour else start_dt + timedelta(hours=args.frames - 1)
     start_hour = format_utc_hour(start_dt)
     end_hour = format_utc_hour(end_dt)
+    request_forecast_hours = None
+    if args.run:
+        run_dt = parse_utc_hour(args.run)
+        if end_dt < run_dt:
+            raise ValueError("--end-hour must not be before --run")
+        request_forecast_hours = int((end_dt - run_dt).total_seconds() // 3600) + 1
     report = validate_scope(
         api_base_url=args.api_base_url,
         reference_base_url=args.reference_base_url,
@@ -526,6 +575,10 @@ def main() -> int:
         request_retries=args.request_retries,
         request_retry_delay=args.request_retry_delay,
         request_pause=args.request_pause,
+        api_host_header=args.api_host_header,
+        reference_host_header=args.reference_host_header,
+        run=format_utc_hour(parse_utc_hour(args.run)) if args.run else None,
+        request_forecast_hours=request_forecast_hours,
         progress_path=Path(args.progress_report) if args.progress_report else None,
     )
     output_path = Path(args.output_report)

@@ -4,19 +4,19 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_root_dockerfile_builds_vendored_openmeteo_with_local_sdk():
+def test_root_dockerfile_builds_unmodified_vendored_openmeteo():
     dockerfile = ROOT / "docker" / "openmeteo-engine.Dockerfile"
     source = dockerfile.read_text(encoding="utf-8")
 
     assert "FROM ghcr.io/open-meteo/docker-container-build:latest AS build" in source
-    assert "COPY vendor/openmeteo-sdk /build/openmeteo-sdk" in source
+    assert "COPY vendor/openmeteo-sdk /build/openmeteo-sdk" not in source
     assert "COPY vendor/open-meteo/Package.swift /build/open-meteo/Package.swift" in source
     assert "COPY vendor/open-meteo/Package.*" not in source
     assert "COPY vendor/open-meteo /build/open-meteo" in source
     assert "WORKDIR /build/open-meteo" in source
     assert "ENABLE_PARQUET=TRUE swift package resolve" in source
-    assert "rm -f Package.resolved" in source
-    assert "open-meteo/sdk.git" not in source
+    assert "COPY vendor/open-meteo/Package.resolved /build/open-meteo/Package.resolved" in source
+    assert "rm -f Package.resolved" not in source
     assert "ENABLE_PARQUET=TRUE MARCH_SKYLAKE=TRUE swift build -c release" in source
     assert "COPY --from=build /usr/lib/x86_64-linux-gnu/libarrow*.so*" in source
     assert "COPY --from=build /usr/lib/x86_64-linux-gnu/libparquet*.so*" in source
@@ -47,7 +47,7 @@ def test_fixed_snapshot_reference_script_runs_isolated_openmeteo_reference():
 
     assert "weather-forecast-openmeteo-reference" in script
     assert "REMOTE_DATA_DIRECTORY" in script
-    assert "WEATHER_DEM_REMOTE_DATA_DIRECTORY" in script
+    assert "WEATHER_DEM_REMOTE_DATA_DIRECTORY" not in script
     assert "CACHE_SIZE" in script
     assert "CACHE_META_SIZE" in script
     assert "127.0.0.1:${REFERENCE_PORT}:8080" in script
@@ -84,7 +84,7 @@ def test_singapore_deploy_requires_dem_source_for_openmeteo_parity():
     script = (ROOT / "scripts" / "deploy_singapore_candidate.sh").read_text(encoding="utf-8")
 
     assert "require_dem_source" in script
-    assert "WEATHER_DEM_REMOTE_DATA_DIRECTORY" in script
+    assert "REMOTE_DATA_DIRECTORY" in script
     assert "copernicus_dem90/static/lat_*.om" in script
     assert "WEATHER_REQUIRE_DEM_SOURCE" in script
 
@@ -158,7 +158,7 @@ def test_runtime_data_download_sync_mode_uses_processed_openmeteo_database_for_p
     singapore_env = (ROOT / "config" / "singapore.example.env").read_text(encoding="utf-8")
 
     assert "WEATHER_GFS_DOWNLOAD_MODE=sync" in singapore_env
-    assert "WEATHER_GFS_FILTER_DOWNLOAD=false" in singapore_env
+    assert "WEATHER_GFS_FILTER_DOWNLOAD" not in singapore_env
     assert "WEATHER_OPENMETEO_SYNC_BASE_URL" in singapore_env
     assert "REMOTE_DATA_DIRECTORY=" in singapore_env
     assert "CACHE_SIZE=10GB" in singapore_env
@@ -193,7 +193,7 @@ def test_runtime_data_download_requires_dem_source_for_openmeteo_parity():
     script = (ROOT / "scripts" / "download_openmeteo_runtime_data.sh").read_text(encoding="utf-8")
 
     assert "require_dem_source" in script
-    assert "WEATHER_DEM_REMOTE_DATA_DIRECTORY" in script
+    assert "REMOTE_DATA_DIRECTORY" in script
     assert "copernicus_dem90/static/lat_*.om" in script
     assert "WEATHER_REQUIRE_DEM_SOURCE" in script
 
@@ -211,7 +211,7 @@ def test_runtime_data_download_preserves_explicit_environment_over_config_file()
     assert restore_call < script.index("GFS_MAX_FORECAST_HOUR=")
 
 
-def test_gfs_downloader_uses_noaa_stable_http_headers_without_weather_logic_fork():
+def test_gfs_downloader_is_not_forked_for_noaa_transport_or_filtering():
     source = (ROOT / "vendor" / "open-meteo" / "Sources" / "App" / "Gfs" / "GfsDownload.swift").read_text(
         encoding="utf-8"
     )
@@ -219,14 +219,11 @@ def test_gfs_downloader_uses_noaa_stable_http_headers_without_weather_logic_fork
         encoding="utf-8"
     )
 
-    assert "gfsNoaaDownloadHeaders" in source
-    assert '("User-Agent", "curl/8.5.0")' in source
-    assert '("Connection", "close")' in source
-    assert "client: application.http1Client" in source
-    assert "WEATHER_GFS_FILTER_0P25B_URL" in source
-    assert "filter_gfs_0p25b.pl" in source
-    assert 'file.contains("pgrb2b")' in source
-    assert "response.body.collect(upTo:" in curl
+    assert "gfsNoaaDownloadHeaders" not in source
+    assert "client: application.http1Client" not in source
+    assert "WEATHER_GFS_FILTER_0P25B_URL" not in source
+    assert "filter_gfs_0p25b.pl" not in source
+    assert "WeatherForecastServer" not in curl
 
 
 def test_layer_scripts_are_documented_as_openmeteo_api_backed():

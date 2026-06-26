@@ -103,9 +103,6 @@ enum OmFileType: Hashable, RemoteFileManageable {
     
     /// Get the remote URL. May replace "data" with "data_run"
     func getRemoteUrl() -> String? {
-        if case .staticFile(let domain, _, _) = self, domain == .copernicus_dem90, let remoteDirectory = OpenMeteo.demRemoteDataDirectory {
-            return "\(remoteDirectory.replacing("MODEL", with: domain.bucketName))\(getRelativeFilePath())"
-        }
         guard let remoteDirectory = OpenMeteo.remoteDataDirectory else {
             return nil
         }
