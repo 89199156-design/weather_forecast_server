@@ -125,18 +125,18 @@ def test_dem_remote_directory_is_separate_from_forecast_remote_archive():
     assert "WEATHER_DEM_REMOTE_DATA_DIRECTORY" in singapore_env
 
 
-def test_filtered_regional_grib_values_are_rounded_to_source_decimal_precision():
+def test_filtered_regional_grib_values_keep_openmeteo_decoded_precision():
     download = (ROOT / "vendor" / "open-meteo" / "Sources" / "App" / "Gfs" / "GfsDownload.swift").read_text(
         encoding="utf-8"
     )
 
-    assert "roundToGribDecimalScale" in download
-    assert 'message.get(attribute: "decimalScaleFactor")' in download
+    assert "roundToGribDecimalScale" not in download
+    assert 'message.get(attribute: "decimalScaleFactor")' not in download
 
     regional_branch = download.index("if GfsFilterDownload.usesRegionalGrid(domain: domain)")
     global_branch = download.index("else if isGlobal")
-    assert "roundToGribDecimalScale" in download[regional_branch:global_branch]
+    assert "shift180LongitudeAndFlipLatitude" not in download[regional_branch:global_branch]
 
     regional_domain_branch = download.index("if GfsFilterDownload.usesRegionalGrid(domain: domain)", regional_branch + 1)
     global_domain_branch = download.index("else if domain.isGlobal")
-    assert "roundToGribDecimalScale" in download[regional_domain_branch:global_domain_branch]
+    assert "shift180LongitudeAndFlipLatitude" not in download[regional_domain_branch:global_domain_branch]

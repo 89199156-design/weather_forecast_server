@@ -371,6 +371,18 @@ runtime data dependency in deployment/download wrappers. The validation tool
 also retries official 429 responses so rate limiting does not hide the first
 real value mismatch.
 
+Follow-up small-sample probing after the DEM fix found a remaining GFS025
+pressure-level wind mismatch at `46.98,126.7` for
+`wind_u_component_300hPa`, `wind_v_component_300hPa`, and
+`wind_speed_300hPa`. The same sample matched official `single-runs-api` 18Z
+for temperature and geopotential height, so the issue was narrowed to a local
+regional-filter download transform. The local filtered path had been rounding
+decoded GRIB grid values to the message `decimalScaleFactor` before writing OM
+files; upstream Open-Meteo does not do this pre-rounding. That local patch can
+shift bilinear interpolation results by 0.1 to 0.33 units for continuous
+fields. Corrective change: remove the pre-write rounding and preserve the
+Open-Meteo/eccodes decoded values.
+
 ## Required Runtime Validation
 
 After deploying the complete runtime data chain, run:
