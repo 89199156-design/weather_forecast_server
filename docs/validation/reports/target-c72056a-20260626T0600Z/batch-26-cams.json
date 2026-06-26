@@ -1,0 +1,56 @@
+{
+  "scope": "cams",
+  "points": 10,
+  "point_offset": 0.0,
+  "frames": 24,
+  "variables": 12,
+  "reference_base_url": "https://air-quality-api.open-meteo.com",
+  "reference_ssh_host": "seoul",
+  "run": null,
+  "request_forecast_hours": null,
+  "start_hour": "2026-06-26T06:00",
+  "end_hour": "2026-06-27T05:00",
+  "failures": [
+    {
+      "point_index": 2,
+      "point": {
+        "latitude": 14.645,
+        "longitude": 87.675
+      },
+      "variable": "us_aqi",
+      "reason": "reference_mismatch",
+      "mismatch_count": 1,
+      "first_mismatches": [
+        {
+          "frame": 15,
+          "local": 42,
+          "reference": 43,
+          "reason": "value_mismatch"
+        }
+      ]
+    },
+    {
+      "point_index": 3,
+      "point": {
+        "latitude": 14.703,
+        "longitude": 87.745
+      },
+      "variable": "us_aqi",
+      "reason": "reference_mismatch",
+      "mismatch_count": 1,
+      "first_mismatches": [
+        {
+          "frame": 15,
+          "local": 42,
+          "reference": 43,
+          "reason": "value_mismatch"
+        }
+      ]
+    }
+  ],
+  "checked_values": 2880,
+  "completed_chunks": 1,
+  "total_chunks": 1,
+  "elapsed_seconds": 10.385,
+  "passed": false
+}

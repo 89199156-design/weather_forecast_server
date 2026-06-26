@@ -537,14 +537,15 @@ only a spot-check after the fixed-snapshot gates pass.
 Do not describe the migration as a percentage complete. The auditable gate
 state is:
 
-- GFS point API: 50-point x 50-frame gate passed.
-- GFS point API: 100-point x 50-frame gate against the rolling public API is
-  invalid as a completion gate. It first hit HTTP 429 from public API quotas,
-  then failed on a different point sample because the public API and public
-  processed `.om` store were not on the same GFS025 pressure-level snapshot.
-- Validation tooling now records point sampling offset so 50/100/500 gates can
-  be proven to use distinct point sets.
-- CAMS point API: not validated yet.
+- GFS point API target gate: passed with the unmodified upstream
+  `036c1d940f2dd5af48f899c2d8162d00d12d3c49` engine image.
+- CAMS point API target gate: passed with the unmodified upstream
+  `acfb7eb13ffdca9d3772c57716c240d3a7d73da5` engine image.
+- Combined target validation evidence:
+  `100` batches x `10` unique points x `24` frames for each scope,
+  `0` failed batches, `912000` checked output values total.
+- Validation tooling records point sampling, reference host, API host header,
+  run, hour window, variable set, checked value count, and failed batches.
 - Layer/API parity: not validated yet.
 - Shanghai mirror and Android client path: not started for final migration.
 
@@ -745,3 +746,90 @@ Candidate source selection:
   alignment and weather-code fixes;
 - vendored source audit: `missing=0`, `changed=0`, `extra=0` against the
   upstream archive for `036c1d94`.
+
+## Target Validation Attempt: `c72056a` / single `036c1d94` engine
+
+Candidate:
+
+- project commit: `c72056a90b75d862e5f258f7d57ebdf8ec7f8e86`
+- upstream Open-Meteo source:
+  `036c1d940f2dd5af48f899c2d8162d00d12d3c49`
+- Singapore image: `weather-forecast-openmeteo:c72056a`
+- image ID: `ba48a450fffb`
+- candidate container: `56e1b43da8e4`
+
+Result:
+
+- summary:
+  `docs/validation/reports/target-c72056a-20260626T0600Z/summary-100x10x24.json`
+- planned gate: `100` batches x `10` unique points x `24` frames;
+- stopped after `38` completed batches because the failure limit was reached;
+- GFS: `38` completed batches, `0` failed batches;
+- CAMS: `3` failed batches, all deterministic failures were `us_aqi`.
+
+Analysis:
+
+The single `036c1d94` engine image fixed GFS `temperature_2m` text output and
+matched `single-runs-api.open-meteo.com`, but it did not match
+`air-quality-api.open-meteo.com` for CAMS `us_aqi` integer rounding. A direct
+flatbuffers comparison at a failing point showed identical raw CAMS values on
+local and public API (`42.5`), while JSON differed (`42` vs `43`). This is a
+public-subdomain writer-version difference, not a CAMS data, interpolation, or
+AQI formula mismatch. The fix remains within the no-patch rule: run the
+unmodified upstream version that matches each public API subdomain.
+
+## Target Validation Result: dual unmodified upstream engines
+
+GFS candidate:
+
+- project commit: `c72056a90b75d862e5f258f7d57ebdf8ec7f8e86`
+- upstream Open-Meteo source:
+  `036c1d940f2dd5af48f899c2d8162d00d12d3c49`
+- Singapore container: `weather-forecast-openmeteo`
+- local validation base URL: `http://127.0.0.1:18081`
+- public reference: `https://single-runs-api.open-meteo.com`
+- reference exit: `seoul`
+- pinned GFS run: `2026-06-26T06:00`
+
+CAMS candidate:
+
+- project commit: `f6cc85c5cba38cf9b67e891af8b34401a195f217`
+- upstream Open-Meteo source:
+  `acfb7eb13ffdca9d3772c57716c240d3a7d73da5`
+- Singapore container: `weather-forecast-openmeteo-airquality-f6`
+- local validation base URL: `http://127.0.0.1:18084`
+- public reference: `https://air-quality-api.open-meteo.com`
+- reference exit: `seoul`
+
+GFS result:
+
+- summary:
+  `docs/validation/reports/target-dual-c72056a-f6cc85c-20260626T0600Z/gfs/summary-100x10x24.json`
+- batches: `100 / 100`
+- points: `1000 / 1000`
+- frames: `24`
+- failed batches: `0`
+- variables: `26`
+- checked values: `624000`
+- point range: `0.029,70.035` through `57.971,139.965`
+
+CAMS result:
+
+- summary:
+  `docs/validation/reports/target-dual-c72056a-f6cc85c-20260626T0600Z/cams/summary-100x10x24.json`
+- batches: `100 / 100`
+- points: `1000 / 1000`
+- frames: `24`
+- failed batches: `0`
+- variables: `12`
+- checked values: `288000`
+- point range: `0.029,70.035` through `57.971,139.965`
+
+Combined result:
+
+- checked values: `912000`
+- failed batches: `0`
+- Open-Meteo source patches: none
+- conclusion: point/API parity for the targeted professional GFS and CAMS
+  outputs is achieved by routing GFS and CAMS to the public-API-matching
+  unmodified upstream engine image for each subdomain.

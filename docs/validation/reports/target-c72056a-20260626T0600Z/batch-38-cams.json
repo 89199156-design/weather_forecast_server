@@ -1,0 +1,92 @@
+{
+  "scope": "cams",
+  "points": 10,
+  "point_offset": 0.0,
+  "frames": 24,
+  "variables": 12,
+  "reference_base_url": "https://air-quality-api.open-meteo.com",
+  "reference_ssh_host": "seoul",
+  "run": null,
+  "request_forecast_hours": null,
+  "start_hour": "2026-06-26T06:00",
+  "end_hour": "2026-06-27T05:00",
+  "failures": [
+    {
+      "point_index": 6,
+      "point": {
+        "latitude": 21.837,
+        "longitude": 96.355
+      },
+      "variable": "us_aqi",
+      "reason": "reference_mismatch",
+      "mismatch_count": 1,
+      "first_mismatches": [
+        {
+          "frame": 22,
+          "local": 32,
+          "reference": 33,
+          "reason": "value_mismatch"
+        }
+      ]
+    },
+    {
+      "point_index": 7,
+      "point": {
+        "latitude": 21.895,
+        "longitude": 96.425
+      },
+      "variable": "us_aqi",
+      "reason": "reference_mismatch",
+      "mismatch_count": 1,
+      "first_mismatches": [
+        {
+          "frame": 22,
+          "local": 32,
+          "reference": 33,
+          "reason": "value_mismatch"
+        }
+      ]
+    },
+    {
+      "point_index": 8,
+      "point": {
+        "latitude": 21.953,
+        "longitude": 96.495
+      },
+      "variable": "us_aqi",
+      "reason": "reference_mismatch",
+      "mismatch_count": 1,
+      "first_mismatches": [
+        {
+          "frame": 22,
+          "local": 32,
+          "reference": 33,
+          "reason": "value_mismatch"
+        }
+      ]
+    },
+    {
+      "point_index": 9,
+      "point": {
+        "latitude": 22.011,
+        "longitude": 96.565
+      },
+      "variable": "us_aqi",
+      "reason": "reference_mismatch",
+      "mismatch_count": 1,
+      "first_mismatches": [
+        {
+          "frame": 22,
+          "local": 32,
+          "reference": 33,
+          "reason": "value_mismatch"
+        }
+      ]
+    }
+  ],
+  "checked_values": 2880,
+  "completed_chunks": 1,
+  "total_chunks": 1,
+  "elapsed_seconds": 8.524,
+  "passed": false
+}

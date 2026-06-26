@@ -42,8 +42,10 @@ Singapore server:
 - old path: `/opt/1panel/apps/weather`
 - current remote: `git@github.com:89199156-design/weather_server_gfs.git`
 - current old HEAD observed: `fe6d0e2 Document GFS alignment completion audit`
-- Open-Meteo checkout selected for current API parity:
+- Open-Meteo checkout selected for current forecast/GFS API parity:
   `open-meteo/open-meteo@036c1d940f2dd5af48f899c2d8162d00d12d3c49`
+- Open-Meteo checkout selected for current air-quality/CAMS API parity:
+  `open-meteo/open-meteo@acfb7eb13ffdca9d3772c57716c240d3a7d73da5`
 - SDK checkout selected by that upstream `Package.resolved`:
   `open-meteo/sdk@a29c4b62dd8445128e6db30f0a6fb5509fa1259c`
 
@@ -172,8 +174,11 @@ recoverable from the old read-only repository.
    Add AGPL license, upstream record, migration design, and ignore rules.
 
 2. Open-Meteo baseline:
-   Import Open-Meteo source at `036c1d940f2dd5af48f899c2d8162d00d12d3c49`.
-   Keep upstream path and local patches auditable.
+   Import the Open-Meteo source version that matches the public API subdomain
+   being served. Current validation uses `036c1d94` for forecast/GFS and
+   `acfb7eb1` for air-quality/CAMS. Keep upstream path and local patches
+   auditable; do not modify Open-Meteo source to bridge public subdomain
+   version differences.
 
 3. Local integration layer:
    Add regional-domain configuration and configurable GFS source URL support.

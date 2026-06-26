@@ -1,13 +1,13 @@
 # Upstream Source Record
 
-This project directly uses and modifies Open-Meteo source code. Keep this file
+This project directly vendors and runs Open-Meteo source code. Keep this file
 updated whenever upstream code is imported, rebased, or patched.
 
-## Open-Meteo Engine
+## Open-Meteo Forecast/GFS Engine
 
 - Repository: `https://github.com/open-meteo/open-meteo`
 - License: GNU Affero General Public License v3.0 or later
-- Baseline commit selected for migration:
+- Baseline commit selected for current `single-runs` / GFS parity:
   `036c1d940f2dd5af48f899c2d8162d00d12d3c49`
 - Commit subject:
   `feat: option to generate data_run for IFS after only a certain amount of forecast hours (#1886)`
@@ -19,6 +19,22 @@ updated whenever upstream code is imported, rebased, or patched.
   flatbuffers raw values match. This baseline also predates the later
   thunderstorm weather-code parameterisation commits that did not match the
   current public API during validation.
+
+## Open-Meteo Air-Quality/CAMS Engine
+
+- Repository: `https://github.com/open-meteo/open-meteo`
+- License: GNU Affero General Public License v3.0 or later
+- Baseline commit selected for current `air-quality` / CAMS parity:
+  `acfb7eb13ffdca9d3772c57716c240d3a7d73da5`
+- Commit subject:
+  `fix wind direction for ecmwf seascape`
+- Reason for this baseline:
+  The current public `air-quality-api.open-meteo.com` JSON writer matches the
+  post-`98a3e0f0` integer rounding behavior for derived AQI values such as
+  `us_aqi`. Validation showed identical raw CAMS flatbuffer values at failing
+  points, while `036c1d94` wrote `42` and the public API wrote `43` for a raw
+  `42.5` AQI value. Running this unmodified upstream version for CAMS matches
+  the public air-quality API without patching Open-Meteo source code.
 
 ## Open-Meteo SDK
 
@@ -38,8 +54,11 @@ updated whenever upstream code is imported, rebased, or patched.
 
 ## Local Modification Boundary
 
-The vendored `vendor/open-meteo` tree is kept as the upstream source at the
-recorded baseline commit. Do not patch Open-Meteo reader behavior,
+The vendored `vendor/open-meteo` tree is kept as upstream source at the
+recorded baseline commit for the image being built. Public API parity currently
+uses separate unmodified upstream images for forecast/GFS and air-quality/CAMS
+because the public Open-Meteo subdomains match different upstream writer
+behaviors. Do not patch Open-Meteo reader behavior,
 interpolation, model fallback, weather-code derivation, domain grids, download
 transport, or API serialization in the vendored tree.
 
@@ -56,5 +75,6 @@ not from a separately maintained Python clone.
 
 ## Local Patches In Vendored Open-Meteo
 
-None. `vendor/open-meteo` is intended to match the baseline commit byte-for-byte
-except for line-ending normalization performed by Git on checkout.
+None. `vendor/open-meteo` is intended to match the selected baseline commit
+byte-for-byte except for line-ending normalization performed by Git on
+checkout.

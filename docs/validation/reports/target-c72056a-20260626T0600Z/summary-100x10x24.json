@@ -1,0 +1,2415 @@
+{
+  "passed": false,
+  "planned_batches": 100,
+  "completed_batches": 38,
+  "points_per_batch": 10,
+  "planned_points": 1000,
+  "completed_points": 380,
+  "frames": 24,
+  "failed_batches": 3,
+  "failure_limit": 3,
+  "stopped_reason": "failure_limit_reached",
+  "variables_by_scope": {
+    "gfs": [
+      "temperature_2m",
+      "relative_humidity_2m",
+      "dew_point_2m",
+      "apparent_temperature",
+      "precipitation",
+      "rain",
+      "showers",
+      "snowfall",
+      "snow_depth",
+      "weather_code",
+      "visibility",
+      "cape",
+      "wind_speed_10m",
+      "wind_direction_10m",
+      "wind_gusts_10m",
+      "wind_u_component_10m",
+      "wind_v_component_10m",
+      "cloud_cover",
+      "cloud_cover_high",
+      "cloud_cover_mid",
+      "cloud_cover_low",
+      "pressure_msl",
+      "surface_pressure",
+      "uv_index",
+      "uv_index_clear_sky",
+      "is_day"
+    ],
+    "cams": [
+      "pm2_5",
+      "pm10",
+      "carbon_monoxide",
+      "nitrogen_dioxide",
+      "sulphur_dioxide",
+      "ozone",
+      "aerosol_optical_depth",
+      "dust",
+      "uv_index",
+      "uv_index_clear_sky",
+      "us_aqi",
+      "european_aqi"
+    ]
+  },
+  "batch_results": [
+    {
+      "batch": 1,
+      "passed": true,
+      "points": [
+        {
+          "latitude": 0.029,
+          "longitude": 70.035
+        },
+        {
+          "latitude": 0.087,
+          "longitude": 70.105
+        },
+        {
+          "latitude": 0.145,
+          "longitude": 70.175
+        },
+        {
+          "latitude": 0.203,
+          "longitude": 70.245
+        },
+        {
+          "latitude": 0.261,
+          "longitude": 70.315
+        },
+        {
+          "latitude": 0.319,
+          "longitude": 70.385
+        },
+        {
+          "latitude": 0.377,
+          "longitude": 70.455
+        },
+        {
+          "latitude": 0.435,
+          "longitude": 70.525
+        },
+        {
+          "latitude": 0.493,
+          "longitude": 70.595
+        },
+        {
+          "latitude": 0.551,
+          "longitude": 70.665
+        }
+      ],
+      "scopes": [
+        {
+          "scope": "gfs",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 6240,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-01-gfs.json"
+        },
+        {
+          "scope": "cams",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 2880,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-01-cams.json"
+        }
+      ]
+    },
+    {
+      "batch": 2,
+      "passed": true,
+      "points": [
+        {
+          "latitude": 0.609,
+          "longitude": 70.735
+        },
+        {
+          "latitude": 0.667,
+          "longitude": 70.805
+        },
+        {
+          "latitude": 0.725,
+          "longitude": 70.875
+        },
+        {
+          "latitude": 0.783,
+          "longitude": 70.945
+        },
+        {
+          "latitude": 0.841,
+          "longitude": 71.015
+        },
+        {
+          "latitude": 0.899,
+          "longitude": 71.085
+        },
+        {
+          "latitude": 0.957,
+          "longitude": 71.155
+        },
+        {
+          "latitude": 1.015,
+          "longitude": 71.225
+        },
+        {
+          "latitude": 1.073,
+          "longitude": 71.295
+        },
+        {
+          "latitude": 1.131,
+          "longitude": 71.365
+        }
+      ],
+      "scopes": [
+        {
+          "scope": "gfs",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 6240,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-02-gfs.json"
+        },
+        {
+          "scope": "cams",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 2880,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-02-cams.json"
+        }
+      ]
+    },
+    {
+      "batch": 3,
+      "passed": true,
+      "points": [
+        {
+          "latitude": 1.189,
+          "longitude": 71.435
+        },
+        {
+          "latitude": 1.247,
+          "longitude": 71.505
+        },
+        {
+          "latitude": 1.305,
+          "longitude": 71.575
+        },
+        {
+          "latitude": 1.363,
+          "longitude": 71.645
+        },
+        {
+          "latitude": 1.421,
+          "longitude": 71.715
+        },
+        {
+          "latitude": 1.479,
+          "longitude": 71.785
+        },
+        {
+          "latitude": 1.537,
+          "longitude": 71.855
+        },
+        {
+          "latitude": 1.595,
+          "longitude": 71.925
+        },
+        {
+          "latitude": 1.653,
+          "longitude": 71.995
+        },
+        {
+          "latitude": 1.711,
+          "longitude": 72.065
+        }
+      ],
+      "scopes": [
+        {
+          "scope": "gfs",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 6240,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-03-gfs.json"
+        },
+        {
+          "scope": "cams",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 2880,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-03-cams.json"
+        }
+      ]
+    },
+    {
+      "batch": 4,
+      "passed": true,
+      "points": [
+        {
+          "latitude": 1.769,
+          "longitude": 72.135
+        },
+        {
+          "latitude": 1.827,
+          "longitude": 72.205
+        },
+        {
+          "latitude": 1.885,
+          "longitude": 72.275
+        },
+        {
+          "latitude": 1.943,
+          "longitude": 72.345
+        },
+        {
+          "latitude": 2.001,
+          "longitude": 72.415
+        },
+        {
+          "latitude": 2.059,
+          "longitude": 72.485
+        },
+        {
+          "latitude": 2.117,
+          "longitude": 72.555
+        },
+        {
+          "latitude": 2.175,
+          "longitude": 72.625
+        },
+        {
+          "latitude": 2.233,
+          "longitude": 72.695
+        },
+        {
+          "latitude": 2.291,
+          "longitude": 72.765
+        }
+      ],
+      "scopes": [
+        {
+          "scope": "gfs",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 6240,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-04-gfs.json"
+        },
+        {
+          "scope": "cams",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 2880,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-04-cams.json"
+        }
+      ]
+    },
+    {
+      "batch": 5,
+      "passed": true,
+      "points": [
+        {
+          "latitude": 2.349,
+          "longitude": 72.835
+        },
+        {
+          "latitude": 2.407,
+          "longitude": 72.905
+        },
+        {
+          "latitude": 2.465,
+          "longitude": 72.975
+        },
+        {
+          "latitude": 2.523,
+          "longitude": 73.045
+        },
+        {
+          "latitude": 2.581,
+          "longitude": 73.115
+        },
+        {
+          "latitude": 2.639,
+          "longitude": 73.185
+        },
+        {
+          "latitude": 2.697,
+          "longitude": 73.255
+        },
+        {
+          "latitude": 2.755,
+          "longitude": 73.325
+        },
+        {
+          "latitude": 2.813,
+          "longitude": 73.395
+        },
+        {
+          "latitude": 2.871,
+          "longitude": 73.465
+        }
+      ],
+      "scopes": [
+        {
+          "scope": "gfs",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 6240,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-05-gfs.json"
+        },
+        {
+          "scope": "cams",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 2880,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-05-cams.json"
+        }
+      ]
+    },
+    {
+      "batch": 6,
+      "passed": true,
+      "points": [
+        {
+          "latitude": 2.929,
+          "longitude": 73.535
+        },
+        {
+          "latitude": 2.987,
+          "longitude": 73.605
+        },
+        {
+          "latitude": 3.045,
+          "longitude": 73.675
+        },
+        {
+          "latitude": 3.103,
+          "longitude": 73.745
+        },
+        {
+          "latitude": 3.161,
+          "longitude": 73.815
+        },
+        {
+          "latitude": 3.219,
+          "longitude": 73.885
+        },
+        {
+          "latitude": 3.277,
+          "longitude": 73.955
+        },
+        {
+          "latitude": 3.335,
+          "longitude": 74.025
+        },
+        {
+          "latitude": 3.393,
+          "longitude": 74.095
+        },
+        {
+          "latitude": 3.451,
+          "longitude": 74.165
+        }
+      ],
+      "scopes": [
+        {
+          "scope": "gfs",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 6240,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-06-gfs.json"
+        },
+        {
+          "scope": "cams",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 2880,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-06-cams.json"
+        }
+      ]
+    },
+    {
+      "batch": 7,
+      "passed": true,
+      "points": [
+        {
+          "latitude": 3.509,
+          "longitude": 74.235
+        },
+        {
+          "latitude": 3.567,
+          "longitude": 74.305
+        },
+        {
+          "latitude": 3.625,
+          "longitude": 74.375
+        },
+        {
+          "latitude": 3.683,
+          "longitude": 74.445
+        },
+        {
+          "latitude": 3.741,
+          "longitude": 74.515
+        },
+        {
+          "latitude": 3.799,
+          "longitude": 74.585
+        },
+        {
+          "latitude": 3.857,
+          "longitude": 74.655
+        },
+        {
+          "latitude": 3.915,
+          "longitude": 74.725
+        },
+        {
+          "latitude": 3.973,
+          "longitude": 74.795
+        },
+        {
+          "latitude": 4.031,
+          "longitude": 74.865
+        }
+      ],
+      "scopes": [
+        {
+          "scope": "gfs",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 6240,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-07-gfs.json"
+        },
+        {
+          "scope": "cams",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 2880,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-07-cams.json"
+        }
+      ]
+    },
+    {
+      "batch": 8,
+      "passed": true,
+      "points": [
+        {
+          "latitude": 4.089,
+          "longitude": 74.935
+        },
+        {
+          "latitude": 4.147,
+          "longitude": 75.005
+        },
+        {
+          "latitude": 4.205,
+          "longitude": 75.075
+        },
+        {
+          "latitude": 4.263,
+          "longitude": 75.145
+        },
+        {
+          "latitude": 4.321,
+          "longitude": 75.215
+        },
+        {
+          "latitude": 4.379,
+          "longitude": 75.285
+        },
+        {
+          "latitude": 4.437,
+          "longitude": 75.355
+        },
+        {
+          "latitude": 4.495,
+          "longitude": 75.425
+        },
+        {
+          "latitude": 4.553,
+          "longitude": 75.495
+        },
+        {
+          "latitude": 4.611,
+          "longitude": 75.565
+        }
+      ],
+      "scopes": [
+        {
+          "scope": "gfs",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 6240,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-08-gfs.json"
+        },
+        {
+          "scope": "cams",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 2880,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-08-cams.json"
+        }
+      ]
+    },
+    {
+      "batch": 9,
+      "passed": true,
+      "points": [
+        {
+          "latitude": 4.669,
+          "longitude": 75.635
+        },
+        {
+          "latitude": 4.727,
+          "longitude": 75.705
+        },
+        {
+          "latitude": 4.785,
+          "longitude": 75.775
+        },
+        {
+          "latitude": 4.843,
+          "longitude": 75.845
+        },
+        {
+          "latitude": 4.901,
+          "longitude": 75.915
+        },
+        {
+          "latitude": 4.959,
+          "longitude": 75.985
+        },
+        {
+          "latitude": 5.017,
+          "longitude": 76.055
+        },
+        {
+          "latitude": 5.075,
+          "longitude": 76.125
+        },
+        {
+          "latitude": 5.133,
+          "longitude": 76.195
+        },
+        {
+          "latitude": 5.191,
+          "longitude": 76.265
+        }
+      ],
+      "scopes": [
+        {
+          "scope": "gfs",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 6240,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-09-gfs.json"
+        },
+        {
+          "scope": "cams",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 2880,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-09-cams.json"
+        }
+      ]
+    },
+    {
+      "batch": 10,
+      "passed": true,
+      "points": [
+        {
+          "latitude": 5.249,
+          "longitude": 76.335
+        },
+        {
+          "latitude": 5.307,
+          "longitude": 76.405
+        },
+        {
+          "latitude": 5.365,
+          "longitude": 76.475
+        },
+        {
+          "latitude": 5.423,
+          "longitude": 76.545
+        },
+        {
+          "latitude": 5.481,
+          "longitude": 76.615
+        },
+        {
+          "latitude": 5.539,
+          "longitude": 76.685
+        },
+        {
+          "latitude": 5.597,
+          "longitude": 76.755
+        },
+        {
+          "latitude": 5.655,
+          "longitude": 76.825
+        },
+        {
+          "latitude": 5.713,
+          "longitude": 76.895
+        },
+        {
+          "latitude": 5.771,
+          "longitude": 76.965
+        }
+      ],
+      "scopes": [
+        {
+          "scope": "gfs",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 6240,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-10-gfs.json"
+        },
+        {
+          "scope": "cams",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 2880,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-10-cams.json"
+        }
+      ]
+    },
+    {
+      "batch": 11,
+      "passed": true,
+      "points": [
+        {
+          "latitude": 5.829,
+          "longitude": 77.035
+        },
+        {
+          "latitude": 5.887,
+          "longitude": 77.105
+        },
+        {
+          "latitude": 5.945,
+          "longitude": 77.175
+        },
+        {
+          "latitude": 6.003,
+          "longitude": 77.245
+        },
+        {
+          "latitude": 6.061,
+          "longitude": 77.315
+        },
+        {
+          "latitude": 6.119,
+          "longitude": 77.385
+        },
+        {
+          "latitude": 6.177,
+          "longitude": 77.455
+        },
+        {
+          "latitude": 6.235,
+          "longitude": 77.525
+        },
+        {
+          "latitude": 6.293,
+          "longitude": 77.595
+        },
+        {
+          "latitude": 6.351,
+          "longitude": 77.665
+        }
+      ],
+      "scopes": [
+        {
+          "scope": "gfs",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 6240,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-11-gfs.json"
+        },
+        {
+          "scope": "cams",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 2880,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-11-cams.json"
+        }
+      ]
+    },
+    {
+      "batch": 12,
+      "passed": true,
+      "points": [
+        {
+          "latitude": 6.409,
+          "longitude": 77.735
+        },
+        {
+          "latitude": 6.467,
+          "longitude": 77.805
+        },
+        {
+          "latitude": 6.525,
+          "longitude": 77.875
+        },
+        {
+          "latitude": 6.583,
+          "longitude": 77.945
+        },
+        {
+          "latitude": 6.641,
+          "longitude": 78.015
+        },
+        {
+          "latitude": 6.699,
+          "longitude": 78.085
+        },
+        {
+          "latitude": 6.757,
+          "longitude": 78.155
+        },
+        {
+          "latitude": 6.815,
+          "longitude": 78.225
+        },
+        {
+          "latitude": 6.873,
+          "longitude": 78.295
+        },
+        {
+          "latitude": 6.931,
+          "longitude": 78.365
+        }
+      ],
+      "scopes": [
+        {
+          "scope": "gfs",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 6240,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-12-gfs.json"
+        },
+        {
+          "scope": "cams",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 2880,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-12-cams.json"
+        }
+      ]
+    },
+    {
+      "batch": 13,
+      "passed": true,
+      "points": [
+        {
+          "latitude": 6.989,
+          "longitude": 78.435
+        },
+        {
+          "latitude": 7.047,
+          "longitude": 78.505
+        },
+        {
+          "latitude": 7.105,
+          "longitude": 78.575
+        },
+        {
+          "latitude": 7.163,
+          "longitude": 78.645
+        },
+        {
+          "latitude": 7.221,
+          "longitude": 78.715
+        },
+        {
+          "latitude": 7.279,
+          "longitude": 78.785
+        },
+        {
+          "latitude": 7.337,
+          "longitude": 78.855
+        },
+        {
+          "latitude": 7.395,
+          "longitude": 78.925
+        },
+        {
+          "latitude": 7.453,
+          "longitude": 78.995
+        },
+        {
+          "latitude": 7.511,
+          "longitude": 79.065
+        }
+      ],
+      "scopes": [
+        {
+          "scope": "gfs",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 6240,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-13-gfs.json"
+        },
+        {
+          "scope": "cams",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 2880,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-13-cams.json"
+        }
+      ]
+    },
+    {
+      "batch": 14,
+      "passed": true,
+      "points": [
+        {
+          "latitude": 7.569,
+          "longitude": 79.135
+        },
+        {
+          "latitude": 7.627,
+          "longitude": 79.205
+        },
+        {
+          "latitude": 7.685,
+          "longitude": 79.275
+        },
+        {
+          "latitude": 7.743,
+          "longitude": 79.345
+        },
+        {
+          "latitude": 7.801,
+          "longitude": 79.415
+        },
+        {
+          "latitude": 7.859,
+          "longitude": 79.485
+        },
+        {
+          "latitude": 7.917,
+          "longitude": 79.555
+        },
+        {
+          "latitude": 7.975,
+          "longitude": 79.625
+        },
+        {
+          "latitude": 8.033,
+          "longitude": 79.695
+        },
+        {
+          "latitude": 8.091,
+          "longitude": 79.765
+        }
+      ],
+      "scopes": [
+        {
+          "scope": "gfs",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 6240,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-14-gfs.json"
+        },
+        {
+          "scope": "cams",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 2880,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-14-cams.json"
+        }
+      ]
+    },
+    {
+      "batch": 15,
+      "passed": true,
+      "points": [
+        {
+          "latitude": 8.149,
+          "longitude": 79.835
+        },
+        {
+          "latitude": 8.207,
+          "longitude": 79.905
+        },
+        {
+          "latitude": 8.265,
+          "longitude": 79.975
+        },
+        {
+          "latitude": 8.323,
+          "longitude": 80.045
+        },
+        {
+          "latitude": 8.381,
+          "longitude": 80.115
+        },
+        {
+          "latitude": 8.439,
+          "longitude": 80.185
+        },
+        {
+          "latitude": 8.497,
+          "longitude": 80.255
+        },
+        {
+          "latitude": 8.555,
+          "longitude": 80.325
+        },
+        {
+          "latitude": 8.613,
+          "longitude": 80.395
+        },
+        {
+          "latitude": 8.671,
+          "longitude": 80.465
+        }
+      ],
+      "scopes": [
+        {
+          "scope": "gfs",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 6240,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-15-gfs.json"
+        },
+        {
+          "scope": "cams",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 2880,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-15-cams.json"
+        }
+      ]
+    },
+    {
+      "batch": 16,
+      "passed": true,
+      "points": [
+        {
+          "latitude": 8.729,
+          "longitude": 80.535
+        },
+        {
+          "latitude": 8.787,
+          "longitude": 80.605
+        },
+        {
+          "latitude": 8.845,
+          "longitude": 80.675
+        },
+        {
+          "latitude": 8.903,
+          "longitude": 80.745
+        },
+        {
+          "latitude": 8.961,
+          "longitude": 80.815
+        },
+        {
+          "latitude": 9.019,
+          "longitude": 80.885
+        },
+        {
+          "latitude": 9.077,
+          "longitude": 80.955
+        },
+        {
+          "latitude": 9.135,
+          "longitude": 81.025
+        },
+        {
+          "latitude": 9.193,
+          "longitude": 81.095
+        },
+        {
+          "latitude": 9.251,
+          "longitude": 81.165
+        }
+      ],
+      "scopes": [
+        {
+          "scope": "gfs",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 6240,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-16-gfs.json"
+        },
+        {
+          "scope": "cams",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 2880,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-16-cams.json"
+        }
+      ]
+    },
+    {
+      "batch": 17,
+      "passed": true,
+      "points": [
+        {
+          "latitude": 9.309,
+          "longitude": 81.235
+        },
+        {
+          "latitude": 9.367,
+          "longitude": 81.305
+        },
+        {
+          "latitude": 9.425,
+          "longitude": 81.375
+        },
+        {
+          "latitude": 9.483,
+          "longitude": 81.445
+        },
+        {
+          "latitude": 9.541,
+          "longitude": 81.515
+        },
+        {
+          "latitude": 9.599,
+          "longitude": 81.585
+        },
+        {
+          "latitude": 9.657,
+          "longitude": 81.655
+        },
+        {
+          "latitude": 9.715,
+          "longitude": 81.725
+        },
+        {
+          "latitude": 9.773,
+          "longitude": 81.795
+        },
+        {
+          "latitude": 9.831,
+          "longitude": 81.865
+        }
+      ],
+      "scopes": [
+        {
+          "scope": "gfs",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 6240,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-17-gfs.json"
+        },
+        {
+          "scope": "cams",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 2880,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-17-cams.json"
+        }
+      ]
+    },
+    {
+      "batch": 18,
+      "passed": true,
+      "points": [
+        {
+          "latitude": 9.889,
+          "longitude": 81.935
+        },
+        {
+          "latitude": 9.947,
+          "longitude": 82.005
+        },
+        {
+          "latitude": 10.005,
+          "longitude": 82.075
+        },
+        {
+          "latitude": 10.063,
+          "longitude": 82.145
+        },
+        {
+          "latitude": 10.121,
+          "longitude": 82.215
+        },
+        {
+          "latitude": 10.179,
+          "longitude": 82.285
+        },
+        {
+          "latitude": 10.237,
+          "longitude": 82.355
+        },
+        {
+          "latitude": 10.295,
+          "longitude": 82.425
+        },
+        {
+          "latitude": 10.353,
+          "longitude": 82.495
+        },
+        {
+          "latitude": 10.411,
+          "longitude": 82.565
+        }
+      ],
+      "scopes": [
+        {
+          "scope": "gfs",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 6240,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-18-gfs.json"
+        },
+        {
+          "scope": "cams",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 2880,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-18-cams.json"
+        }
+      ]
+    },
+    {
+      "batch": 19,
+      "passed": true,
+      "points": [
+        {
+          "latitude": 10.469,
+          "longitude": 82.635
+        },
+        {
+          "latitude": 10.527,
+          "longitude": 82.705
+        },
+        {
+          "latitude": 10.585,
+          "longitude": 82.775
+        },
+        {
+          "latitude": 10.643,
+          "longitude": 82.845
+        },
+        {
+          "latitude": 10.701,
+          "longitude": 82.915
+        },
+        {
+          "latitude": 10.759,
+          "longitude": 82.985
+        },
+        {
+          "latitude": 10.817,
+          "longitude": 83.055
+        },
+        {
+          "latitude": 10.875,
+          "longitude": 83.125
+        },
+        {
+          "latitude": 10.933,
+          "longitude": 83.195
+        },
+        {
+          "latitude": 10.991,
+          "longitude": 83.265
+        }
+      ],
+      "scopes": [
+        {
+          "scope": "gfs",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 6240,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-19-gfs.json"
+        },
+        {
+          "scope": "cams",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 2880,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-19-cams.json"
+        }
+      ]
+    },
+    {
+      "batch": 20,
+      "passed": true,
+      "points": [
+        {
+          "latitude": 11.049,
+          "longitude": 83.335
+        },
+        {
+          "latitude": 11.107,
+          "longitude": 83.405
+        },
+        {
+          "latitude": 11.165,
+          "longitude": 83.475
+        },
+        {
+          "latitude": 11.223,
+          "longitude": 83.545
+        },
+        {
+          "latitude": 11.281,
+          "longitude": 83.615
+        },
+        {
+          "latitude": 11.339,
+          "longitude": 83.685
+        },
+        {
+          "latitude": 11.397,
+          "longitude": 83.755
+        },
+        {
+          "latitude": 11.455,
+          "longitude": 83.825
+        },
+        {
+          "latitude": 11.513,
+          "longitude": 83.895
+        },
+        {
+          "latitude": 11.571,
+          "longitude": 83.965
+        }
+      ],
+      "scopes": [
+        {
+          "scope": "gfs",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 6240,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-20-gfs.json"
+        },
+        {
+          "scope": "cams",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 2880,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-20-cams.json"
+        }
+      ]
+    },
+    {
+      "batch": 21,
+      "passed": true,
+      "points": [
+        {
+          "latitude": 11.629,
+          "longitude": 84.035
+        },
+        {
+          "latitude": 11.687,
+          "longitude": 84.105
+        },
+        {
+          "latitude": 11.745,
+          "longitude": 84.175
+        },
+        {
+          "latitude": 11.803,
+          "longitude": 84.245
+        },
+        {
+          "latitude": 11.861,
+          "longitude": 84.315
+        },
+        {
+          "latitude": 11.919,
+          "longitude": 84.385
+        },
+        {
+          "latitude": 11.977,
+          "longitude": 84.455
+        },
+        {
+          "latitude": 12.035,
+          "longitude": 84.525
+        },
+        {
+          "latitude": 12.093,
+          "longitude": 84.595
+        },
+        {
+          "latitude": 12.151,
+          "longitude": 84.665
+        }
+      ],
+      "scopes": [
+        {
+          "scope": "gfs",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 6240,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-21-gfs.json"
+        },
+        {
+          "scope": "cams",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 2880,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-21-cams.json"
+        }
+      ]
+    },
+    {
+      "batch": 22,
+      "passed": true,
+      "points": [
+        {
+          "latitude": 12.209,
+          "longitude": 84.735
+        },
+        {
+          "latitude": 12.267,
+          "longitude": 84.805
+        },
+        {
+          "latitude": 12.325,
+          "longitude": 84.875
+        },
+        {
+          "latitude": 12.383,
+          "longitude": 84.945
+        },
+        {
+          "latitude": 12.441,
+          "longitude": 85.015
+        },
+        {
+          "latitude": 12.499,
+          "longitude": 85.085
+        },
+        {
+          "latitude": 12.557,
+          "longitude": 85.155
+        },
+        {
+          "latitude": 12.615,
+          "longitude": 85.225
+        },
+        {
+          "latitude": 12.673,
+          "longitude": 85.295
+        },
+        {
+          "latitude": 12.731,
+          "longitude": 85.365
+        }
+      ],
+      "scopes": [
+        {
+          "scope": "gfs",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 6240,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-22-gfs.json"
+        },
+        {
+          "scope": "cams",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 2880,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-22-cams.json"
+        }
+      ]
+    },
+    {
+      "batch": 23,
+      "passed": true,
+      "points": [
+        {
+          "latitude": 12.789,
+          "longitude": 85.435
+        },
+        {
+          "latitude": 12.847,
+          "longitude": 85.505
+        },
+        {
+          "latitude": 12.905,
+          "longitude": 85.575
+        },
+        {
+          "latitude": 12.963,
+          "longitude": 85.645
+        },
+        {
+          "latitude": 13.021,
+          "longitude": 85.715
+        },
+        {
+          "latitude": 13.079,
+          "longitude": 85.785
+        },
+        {
+          "latitude": 13.137,
+          "longitude": 85.855
+        },
+        {
+          "latitude": 13.195,
+          "longitude": 85.925
+        },
+        {
+          "latitude": 13.253,
+          "longitude": 85.995
+        },
+        {
+          "latitude": 13.311,
+          "longitude": 86.065
+        }
+      ],
+      "scopes": [
+        {
+          "scope": "gfs",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 6240,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-23-gfs.json"
+        },
+        {
+          "scope": "cams",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 2880,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-23-cams.json"
+        }
+      ]
+    },
+    {
+      "batch": 24,
+      "passed": true,
+      "points": [
+        {
+          "latitude": 13.369,
+          "longitude": 86.135
+        },
+        {
+          "latitude": 13.427,
+          "longitude": 86.205
+        },
+        {
+          "latitude": 13.485,
+          "longitude": 86.275
+        },
+        {
+          "latitude": 13.543,
+          "longitude": 86.345
+        },
+        {
+          "latitude": 13.601,
+          "longitude": 86.415
+        },
+        {
+          "latitude": 13.659,
+          "longitude": 86.485
+        },
+        {
+          "latitude": 13.717,
+          "longitude": 86.555
+        },
+        {
+          "latitude": 13.775,
+          "longitude": 86.625
+        },
+        {
+          "latitude": 13.833,
+          "longitude": 86.695
+        },
+        {
+          "latitude": 13.891,
+          "longitude": 86.765
+        }
+      ],
+      "scopes": [
+        {
+          "scope": "gfs",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 6240,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-24-gfs.json"
+        },
+        {
+          "scope": "cams",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 2880,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-24-cams.json"
+        }
+      ]
+    },
+    {
+      "batch": 25,
+      "passed": false,
+      "points": [
+        {
+          "latitude": 13.949,
+          "longitude": 86.835
+        },
+        {
+          "latitude": 14.007,
+          "longitude": 86.905
+        },
+        {
+          "latitude": 14.065,
+          "longitude": 86.975
+        },
+        {
+          "latitude": 14.123,
+          "longitude": 87.045
+        },
+        {
+          "latitude": 14.181,
+          "longitude": 87.115
+        },
+        {
+          "latitude": 14.239,
+          "longitude": 87.185
+        },
+        {
+          "latitude": 14.297,
+          "longitude": 87.255
+        },
+        {
+          "latitude": 14.355,
+          "longitude": 87.325
+        },
+        {
+          "latitude": 14.413,
+          "longitude": 87.395
+        },
+        {
+          "latitude": 14.471,
+          "longitude": 87.465
+        }
+      ],
+      "scopes": [
+        {
+          "scope": "gfs",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 6240,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-25-gfs.json"
+        },
+        {
+          "scope": "cams",
+          "passed": false,
+          "failures": 4,
+          "checked_values": 2880,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-25-cams.json"
+        }
+      ]
+    },
+    {
+      "batch": 26,
+      "passed": false,
+      "points": [
+        {
+          "latitude": 14.529,
+          "longitude": 87.535
+        },
+        {
+          "latitude": 14.587,
+          "longitude": 87.605
+        },
+        {
+          "latitude": 14.645,
+          "longitude": 87.675
+        },
+        {
+          "latitude": 14.703,
+          "longitude": 87.745
+        },
+        {
+          "latitude": 14.761,
+          "longitude": 87.815
+        },
+        {
+          "latitude": 14.819,
+          "longitude": 87.885
+        },
+        {
+          "latitude": 14.877,
+          "longitude": 87.955
+        },
+        {
+          "latitude": 14.935,
+          "longitude": 88.025
+        },
+        {
+          "latitude": 14.993,
+          "longitude": 88.095
+        },
+        {
+          "latitude": 15.051,
+          "longitude": 88.165
+        }
+      ],
+      "scopes": [
+        {
+          "scope": "gfs",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 6240,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-26-gfs.json"
+        },
+        {
+          "scope": "cams",
+          "passed": false,
+          "failures": 2,
+          "checked_values": 2880,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-26-cams.json"
+        }
+      ]
+    },
+    {
+      "batch": 27,
+      "passed": true,
+      "points": [
+        {
+          "latitude": 15.109,
+          "longitude": 88.235
+        },
+        {
+          "latitude": 15.167,
+          "longitude": 88.305
+        },
+        {
+          "latitude": 15.225,
+          "longitude": 88.375
+        },
+        {
+          "latitude": 15.283,
+          "longitude": 88.445
+        },
+        {
+          "latitude": 15.341,
+          "longitude": 88.515
+        },
+        {
+          "latitude": 15.399,
+          "longitude": 88.585
+        },
+        {
+          "latitude": 15.457,
+          "longitude": 88.655
+        },
+        {
+          "latitude": 15.515,
+          "longitude": 88.725
+        },
+        {
+          "latitude": 15.573,
+          "longitude": 88.795
+        },
+        {
+          "latitude": 15.631,
+          "longitude": 88.865
+        }
+      ],
+      "scopes": [
+        {
+          "scope": "gfs",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 6240,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-27-gfs.json"
+        },
+        {
+          "scope": "cams",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 2880,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-27-cams.json"
+        }
+      ]
+    },
+    {
+      "batch": 28,
+      "passed": true,
+      "points": [
+        {
+          "latitude": 15.689,
+          "longitude": 88.935
+        },
+        {
+          "latitude": 15.747,
+          "longitude": 89.005
+        },
+        {
+          "latitude": 15.805,
+          "longitude": 89.075
+        },
+        {
+          "latitude": 15.863,
+          "longitude": 89.145
+        },
+        {
+          "latitude": 15.921,
+          "longitude": 89.215
+        },
+        {
+          "latitude": 15.979,
+          "longitude": 89.285
+        },
+        {
+          "latitude": 16.037,
+          "longitude": 89.355
+        },
+        {
+          "latitude": 16.095,
+          "longitude": 89.425
+        },
+        {
+          "latitude": 16.153,
+          "longitude": 89.495
+        },
+        {
+          "latitude": 16.211,
+          "longitude": 89.565
+        }
+      ],
+      "scopes": [
+        {
+          "scope": "gfs",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 6240,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-28-gfs.json"
+        },
+        {
+          "scope": "cams",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 2880,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-28-cams.json"
+        }
+      ]
+    },
+    {
+      "batch": 29,
+      "passed": true,
+      "points": [
+        {
+          "latitude": 16.269,
+          "longitude": 89.635
+        },
+        {
+          "latitude": 16.327,
+          "longitude": 89.705
+        },
+        {
+          "latitude": 16.385,
+          "longitude": 89.775
+        },
+        {
+          "latitude": 16.443,
+          "longitude": 89.845
+        },
+        {
+          "latitude": 16.501,
+          "longitude": 89.915
+        },
+        {
+          "latitude": 16.559,
+          "longitude": 89.985
+        },
+        {
+          "latitude": 16.617,
+          "longitude": 90.055
+        },
+        {
+          "latitude": 16.675,
+          "longitude": 90.125
+        },
+        {
+          "latitude": 16.733,
+          "longitude": 90.195
+        },
+        {
+          "latitude": 16.791,
+          "longitude": 90.265
+        }
+      ],
+      "scopes": [
+        {
+          "scope": "gfs",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 6240,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-29-gfs.json"
+        },
+        {
+          "scope": "cams",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 2880,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-29-cams.json"
+        }
+      ]
+    },
+    {
+      "batch": 30,
+      "passed": true,
+      "points": [
+        {
+          "latitude": 16.849,
+          "longitude": 90.335
+        },
+        {
+          "latitude": 16.907,
+          "longitude": 90.405
+        },
+        {
+          "latitude": 16.965,
+          "longitude": 90.475
+        },
+        {
+          "latitude": 17.023,
+          "longitude": 90.545
+        },
+        {
+          "latitude": 17.081,
+          "longitude": 90.615
+        },
+        {
+          "latitude": 17.139,
+          "longitude": 90.685
+        },
+        {
+          "latitude": 17.197,
+          "longitude": 90.755
+        },
+        {
+          "latitude": 17.255,
+          "longitude": 90.825
+        },
+        {
+          "latitude": 17.313,
+          "longitude": 90.895
+        },
+        {
+          "latitude": 17.371,
+          "longitude": 90.965
+        }
+      ],
+      "scopes": [
+        {
+          "scope": "gfs",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 6240,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-30-gfs.json"
+        },
+        {
+          "scope": "cams",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 2880,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-30-cams.json"
+        }
+      ]
+    },
+    {
+      "batch": 31,
+      "passed": true,
+      "points": [
+        {
+          "latitude": 17.429,
+          "longitude": 91.035
+        },
+        {
+          "latitude": 17.487,
+          "longitude": 91.105
+        },
+        {
+          "latitude": 17.545,
+          "longitude": 91.175
+        },
+        {
+          "latitude": 17.603,
+          "longitude": 91.245
+        },
+        {
+          "latitude": 17.661,
+          "longitude": 91.315
+        },
+        {
+          "latitude": 17.719,
+          "longitude": 91.385
+        },
+        {
+          "latitude": 17.777,
+          "longitude": 91.455
+        },
+        {
+          "latitude": 17.835,
+          "longitude": 91.525
+        },
+        {
+          "latitude": 17.893,
+          "longitude": 91.595
+        },
+        {
+          "latitude": 17.951,
+          "longitude": 91.665
+        }
+      ],
+      "scopes": [
+        {
+          "scope": "gfs",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 6240,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-31-gfs.json"
+        },
+        {
+          "scope": "cams",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 2880,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-31-cams.json"
+        }
+      ]
+    },
+    {
+      "batch": 32,
+      "passed": true,
+      "points": [
+        {
+          "latitude": 18.009,
+          "longitude": 91.735
+        },
+        {
+          "latitude": 18.067,
+          "longitude": 91.805
+        },
+        {
+          "latitude": 18.125,
+          "longitude": 91.875
+        },
+        {
+          "latitude": 18.183,
+          "longitude": 91.945
+        },
+        {
+          "latitude": 18.241,
+          "longitude": 92.015
+        },
+        {
+          "latitude": 18.299,
+          "longitude": 92.085
+        },
+        {
+          "latitude": 18.357,
+          "longitude": 92.155
+        },
+        {
+          "latitude": 18.415,
+          "longitude": 92.225
+        },
+        {
+          "latitude": 18.473,
+          "longitude": 92.295
+        },
+        {
+          "latitude": 18.531,
+          "longitude": 92.365
+        }
+      ],
+      "scopes": [
+        {
+          "scope": "gfs",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 6240,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-32-gfs.json"
+        },
+        {
+          "scope": "cams",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 2880,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-32-cams.json"
+        }
+      ]
+    },
+    {
+      "batch": 33,
+      "passed": true,
+      "points": [
+        {
+          "latitude": 18.589,
+          "longitude": 92.435
+        },
+        {
+          "latitude": 18.647,
+          "longitude": 92.505
+        },
+        {
+          "latitude": 18.705,
+          "longitude": 92.575
+        },
+        {
+          "latitude": 18.763,
+          "longitude": 92.645
+        },
+        {
+          "latitude": 18.821,
+          "longitude": 92.715
+        },
+        {
+          "latitude": 18.879,
+          "longitude": 92.785
+        },
+        {
+          "latitude": 18.937,
+          "longitude": 92.855
+        },
+        {
+          "latitude": 18.995,
+          "longitude": 92.925
+        },
+        {
+          "latitude": 19.053,
+          "longitude": 92.995
+        },
+        {
+          "latitude": 19.111,
+          "longitude": 93.065
+        }
+      ],
+      "scopes": [
+        {
+          "scope": "gfs",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 6240,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-33-gfs.json"
+        },
+        {
+          "scope": "cams",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 2880,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-33-cams.json"
+        }
+      ]
+    },
+    {
+      "batch": 34,
+      "passed": true,
+      "points": [
+        {
+          "latitude": 19.169,
+          "longitude": 93.135
+        },
+        {
+          "latitude": 19.227,
+          "longitude": 93.205
+        },
+        {
+          "latitude": 19.285,
+          "longitude": 93.275
+        },
+        {
+          "latitude": 19.343,
+          "longitude": 93.345
+        },
+        {
+          "latitude": 19.401,
+          "longitude": 93.415
+        },
+        {
+          "latitude": 19.459,
+          "longitude": 93.485
+        },
+        {
+          "latitude": 19.517,
+          "longitude": 93.555
+        },
+        {
+          "latitude": 19.575,
+          "longitude": 93.625
+        },
+        {
+          "latitude": 19.633,
+          "longitude": 93.695
+        },
+        {
+          "latitude": 19.691,
+          "longitude": 93.765
+        }
+      ],
+      "scopes": [
+        {
+          "scope": "gfs",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 6240,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-34-gfs.json"
+        },
+        {
+          "scope": "cams",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 2880,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-34-cams.json"
+        }
+      ]
+    },
+    {
+      "batch": 35,
+      "passed": true,
+      "points": [
+        {
+          "latitude": 19.749,
+          "longitude": 93.835
+        },
+        {
+          "latitude": 19.807,
+          "longitude": 93.905
+        },
+        {
+          "latitude": 19.865,
+          "longitude": 93.975
+        },
+        {
+          "latitude": 19.923,
+          "longitude": 94.045
+        },
+        {
+          "latitude": 19.981,
+          "longitude": 94.115
+        },
+        {
+          "latitude": 20.039,
+          "longitude": 94.185
+        },
+        {
+          "latitude": 20.097,
+          "longitude": 94.255
+        },
+        {
+          "latitude": 20.155,
+          "longitude": 94.325
+        },
+        {
+          "latitude": 20.213,
+          "longitude": 94.395
+        },
+        {
+          "latitude": 20.271,
+          "longitude": 94.465
+        }
+      ],
+      "scopes": [
+        {
+          "scope": "gfs",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 6240,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-35-gfs.json"
+        },
+        {
+          "scope": "cams",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 2880,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-35-cams.json"
+        }
+      ]
+    },
+    {
+      "batch": 36,
+      "passed": true,
+      "points": [
+        {
+          "latitude": 20.329,
+          "longitude": 94.535
+        },
+        {
+          "latitude": 20.387,
+          "longitude": 94.605
+        },
+        {
+          "latitude": 20.445,
+          "longitude": 94.675
+        },
+        {
+          "latitude": 20.503,
+          "longitude": 94.745
+        },
+        {
+          "latitude": 20.561,
+          "longitude": 94.815
+        },
+        {
+          "latitude": 20.619,
+          "longitude": 94.885
+        },
+        {
+          "latitude": 20.677,
+          "longitude": 94.955
+        },
+        {
+          "latitude": 20.735,
+          "longitude": 95.025
+        },
+        {
+          "latitude": 20.793,
+          "longitude": 95.095
+        },
+        {
+          "latitude": 20.851,
+          "longitude": 95.165
+        }
+      ],
+      "scopes": [
+        {
+          "scope": "gfs",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 6240,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-36-gfs.json"
+        },
+        {
+          "scope": "cams",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 2880,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-36-cams.json"
+        }
+      ]
+    },
+    {
+      "batch": 37,
+      "passed": true,
+      "points": [
+        {
+          "latitude": 20.909,
+          "longitude": 95.235
+        },
+        {
+          "latitude": 20.967,
+          "longitude": 95.305
+        },
+        {
+          "latitude": 21.025,
+          "longitude": 95.375
+        },
+        {
+          "latitude": 21.083,
+          "longitude": 95.445
+        },
+        {
+          "latitude": 21.141,
+          "longitude": 95.515
+        },
+        {
+          "latitude": 21.199,
+          "longitude": 95.585
+        },
+        {
+          "latitude": 21.257,
+          "longitude": 95.655
+        },
+        {
+          "latitude": 21.315,
+          "longitude": 95.725
+        },
+        {
+          "latitude": 21.373,
+          "longitude": 95.795
+        },
+        {
+          "latitude": 21.431,
+          "longitude": 95.865
+        }
+      ],
+      "scopes": [
+        {
+          "scope": "gfs",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 6240,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-37-gfs.json"
+        },
+        {
+          "scope": "cams",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 2880,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-37-cams.json"
+        }
+      ]
+    },
+    {
+      "batch": 38,
+      "passed": false,
+      "points": [
+        {
+          "latitude": 21.489,
+          "longitude": 95.935
+        },
+        {
+          "latitude": 21.547,
+          "longitude": 96.005
+        },
+        {
+          "latitude": 21.605,
+          "longitude": 96.075
+        },
+        {
+          "latitude": 21.663,
+          "longitude": 96.145
+        },
+        {
+          "latitude": 21.721,
+          "longitude": 96.215
+        },
+        {
+          "latitude": 21.779,
+          "longitude": 96.285
+        },
+        {
+          "latitude": 21.837,
+          "longitude": 96.355
+        },
+        {
+          "latitude": 21.895,
+          "longitude": 96.425
+        },
+        {
+          "latitude": 21.953,
+          "longitude": 96.495
+        },
+        {
+          "latitude": 22.011,
+          "longitude": 96.565
+        }
+      ],
+      "scopes": [
+        {
+          "scope": "gfs",
+          "passed": true,
+          "failures": 0,
+          "checked_values": 6240,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-38-gfs.json"
+        },
+        {
+          "scope": "cams",
+          "passed": false,
+          "failures": 4,
+          "checked_values": 2880,
+          "report": "docs\\validation\\reports\\target-c72056a-20260626T0600Z\\batch-38-cams.json"
+        }
+      ]
+    }
+  ],
+  "elapsed_seconds": 1685.237
+}

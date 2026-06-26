@@ -1,0 +1,19 @@
+{
+  "scope": "cams",
+  "points": 10,
+  "point_offset": 0.0,
+  "frames": 24,
+  "variables": 12,
+  "reference_base_url": "https://air-quality-api.open-meteo.com",
+  "reference_ssh_host": "seoul",
+  "run": null,
+  "request_forecast_hours": null,
+  "start_hour": "2026-06-26T06:00",
+  "end_hour": "2026-06-27T05:00",
+  "failures": [],
+  "checked_values": 2880,
+  "completed_chunks": 1,
+  "total_chunks": 1,
+  "elapsed_seconds": 8.412,
+  "passed": true
+}
