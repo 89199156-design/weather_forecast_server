@@ -221,14 +221,14 @@ def validate_scope(
         "total_chunks": total_chunks,
     }
 
-    def finish_chunk(point_offset: int, variable_chunk: list[str]) -> None:
-        report["completed_chunks"] += 1
+    def write_progress(point_offset: int, variable_chunk: list[str], stage: str) -> None:
         report["elapsed_seconds"] = round(time.time() - started, 3)
         report["passed"] = not report["failures"]
         if progress_path is None:
             return
         progress_payload = dict(report)
         progress_payload["incomplete"] = True
+        progress_payload["current_stage"] = stage
         progress_payload["last_point_offset"] = point_offset
         progress_payload["last_variables"] = variable_chunk
         progress_path.parent.mkdir(parents=True, exist_ok=True)
@@ -237,10 +237,15 @@ def validate_scope(
             encoding="utf-8",
         )
 
+    def finish_chunk(point_offset: int, variable_chunk: list[str]) -> None:
+        report["completed_chunks"] += 1
+        write_progress(point_offset, variable_chunk, "chunk_finished")
+
     for point_offset in range(0, len(points), point_chunk_size):
         point_chunk = points[point_offset : point_offset + point_chunk_size]
         for variable_chunk in chunked(variables, chunk_size):
             endpoint, params = request_params(scope, point_chunk, variable_chunk, frames)
+            write_progress(point_offset, variable_chunk, "local_request_start")
             try:
                 local_hourlies = extract_hourlies(
                     fetch_json(
@@ -268,6 +273,7 @@ def validate_scope(
 
             reference_hourly = None
             if reference_base_url:
+                write_progress(point_offset, variable_chunk, "reference_request_start")
                 try:
                     reference_hourlies = extract_hourlies(
                         fetch_json(
