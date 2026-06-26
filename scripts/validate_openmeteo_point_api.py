@@ -11,6 +11,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -200,15 +201,27 @@ def format_points(points: list[dict[str, float]], key: str) -> str:
     return ",".join(str(point[key]) for point in points)
 
 
-def request_params(scope: str, points: list[dict[str, float]], variables: list[str], frames: int) -> tuple[str, dict[str, Any]]:
+def request_params(
+    scope: str,
+    points: list[dict[str, float]],
+    variables: list[str],
+    frames: int,
+    *,
+    start_hour: str | None = None,
+    end_hour: str | None = None,
+) -> tuple[str, dict[str, Any]]:
     params: dict[str, Any] = {
         "latitude": format_points(points, "latitude"),
         "longitude": format_points(points, "longitude"),
         "hourly": ",".join(variables),
-        "forecast_hours": frames,
         "timezone": "UTC",
         "timeformat": "iso8601",
     }
+    if start_hour and end_hour:
+        params["start_hour"] = start_hour
+        params["end_hour"] = end_hour
+    else:
+        params["forecast_hours"] = frames
     if scope == "gfs":
         params["models"] = "gfs_global"
         params["wind_speed_unit"] = "ms"
@@ -229,6 +242,8 @@ def validate_scope(
     frames: int,
     chunk_size: int,
     point_chunk_size: int,
+    start_hour: str | None = None,
+    end_hour: str | None = None,
     tolerance: float,
     timeout: float,
     allow_all_null: bool,
@@ -245,6 +260,8 @@ def validate_scope(
         "frames": frames,
         "variables": len(variables),
         "reference_base_url": reference_base_url,
+        "start_hour": start_hour,
+        "end_hour": end_hour,
         "failures": [],
         "checked_values": 0,
         "completed_chunks": 0,
@@ -274,7 +291,14 @@ def validate_scope(
     for point_offset in range(0, len(points), point_chunk_size):
         point_chunk = points[point_offset : point_offset + point_chunk_size]
         for variable_chunk in chunked(variables, chunk_size):
-            endpoint, params = request_params(scope, point_chunk, variable_chunk, frames)
+            endpoint, params = request_params(
+                scope,
+                point_chunk,
+                variable_chunk,
+                frames,
+                start_hour=start_hour,
+                end_hour=end_hour,
+            )
             write_progress(point_offset, variable_chunk, "local_request_start")
             try:
                 local_hourlies = extract_hourlies(
@@ -361,6 +385,22 @@ def validate_scope(
             for point_index, point in enumerate(point_chunk, start=point_offset):
                 local_hourly = local_hourlies[point_index - point_offset]
                 reference_hourly = reference_hourlies[point_index - point_offset] if reference_base_url else None
+                if reference_hourly is not None:
+                    local_times = list(local_hourly.get("time") or [])[:frames]
+                    reference_times = list(reference_hourly.get("time") or [])[:frames]
+                    if local_times != reference_times:
+                        report["failures"].append(
+                            {
+                                "point_index": point_index,
+                                "point": point,
+                                "reason": "time_mismatch",
+                                "local_times": local_times[:10],
+                                "reference_times": reference_times[:10],
+                                "local_frames": len(local_times),
+                                "reference_frames": len(reference_times),
+                            }
+                        )
+                        continue
                 for variable in variable_chunk:
                     local_series = local_hourly.get(variable)
                     summary = summarize_variable(local_series, frames=frames)
@@ -408,6 +448,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--scope", choices=["gfs", "cams"], required=True)
     parser.add_argument("--points", type=int, required=True)
     parser.add_argument("--frames", type=int, default=50)
+    parser.add_argument("--start-hour", help="UTC ISO hour used as the first validation frame.")
+    parser.add_argument("--end-hour", help="UTC ISO hour used as the last validation frame.")
     parser.add_argument("--chunk-size", type=int, default=30)
     parser.add_argument("--point-chunk-size", type=int, default=10)
     parser.add_argument("--tolerance", type=float, default=0.001)
@@ -427,6 +469,23 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def parse_utc_hour(value: str) -> datetime:
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    parsed = parsed.astimezone(timezone.utc)
+    return parsed.replace(minute=0, second=0, microsecond=0)
+
+
+def format_utc_hour(value: datetime) -> str:
+    return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:00")
+
+
+def default_start_hour(now: datetime | None = None) -> datetime:
+    current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    return current.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+
+
 def main() -> int:
     args = parse_args()
     inventory = build_inventory(Path(args.repo_root))
@@ -438,6 +497,10 @@ def main() -> int:
         bottom_lat=args.bottom_lat,
         top_lat=args.top_lat,
     )
+    start_dt = parse_utc_hour(args.start_hour) if args.start_hour else default_start_hour()
+    end_dt = parse_utc_hour(args.end_hour) if args.end_hour else start_dt + timedelta(hours=args.frames - 1)
+    start_hour = format_utc_hour(start_dt)
+    end_hour = format_utc_hour(end_dt)
     report = validate_scope(
         api_base_url=args.api_base_url,
         reference_base_url=args.reference_base_url,
@@ -447,6 +510,8 @@ def main() -> int:
         frames=args.frames,
         chunk_size=args.chunk_size,
         point_chunk_size=args.point_chunk_size,
+        start_hour=start_hour,
+        end_hour=end_hour,
         tolerance=args.tolerance,
         timeout=args.timeout,
         allow_all_null=args.allow_all_null,
