@@ -26,6 +26,7 @@ def build_gate_commands(
     request_retries: int,
     request_retry_delay: float,
     request_pause: float,
+    chunk_size: int = 30,
 ) -> list[dict[str, Any]]:
     commands: list[dict[str, Any]] = []
     validator = SCRIPT_DIR / "validate_openmeteo_point_api.py"
@@ -43,6 +44,8 @@ def build_gate_commands(
                 str(points),
                 "--frames",
                 str(frames),
+                "--chunk-size",
+                str(chunk_size),
                 "--point-chunk-size",
                 str(point_chunk_size),
                 "--request-retries",
@@ -53,6 +56,8 @@ def build_gate_commands(
                 str(request_pause),
                 "--output-report",
                 str(report),
+                "--progress-report",
+                str(report.with_suffix(".progress.json")),
             ]
             if reference_base_url:
                 argv.extend(["--reference-base-url", reference_base_url])
@@ -109,6 +114,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--scopes", default="gfs,cams")
     parser.add_argument("--point-gates", default="50,100,500")
     parser.add_argument("--frames", type=int, default=50)
+    parser.add_argument("--chunk-size", type=int, default=30)
     parser.add_argument("--point-chunk-size", type=int, default=10)
     parser.add_argument("--request-retries", type=int, default=3)
     parser.add_argument("--request-retry-delay", type=float, default=2.0)
@@ -129,6 +135,7 @@ def main() -> int:
         scopes=scopes,
         point_gates=point_gates,
         frames=args.frames,
+        chunk_size=args.chunk_size,
         point_chunk_size=args.point_chunk_size,
         request_retries=args.request_retries,
         request_retry_delay=args.request_retry_delay,

@@ -205,8 +205,10 @@ def validate_scope(
     request_retries: int,
     request_retry_delay: float,
     request_pause: float,
+    progress_path: Path | None = None,
 ) -> dict[str, Any]:
     started = time.time()
+    total_chunks = math.ceil(len(points) / point_chunk_size) * math.ceil(len(variables) / chunk_size)
     report: dict[str, Any] = {
         "scope": scope,
         "points": len(points),
@@ -215,6 +217,8 @@ def validate_scope(
         "reference_base_url": reference_base_url,
         "failures": [],
         "checked_values": 0,
+        "completed_chunks": 0,
+        "total_chunks": total_chunks,
     }
 
     for point_offset in range(0, len(points), point_chunk_size):
@@ -333,8 +337,23 @@ def validate_scope(
                             }
                         )
 
+            report["completed_chunks"] += 1
+            report["elapsed_seconds"] = round(time.time() - started, 3)
+            report["passed"] = not report["failures"]
+            if progress_path is not None:
+                progress_payload = dict(report)
+                progress_payload["incomplete"] = True
+                progress_payload["last_point_offset"] = point_offset
+                progress_payload["last_variables"] = variable_chunk
+                progress_path.parent.mkdir(parents=True, exist_ok=True)
+                progress_path.write_text(
+                    json.dumps(progress_payload, indent=2, ensure_ascii=False) + "\n",
+                    encoding="utf-8",
+                )
+
     report["elapsed_seconds"] = round(time.time() - started, 3)
     report["passed"] = not report["failures"]
+    report.pop("incomplete", None)
     return report
 
 
@@ -355,6 +374,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--repo-root", default=Path(__file__).resolve().parents[1])
     parser.add_argument("--variables", help="Comma-separated override variable list.")
     parser.add_argument("--allow-all-null", action="store_true")
+    parser.add_argument("--progress-report", help="Write an incremental progress report after each request chunk.")
     parser.add_argument("--left-lon", type=float, default=70.0)
     parser.add_argument("--right-lon", type=float, default=140.0)
     parser.add_argument("--bottom-lat", type=float, default=0.0)
@@ -389,6 +409,7 @@ def main() -> int:
         request_retries=args.request_retries,
         request_retry_delay=args.request_retry_delay,
         request_pause=args.request_pause,
+        progress_path=Path(args.progress_report) if args.progress_report else None,
     )
     output_path = Path(args.output_report)
     output_path.parent.mkdir(parents=True, exist_ok=True)
