@@ -255,13 +255,16 @@ def test_server_layer_flow_builds_gfs_and_cams_products():
     assert "gfs013_point" in script
     assert "data/public" in script
     assert "point_package" in script
+    assert "pressure_profile_package" in script
     assert '--scope cams' in script
     assert "WEATHER_OPENMETEO_GFS_RUN" in script
     assert "WEATHER_OPENMETEO_GFS_API_URL" in script
     assert "WEATHER_OPENMETEO_CAMS_API_URL" in script
     assert "scripts/build_openmeteo_layers.py" in script
     assert "scripts/build_openmeteo_point_package.py" in script
+    assert "scripts/build_openmeteo_pressure_profile_package.py" in script
     assert "scripts/render_gfs_layers_from_point_package.py" in script
     assert 'publish_public_link "$GFS_OUTPUT_DIR" "$PUBLIC_DATA_DIR/gfs013_surface"' in script
     assert 'publish_public_link "$CAMS_OUTPUT_DIR" "$PUBLIC_DATA_DIR/cams_global"' in script
     assert 'publish_public_link "$POINT_OUTPUT_DIR" "$PUBLIC_DATA_DIR/point_package"' in script
+    assert 'publish_public_link "$PRESSURE_PROFILE_OUTPUT_DIR" "$PUBLIC_DATA_DIR/pressure_profile_package"' in script
