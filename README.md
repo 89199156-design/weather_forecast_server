@@ -42,10 +42,13 @@ The implementation order is:
 
 ## Layer Export
 
-Layer products are generated from the local Open-Meteo API, not from the old
-Python GRIB parsing chain. The Python layer code only requests point values
-from Open-Meteo and encodes those values into the existing WebP/manifest
-product shape used by clients.
+The GFS point package is generated from the local Open-Meteo API, not from the
+old Python GRIB parsing chain. GFS WebP layers are then rendered from that same
+point package so the point API and map layers use the same Open-Meteo snapshot.
+CAMS layers are generated from the local Open-Meteo air-quality API.
+The reusable API-backed layer encoder remains available as
+`scripts/build_openmeteo_layers.py`, and the production GFS path uses
+`scripts/render_gfs_layers_from_point_package.py` for point/layer consistency.
 
 Before serving or exporting products, download the Open-Meteo runtime data. The
 GFS point API uses Open-Meteo's `gfs_global` mixer, so both `gfs013` and `gfs025`
@@ -84,15 +87,24 @@ python3 scripts/run_openmeteo_target_validation.py \
   --output-dir docs/validation/reports
 ```
 
-Build layers for a known validated window:
+Build the matching point package for a known validated Open-Meteo window:
 
 ```bash
-python3 scripts/build_openmeteo_layers.py \
+python3 scripts/build_openmeteo_point_package.py \
   --api-base-url http://127.0.0.1:18080/v1/forecast \
-  --output-dir ./data/openmeteo_layers/gfs013_surface \
+  --output-dir ./data/openmeteo_points/gfs013_point \
   --model gfs_global \
+  --run 2026-06-26T18:00 \
   --start-hour 2026-06-25T07:00 \
   --end-hour 2026-06-27T08:00
+```
+
+Render GFS layers from that point package:
+
+```bash
+python3 scripts/render_gfs_layers_from_point_package.py \
+  --point-dir ./data/openmeteo_points/gfs013_point \
+  --output-dir ./data/openmeteo_layers/gfs013_surface
 ```
 
 Build the server layer products used by production:
@@ -103,9 +115,11 @@ bash scripts/build_server_openmeteo_layers.sh
 
 The server flow writes GFS WebP layers to
 `data/openmeteo_layers/gfs013_surface` and CAMS WebP layers to
-`data/openmeteo_layers/cams_global`. It defaults to 50 hourly frames from the
+`data/openmeteo_layers/cams_global`, and writes the matching GFS point package to
+`data/openmeteo_points/gfs013_point`. It defaults to 50 hourly frames from the
 current UTC hour and can be pinned with `WEATHER_OPENMETEO_LAYER_START_HOUR`,
-`WEATHER_OPENMETEO_LAYER_END_HOUR`, or `WEATHER_OPENMETEO_LAYER_FRAME_COUNT`.
+`WEATHER_OPENMETEO_LAYER_END_HOUR`, `WEATHER_OPENMETEO_LAYER_FRAME_COUNT`, or
+`WEATHER_OPENMETEO_GFS_RUN`.
 
 Validate generated layers against the same Open-Meteo API before promotion:
 

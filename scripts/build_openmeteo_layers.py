@@ -63,10 +63,10 @@ class RegionGrid:
         return y, x, self.latitude_values[y], self.longitude_values[x]
 
     def manifest(self) -> dict[str, Any]:
-        lon_min = self.longitude_values[0]
-        lon_max = self.longitude_values[-1]
-        lat_min = self.latitude_values[0]
-        lat_max = self.latitude_values[-1]
+        lon_min = min(self.longitude_values)
+        lon_max = max(self.longitude_values)
+        lat_min = min(self.latitude_values)
+        lat_max = max(self.latitude_values)
         return {
             "grid_type": "openmeteo_gfs013_regular_latlon",
             "bounds_semantics": "point_centers",
@@ -307,8 +307,9 @@ def compute_gfs013_region_grid(
     height = y1 - y0 + 1
     region_lon_min = lon_min + float(x0) * dx
     region_lat_min = lat_min + float(y0) * dy
+    region_lat_max = lat_min + float(y1) * dy
     longitude_values = [round(region_lon_min + float(x) * dx, 6) for x in range(width)]
-    latitude_values = [round(region_lat_min + float(y) * dy, 6) for y in range(height)]
+    latitude_values = [round(region_lat_max - float(y) * dy, 6) for y in range(height)]
     return RegionGrid(
         width=width,
         height=height,
@@ -318,7 +319,7 @@ def compute_gfs013_region_grid(
         dy=dy,
         latitude_values=latitude_values,
         longitude_values=longitude_values,
-        row_order="south_to_north",
+        row_order="north_to_south",
     )
 
 

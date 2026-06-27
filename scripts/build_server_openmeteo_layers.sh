@@ -56,6 +56,8 @@ restore_weather_env_overrides
 LAYER_ROOT_DIR="${WEATHER_OPENMETEO_LAYER_ROOT_DIR:-$APP_DIR/data/openmeteo_layers}"
 GFS_OUTPUT_DIR="${WEATHER_OPENMETEO_LAYER_DIR:-$LAYER_ROOT_DIR/gfs013_surface}"
 CAMS_OUTPUT_DIR="${WEATHER_OPENMETEO_CAMS_LAYER_DIR:-$LAYER_ROOT_DIR/cams_global}"
+POINT_OUTPUT_DIR="${WEATHER_OPENMETEO_POINT_DIR:-$APP_DIR/data/openmeteo_points/gfs013_point}"
+PUBLIC_DATA_DIR="${WEATHER_OPENMETEO_PUBLIC_DATA_DIR:-$APP_DIR/data/public}"
 GFS_API_URL="${WEATHER_OPENMETEO_GFS_API_URL:-http://127.0.0.1:18080/v1/forecast}"
 CAMS_API_URL="${WEATHER_OPENMETEO_CAMS_API_URL:-http://127.0.0.1:18084/v1/air-quality}"
 LAYER_START_HOUR="${WEATHER_OPENMETEO_LAYER_START_HOUR:-$(date -u '+%Y-%m-%dT%H:00')}"
@@ -66,10 +68,17 @@ LAYER_TIMEOUT="${WEATHER_OPENMETEO_LAYER_TIMEOUT:-120}"
 LAYER_REQUEST_RETRIES="${WEATHER_OPENMETEO_LAYER_REQUEST_RETRIES:-2}"
 LAYER_REQUEST_RETRY_DELAY="${WEATHER_OPENMETEO_LAYER_REQUEST_RETRY_DELAY:-2}"
 LAYER_REQUEST_PAUSE="${WEATHER_OPENMETEO_LAYER_REQUEST_PAUSE:-0}"
+POINT_CHUNK_SIZE="${WEATHER_OPENMETEO_POINT_CHUNK_SIZE:-$LAYER_CHUNK_SIZE}"
+POINT_TIMEOUT="${WEATHER_OPENMETEO_POINT_TIMEOUT:-$LAYER_TIMEOUT}"
+POINT_REQUEST_RETRIES="${WEATHER_OPENMETEO_POINT_REQUEST_RETRIES:-$LAYER_REQUEST_RETRIES}"
+POINT_REQUEST_RETRY_DELAY="${WEATHER_OPENMETEO_POINT_REQUEST_RETRY_DELAY:-$LAYER_REQUEST_RETRY_DELAY}"
+POINT_REQUEST_PAUSE="${WEATHER_OPENMETEO_POINT_REQUEST_PAUSE:-$LAYER_REQUEST_PAUSE}"
 GFS_MODEL="${WEATHER_OPENMETEO_LAYER_MODEL:-gfs_global}"
 CAMS_DOMAIN="${WEATHER_OPENMETEO_CAMS_LAYER_DOMAIN:-cams_global}"
+GFS_RUN="${WEATHER_OPENMETEO_GFS_RUN:-}"
 BUILD_GFS="${WEATHER_OPENMETEO_BUILD_GFS_LAYERS:-true}"
 BUILD_CAMS="${WEATHER_OPENMETEO_BUILD_CAMS_LAYERS:-true}"
+BUILD_POINT_PACKAGE="${WEATHER_OPENMETEO_BUILD_POINT_PACKAGE:-true}"
 
 if ! [[ "$LAYER_FRAME_COUNT" =~ ^[0-9]+$ ]] || [[ "$LAYER_FRAME_COUNT" -lt 1 ]]; then
   printf '%s\n' "WEATHER_OPENMETEO_LAYER_FRAME_COUNT must be a positive integer." >&2
@@ -77,21 +86,48 @@ if ! [[ "$LAYER_FRAME_COUNT" =~ ^[0-9]+$ ]] || [[ "$LAYER_FRAME_COUNT" -lt 1 ]];
 fi
 
 cd "$APP_DIR"
-mkdir -p "$GFS_OUTPUT_DIR" "$CAMS_OUTPUT_DIR"
+mkdir -p "$GFS_OUTPUT_DIR" "$CAMS_OUTPUT_DIR" "$POINT_OUTPUT_DIR" "$PUBLIC_DATA_DIR"
 
-if is_truthy "$BUILD_GFS"; then
-  python3 scripts/build_openmeteo_layers.py \
-    --scope gfs \
+GFS_RUN_ARGS=()
+if [[ -n "$GFS_RUN" ]]; then
+  GFS_RUN_ARGS=(--run "$GFS_RUN")
+fi
+
+publish_public_link() {
+  local target="$1"
+  local link="$2"
+  local tmp_link="${link}.tmp.$$"
+  rm -f "$tmp_link"
+  ln -s "$target" "$tmp_link"
+  if [[ -e "$link" && ! -L "$link" ]]; then
+    printf 'Refusing to replace non-symlink public path: %s\n' "$link" >&2
+    rm -f "$tmp_link"
+    exit 3
+  fi
+  mv -Tf "$tmp_link" "$link"
+}
+
+if is_truthy "$BUILD_POINT_PACKAGE"; then
+  python3 scripts/build_openmeteo_point_package.py \
     --api-base-url "$GFS_API_URL" \
-    --output-dir "$GFS_OUTPUT_DIR" \
+    --output-dir "$POINT_OUTPUT_DIR" \
     --model "$GFS_MODEL" \
+    "${GFS_RUN_ARGS[@]}" \
     --start-hour "$LAYER_START_HOUR" \
     --end-hour "$LAYER_END_HOUR" \
-    --chunk-size "$LAYER_CHUNK_SIZE" \
-    --timeout-seconds "$LAYER_TIMEOUT" \
-    --request-retries "$LAYER_REQUEST_RETRIES" \
-    --request-retry-delay "$LAYER_REQUEST_RETRY_DELAY" \
-    --request-pause "$LAYER_REQUEST_PAUSE"
+    --chunk-size "$POINT_CHUNK_SIZE" \
+    --timeout-seconds "$POINT_TIMEOUT" \
+    --request-retries "$POINT_REQUEST_RETRIES" \
+    --request-retry-delay "$POINT_REQUEST_RETRY_DELAY" \
+    --request-pause "$POINT_REQUEST_PAUSE"
+else
+  printf '%s\n' "Skipping point package: WEATHER_OPENMETEO_BUILD_POINT_PACKAGE is disabled."
+fi
+
+if is_truthy "$BUILD_GFS"; then
+  python3 scripts/render_gfs_layers_from_point_package.py \
+    --point-dir "$POINT_OUTPUT_DIR" \
+    --output-dir "$GFS_OUTPUT_DIR"
 else
   printf '%s\n' "Skipping GFS layers: WEATHER_OPENMETEO_BUILD_GFS_LAYERS is disabled."
 fi
@@ -112,3 +148,7 @@ if is_truthy "$BUILD_CAMS"; then
 else
   printf '%s\n' "Skipping CAMS layers: WEATHER_OPENMETEO_BUILD_CAMS_LAYERS is disabled."
 fi
+
+publish_public_link "$GFS_OUTPUT_DIR" "$PUBLIC_DATA_DIR/gfs013_surface"
+publish_public_link "$CAMS_OUTPUT_DIR" "$PUBLIC_DATA_DIR/cams_global"
+publish_public_link "$POINT_OUTPUT_DIR" "$PUBLIC_DATA_DIR/point_package"

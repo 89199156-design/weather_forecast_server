@@ -30,11 +30,17 @@ def test_gfs013_region_grid_matches_openmeteo_swift_slice():
 
     assert grid.width == 597
     assert grid.height == 495
-    assert grid.row_order == "south_to_north"
+    assert grid.row_order == "north_to_south"
     assert grid.longitude_values[0] == 70.078125
     assert grid.longitude_values[-1] == 139.921875
-    assert grid.latitude_values[0] == 0.058575
-    assert grid.latitude_values[-1] == 57.930354
+    assert grid.latitude_values[0] == 57.930354
+    assert grid.latitude_values[-1] == 0.058575
+    assert grid.manifest()["sample_bounds"] == {
+        "lon_min": 70.078125,
+        "lat_min": 0.058575,
+        "lon_max": 139.921875,
+        "lat_max": 57.930354,
+    }
 
 
 def test_default_layer_model_uses_openmeteo_gfs_global_mixer():

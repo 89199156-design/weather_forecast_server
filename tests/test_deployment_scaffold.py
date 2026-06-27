@@ -232,6 +232,8 @@ def test_layer_scripts_are_documented_as_openmeteo_api_backed():
     validate_script = (ROOT / "scripts" / "validate_openmeteo_layers.py").read_text(encoding="utf-8")
 
     assert "scripts/build_openmeteo_layers.py" in readme
+    assert "scripts/build_openmeteo_point_package.py" in readme
+    assert "scripts/render_gfs_layers_from_point_package.py" in readme
     assert "scripts/build_server_openmeteo_layers.sh" in readme
     assert "scripts/validate_openmeteo_layers.py" in readme
     assert "Open-Meteo API" in readme
@@ -250,8 +252,16 @@ def test_server_layer_flow_builds_gfs_and_cams_products():
     assert "WEATHER_OPENMETEO_LAYER_FRAME_COUNT" in script
     assert "gfs013_surface" in script
     assert "cams_global" in script
-    assert '--scope gfs' in script
+    assert "gfs013_point" in script
+    assert "data/public" in script
+    assert "point_package" in script
     assert '--scope cams' in script
+    assert "WEATHER_OPENMETEO_GFS_RUN" in script
     assert "WEATHER_OPENMETEO_GFS_API_URL" in script
     assert "WEATHER_OPENMETEO_CAMS_API_URL" in script
     assert "scripts/build_openmeteo_layers.py" in script
+    assert "scripts/build_openmeteo_point_package.py" in script
+    assert "scripts/render_gfs_layers_from_point_package.py" in script
+    assert 'publish_public_link "$GFS_OUTPUT_DIR" "$PUBLIC_DATA_DIR/gfs013_surface"' in script
+    assert 'publish_public_link "$CAMS_OUTPUT_DIR" "$PUBLIC_DATA_DIR/cams_global"' in script
+    assert 'publish_public_link "$POINT_OUTPUT_DIR" "$PUBLIC_DATA_DIR/point_package"' in script
