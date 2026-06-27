@@ -158,7 +158,7 @@ DEFAULT_LAYER_DEFINITIONS: tuple[LayerDefinition, ...] = (
         "precip_phase",
         "code",
         1.0,
-        (0.0, 6.0),
+        (0.0, 4.0),
         data_type="categorical",
         derive="precip_phase_from_weather_code",
     ),
@@ -255,8 +255,6 @@ def precip_phase_from_weather_code(weather_code: np.ndarray) -> np.ndarray:
     out[np.isin(rounded, [51, 53, 55, 61, 63, 65, 80, 81, 82])] = 1.0
     out[np.isin(rounded, [71, 73, 75, 77, 85, 86])] = 2.0
     out[np.isin(rounded, [56, 57, 66, 67])] = 4.0
-    out[np.isin(rounded, [96, 99])] = 5.0
-    out[rounded == 95] = 6.0
     out[invalid] = np.nan
     return out
 

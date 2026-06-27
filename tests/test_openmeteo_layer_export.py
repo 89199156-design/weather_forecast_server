@@ -148,6 +148,7 @@ def test_layer_manifest_preserves_encoder_vmin_for_decoding():
     assert manifests["uv_index"]["unit"] == "index"
     assert "weather_code" not in manifests
     assert manifests["precip_phase"]["derive"] == "precip_phase_from_weather_code"
+    assert manifests["precip_phase"]["range"] == [0.0, 4.0]
     assert manifests["thunderstorm_code"]["derive"] == "thunderstorm_code_from_weather_code"
 
 
@@ -197,7 +198,7 @@ def test_openmeteo_weather_code_drives_phase_and_thunderstorm_layers():
             [
                 [0, 0, 1, 1],
                 [2, 2, 4, 4],
-                [6, 5, 5, 0],
+                [0, 0, 0, 0],
             ],
             dtype=np.float32,
         ),

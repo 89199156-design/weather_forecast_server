@@ -44,8 +44,9 @@ def test_layer_api_value_transform_derives_phase_and_thunderstorm_from_weather_c
     assert validator.transform_api_value(61, phase_layer) == 1.0
     assert validator.transform_api_value(71, phase_layer) == 2.0
     assert validator.transform_api_value(56, phase_layer) == 4.0
-    assert validator.transform_api_value(96, phase_layer) == 5.0
-    assert validator.transform_api_value(95, phase_layer) == 6.0
+    assert validator.transform_api_value(95, phase_layer) == 0.0
+    assert validator.transform_api_value(96, phase_layer) == 0.0
+    assert validator.transform_api_value(99, phase_layer) == 0.0
     assert validator.transform_api_value(3, phase_layer) == 0.0
     assert validator.transform_api_value(None, phase_layer) is None
 

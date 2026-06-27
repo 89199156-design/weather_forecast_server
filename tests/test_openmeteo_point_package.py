@@ -77,5 +77,16 @@ def test_point_package_derives_phase_and_thunderstorm_from_weather_code():
     phase_field = next(field for field in points.POINT_FIELDS if field.name == "precip_phase_code")
     thunder_field = next(field for field in points.POINT_FIELDS if field.name == "thunderstorm_code")
 
-    np.testing.assert_array_equal(points.derive_values(phase_field, variables), [[0, 1, 6, 5]])
+    np.testing.assert_array_equal(points.derive_values(phase_field, variables), [[0, 1, 0, 0]])
     np.testing.assert_array_equal(points.derive_values(thunder_field, variables), [[0, 0, 95, 99]])
+
+
+def test_point_package_phase_metadata_only_lists_generated_codes():
+    points = load_module()
+
+    assert points.PRECIP_PHASE_TEXTS == {
+        0: "无明显降水",
+        1: "雨",
+        2: "雪",
+        4: "冻雨风险",
+    }
