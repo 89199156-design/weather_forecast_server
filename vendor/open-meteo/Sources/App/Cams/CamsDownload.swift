@@ -74,13 +74,25 @@ struct DownloadCamsCommand: AsyncCommand {
             try await downloadCamsEuropeReanalysis(application: context.application, domain: domain, run: run, skipFilesIfExisting: signature.skipExisting, variables: variables, cdskey: cdskey)
             try await convertCamsEuropeReanalysis(logger: logger, domain: domain, run: run, variables: variables)
         case .cams_global:
-            guard let ftpuser = signature.ftpuser else {
-                fatalError("ftpuser is required")
+            let handles: [GenericVariableHandle]
+            if WeatherForecastServerSourceConfig.camsAreaDownloadEnabled {
+                let envCdsKey = WeatherForecastServerSourceConfig.string(
+                    "WEATHER_CAMS_ADS_KEY",
+                    fallback: WeatherForecastServerSourceConfig.string("WEATHER_CAMS_CDS_KEY", fallback: "")
+                )
+                guard let cdskey = signature.cdskey ?? (envCdsKey.isEmpty ? nil : envCdsKey), !cdskey.isEmpty else {
+                    fatalError("cds key is required for WEATHER_CAMS_AREA_DOWNLOAD")
+                }
+                handles = try await downloadCamsGlobalArea(application: context.application, domain: domain, run: run, variables: variables, cdskey: cdskey, concurrent: signature.concurrent ?? 1, uploadS3Bucket: signature.uploadS3Bucket)
+            } else {
+                guard let ftpuser = signature.ftpuser else {
+                    fatalError("ftpuser is required")
+                }
+                guard let ftppassword = signature.ftppassword else {
+                    fatalError("ftppassword is required")
+                }
+                handles = try await downloadCamsGlobal(application: context.application, domain: domain, run: run, variables: variables, user: ftpuser, password: ftppassword, uploadS3Bucket: signature.uploadS3Bucket)
             }
-            guard let ftppassword = signature.ftppassword else {
-                fatalError("ftppassword is required")
-            }
-            let handles = try await downloadCamsGlobal(application: context.application, domain: domain, run: run, variables: variables, user: ftpuser, password: ftppassword, uploadS3Bucket: signature.uploadS3Bucket)
             try await GenericVariableHandle.convert(logger: logger, domain: domain, createNetcdf: signature.createNetcdf, run: run, handles: handles, concurrent: signature.concurrent ?? 1, writeUpdateJson: true, uploadS3Bucket: signature.uploadS3Bucket, uploadS3OnlyProbabilities: false)
             return
         case .cams_europe:
@@ -184,6 +196,80 @@ struct DownloadCamsCommand: AsyncCommand {
         let year: [String]?
         let month: [String]?
         let model_level: [Int]?
+    }
+
+    struct CamsGlobalAreaQuery: Encodable {
+        let date: String
+        let type: [String]
+        let data_format: String
+        let download_format: String
+        let variable: [String]
+        let model_level: [Int]
+        let time: String
+        let leadtime_hour: [String]
+        let area: [Double]
+    }
+
+    /// Download global CAMS through the official ADS API with an area subset.
+    /// The conversion and writer remain Open-Meteo's normal CAMS path.
+    func downloadCamsGlobalArea(application: Application, domain: CamsDomain, run: Timestamp, variables: [CamsVariable], cdskey: String, concurrent: Int, uploadS3Bucket: String?) async throws -> [GenericVariableHandle] {
+        try FileManager.default.createDirectory(atPath: domain.downloadDirectory, withIntermediateDirectories: true)
+        let logger = application.logger
+
+        let apiVariables = variables.compactMap { $0.getCamsGlobalAreaApiName() }.uniqued()
+        guard !apiVariables.isEmpty else {
+            logger.warning("No CAMS global ADS variables selected")
+            return []
+        }
+
+        let forecastHours = domain.forecastHours
+        let date = run.iso8601_YYYY_MM_dd
+        let query = CamsGlobalAreaQuery(
+            date: "\(date)/\(date)",
+            type: ["forecast"],
+            data_format: "grib",
+            download_format: "unarchived",
+            variable: apiVariables,
+            model_level: [137],
+            time: "\(run.hour.zeroPadded(len: 2)):00",
+            leadtime_hour: (0..<forecastHours).map(String.init),
+            area: WeatherForecastServerSourceConfig.regionAreaNorthWestSouthEast
+        )
+
+        let curl = Curl(logger: logger, client: application.dedicatedHttpClient, deadLineHours: 24)
+        var handles = [GenericVariableHandle]()
+
+        do {
+            let h = try await curl.withCdsApi(dataset: "cams-global-atmospheric-composition-forecasts", query: query, apikey: cdskey, server: "https://ads.atmosphere.copernicus.eu/api") { messages in
+                let writer = OmSpatialMultistepWriter(domain: domain, run: run, storeOnDisk: true, realm: nil, logger: logger)
+                try await messages.foreachConcurrent(nConcurrent: concurrent) { message in
+                    let shortName = try message.getOrThrow(attribute: "shortName")
+                    guard let variable = CamsVariable.camsGlobalAreaFromGribShortName(shortName) else {
+                        logger.warning("Could not map CAMS global ADS GRIB shortName=\(shortName)")
+                        return
+                    }
+                    guard variables.contains(variable) else {
+                        return
+                    }
+                    guard let meta = variable.getCamsGlobalMeta() else {
+                        return
+                    }
+                    let timestamp = try message.getValidTimestamp()
+                    logger.info("Converting CAMS global ADS variable \(variable) \(timestamp.format_YYYYMMddHH) \(shortName)")
+
+                    var grib2d = try message.to2D(nx: domain.grid.nx, ny: domain.grid.ny, shift180LongitudeAndFlipLatitudeIfRequired: true)
+                    for i in grib2d.array.data.indices {
+                        grib2d.array.data[i] *= meta.scalefactor
+                    }
+                    try await writer.write(time: timestamp, member: 0, variable: variable, data: grib2d.array.data)
+                }
+                return try await writer.finalise(completed: true, validTimes: nil, uploadS3Bucket: uploadS3Bucket)
+            }
+            handles.append(contentsOf: h)
+        } catch CdsApiError.restrictedAccessToValidData {
+            logger.info("CAMS global ADS run \(run.iso8601_YYYY_MM_dd_HH_mm) seems to be unavailable. Skipping downloading now.")
+        }
+        return handles
     }
 
     /// Download one month of reanalysis data as a zipped NetCDF file

@@ -17,28 +17,34 @@ def test_openmeteo_package_uses_upstream_sdk_dependency():
     assert '.product(name: "OpenMeteoSdk", package: "openmeteo-sdk")' not in package
 
 
-def test_vendored_openmeteo_does_not_fork_gfs_domain_or_download_logic():
+def test_vendored_openmeteo_only_patches_download_transport_and_region_grid():
     domain = read_vendor("Sources/App/Gfs/GfsDomain.swift")
     download = read_vendor("Sources/App/Gfs/GfsDownload.swift")
+    cams_domain = read_vendor("Sources/App/Cams/CamsDomain.swift")
+    cams_download = read_vendor("Sources/App/Cams/CamsDownload.swift")
     curl = read_vendor("Sources/App/Helper/Download/Curl.swift")
 
     forbidden_tokens = (
-        "WeatherForecastServerSourceConfig",
-        "WEATHER_GFS_NOMADS_BASE_URL",
-        "WEATHER_GFS_AWS_BASE_URL",
-        "WEATHER_GFS_FILTER_DOWNLOAD",
-        "WEATHER_GFS_FILTER_0P25_URL",
-        "WEATHER_GFS_FILTER_0P25B_URL",
-        "WEATHER_GFS_FILTER_SFLUX_URL",
-        "GfsFilterDownload",
-        "downloadFilteredIndexedGrib",
-        "downloadFilteredIndexAndDecode",
         "gfsNoaaDownloadHeaders",
+        "roundToGribDecimalScale",
+        "decimalScaleFactor",
+        "GfsController",
+        "weather_code",
     )
 
     combined = "\n".join((domain, download, curl))
     for token in forbidden_tokens:
         assert token not in combined
+
+    assert "WeatherForecastServerSourceConfig" in domain
+    assert "WEATHER_GFS_FILTER_DOWNLOAD" in domain
+    assert "GfsFilterDownload" in download
+    assert "downloadFilteredIndexedGrib" in download
+    assert "regularGridSlice" in domain
+    assert "WEATHER_CAMS_AREA_DOWNLOAD" in domain
+    assert "downloadCamsGlobalArea" in cams_download
+    assert "cams-global-atmospheric-composition-forecasts" in cams_download
+    assert "getCamsGlobalAreaApiName" in cams_domain
 
 
 def test_vendored_openmeteo_uses_upstream_remote_data_directory_contract():

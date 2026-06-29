@@ -102,6 +102,8 @@ def test_runtime_data_download_covers_openmeteo_gfs_mixer_and_cams_global():
     assert "--only-variables" in script
     assert "--upper-level" not in script
     assert "download-cams cams_global" in script
+    assert "WEATHER_CAMS_AREA_DOWNLOAD" in script
+    assert "--cdskey \"$CAMS_ADS_KEY\"" in script
     assert "WEATHER_CAMS_FTP_USER" in script
     assert "WEATHER_CAMS_FTP_PASSWORD" in script
     assert "set -a" in script
@@ -158,7 +160,11 @@ def test_runtime_data_download_defaults_to_raw_local_om_generation():
     singapore_env = (ROOT / "config" / "singapore.example.env").read_text(encoding="utf-8")
 
     assert "WEATHER_GFS_DOWNLOAD_MODE=raw" in singapore_env
-    assert "WEATHER_GFS_FILTER_DOWNLOAD" not in singapore_env
+    assert "WEATHER_GFS_FILTER_DOWNLOAD=true" in singapore_env
+    assert "WEATHER_CAMS_AREA_DOWNLOAD=true" in singapore_env
+    assert "WEATHER_CAMS_ADS_KEY=" in singapore_env
+    assert "WEATHER_ALLOW_GLOBAL_RAW_DOWNLOAD" in script
+    assert "Refusing global Open-Meteo raw GFS download" in script
     assert "WEATHER_OPENMETEO_SYNC_BASE_URL" in singapore_env
     assert "REMOTE_DATA_DIRECTORY=" in singapore_env
     assert "CACHE_SIZE=10GB" in singapore_env
@@ -213,18 +219,35 @@ def test_runtime_data_download_preserves_explicit_environment_over_config_file()
     assert restore_call < script.index("GFS_MAX_FORECAST_HOUR=")
 
 
-def test_gfs_downloader_is_not_forked_for_noaa_transport_or_filtering():
+def test_openmeteo_downloader_only_changes_transport_and_region_grid():
     source = (ROOT / "vendor" / "open-meteo" / "Sources" / "App" / "Gfs" / "GfsDownload.swift").read_text(
+        encoding="utf-8"
+    )
+    domain = (ROOT / "vendor" / "open-meteo" / "Sources" / "App" / "Gfs" / "GfsDomain.swift").read_text(
+        encoding="utf-8"
+    )
+    cams_download = (ROOT / "vendor" / "open-meteo" / "Sources" / "App" / "Cams" / "CamsDownload.swift").read_text(
+        encoding="utf-8"
+    )
+    cams_domain = (ROOT / "vendor" / "open-meteo" / "Sources" / "App" / "Cams" / "CamsDomain.swift").read_text(
         encoding="utf-8"
     )
     curl = (ROOT / "vendor" / "open-meteo" / "Sources" / "App" / "Helper" / "Download" / "Curl.swift").read_text(
         encoding="utf-8"
     )
 
-    assert "gfsNoaaDownloadHeaders" not in source
-    assert "client: application.http1Client" not in source
-    assert "WEATHER_GFS_FILTER_0P25B_URL" not in source
-    assert "filter_gfs_0p25b.pl" not in source
+    assert "WEATHER_GFS_FILTER_DOWNLOAD" in domain
+    assert "WEATHER_CAMS_AREA_DOWNLOAD" in domain
+    assert "cams-global-atmospheric-composition-forecasts" in cams_download
+    assert "regionAreaNorthWestSouthEast" in cams_download
+    assert "getCamsGlobalAreaApiName" in cams_domain
+    assert "filter_gfs_0p25.pl" in source
+    assert "filter_gfs_0p25b.pl" in source
+    assert "filter_gfs_sflux.pl" in source
+    assert "regularGridSlice" in domain
+    assert "WEATHER_REGION_LEFT_LON" in domain
+    assert "GfsController" not in source
+    assert "weather_code" not in source
     assert "WeatherForecastServer" not in curl
 
 

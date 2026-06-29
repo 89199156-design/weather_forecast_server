@@ -44,6 +44,10 @@ GFS_MAX_FORECAST_HOUR="${WEATHER_GFS_MAX_FORECAST_HOUR:-120}"
 GFS_CONCURRENT="${WEATHER_GFS_DOWNLOAD_CONCURRENT:-4}"
 CAMS_CONCURRENT="${WEATHER_CAMS_DOWNLOAD_CONCURRENT:-1}"
 GFS_DOWNLOAD_MODE="${WEATHER_GFS_DOWNLOAD_MODE:-raw}"
+GFS_FILTER_DOWNLOAD="${WEATHER_GFS_FILTER_DOWNLOAD:-false}"
+ALLOW_GLOBAL_RAW_DOWNLOAD="${WEATHER_ALLOW_GLOBAL_RAW_DOWNLOAD:-false}"
+CAMS_AREA_DOWNLOAD="${WEATHER_CAMS_AREA_DOWNLOAD:-false}"
+CAMS_ADS_KEY="${WEATHER_CAMS_ADS_KEY:-${WEATHER_CAMS_CDS_KEY:-}}"
 OPENMETEO_SYNC_BASE_URL="${WEATHER_OPENMETEO_SYNC_BASE_URL:-}"
 OPENMETEO_SYNC_PAST_DAYS="${WEATHER_OPENMETEO_SYNC_PAST_DAYS:-2}"
 OPENMETEO_SYNC_CONCURRENT="${WEATHER_OPENMETEO_SYNC_CONCURRENT:-4}"
@@ -289,6 +293,12 @@ case "$GFS_DOWNLOAD_MODE" in
     fi
     ;;
   raw)
+    if ! is_truthy "$GFS_FILTER_DOWNLOAD" && ! is_truthy "$ALLOW_GLOBAL_RAW_DOWNLOAD"; then
+      printf '%s\n' \
+        "Refusing global Open-Meteo raw GFS download. Enable WEATHER_GFS_FILTER_DOWNLOAD=true for China-region GFS, or set WEATHER_ALLOW_GLOBAL_RAW_DOWNLOAD=true only for an explicitly approved diagnostic run." >&2
+      exit 2
+    fi
+
     if is_truthy "$SKIP_GFS013_DOWNLOAD"; then
       printf '%s\n' "Skipping GFS013 download: WEATHER_SKIP_GFS013_DOWNLOAD is enabled."
     else
@@ -328,6 +338,12 @@ esac
 
 if is_truthy "$SKIP_CAMS_DOWNLOAD"; then
   printf '%s\n' "Skipping CAMS global download: WEATHER_SKIP_CAMS_DOWNLOAD is enabled."
+elif is_truthy "$CAMS_AREA_DOWNLOAD" && [[ -n "$CAMS_ADS_KEY" ]]; then
+  run_openmeteo download-cams cams_global \
+    --cdskey "$CAMS_ADS_KEY" \
+    --concurrent "$CAMS_CONCURRENT"
+elif is_truthy "$CAMS_AREA_DOWNLOAD"; then
+  printf '%s\n' "Skipping CAMS global area download: WEATHER_CAMS_ADS_KEY/WEATHER_CAMS_CDS_KEY is not set."
 elif [[ -n "${WEATHER_CAMS_FTP_USER:-}" && -n "${WEATHER_CAMS_FTP_PASSWORD:-}" ]]; then
   run_openmeteo download-cams cams_global \
     --ftpuser "$WEATHER_CAMS_FTP_USER" \

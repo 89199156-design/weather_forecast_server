@@ -1,6 +1,77 @@
 import Foundation
 import OmFileFormat
 
+enum WeatherForecastServerSourceConfig {
+    static func string(_ environmentKey: String, fallback: String) -> String {
+        guard let raw = ProcessInfo.processInfo.environment[environmentKey]?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else {
+            return fallback
+        }
+        return raw
+    }
+
+    static func bool(_ environmentKey: String, fallback: Bool = false) -> Bool {
+        guard let raw = ProcessInfo.processInfo.environment[environmentKey]?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(), !raw.isEmpty else {
+            return fallback
+        }
+        return ["1", "true", "yes", "on"].contains(raw)
+    }
+
+    static func double(_ environmentKey: String, fallback: Double) -> Double {
+        guard let raw = ProcessInfo.processInfo.environment[environmentKey]?.trimmingCharacters(in: .whitespacesAndNewlines),
+              let value = Double(raw) else {
+            return fallback
+        }
+        return value
+    }
+
+    static var gfsFilterDownloadEnabled: Bool {
+        bool("WEATHER_GFS_FILTER_DOWNLOAD")
+    }
+
+    static var camsAreaDownloadEnabled: Bool {
+        bool("WEATHER_CAMS_AREA_DOWNLOAD")
+    }
+
+    static var region: (leftLon: Double, rightLon: Double, bottomLat: Double, topLat: Double) {
+        (
+            leftLon: double("WEATHER_REGION_LEFT_LON", fallback: 70.0),
+            rightLon: double("WEATHER_REGION_RIGHT_LON", fallback: 140.0),
+            bottomLat: double("WEATHER_REGION_BOTTOM_LAT", fallback: 0.0),
+            topLat: double("WEATHER_REGION_TOP_LAT", fallback: 58.0)
+        )
+    }
+
+    static var regionAreaNorthWestSouthEast: [Double] {
+        let region = region
+        return [region.topLat, region.leftLon, region.bottomLat, region.rightLon]
+    }
+
+    static func regularGridSlice(
+        fullNx: Int,
+        fullNy: Int,
+        latMin: Double,
+        lonMin: Double,
+        dx: Double,
+        dy: Double,
+        region: (leftLon: Double, rightLon: Double, bottomLat: Double, topLat: Double)
+    ) -> (nx: Int, ny: Int, latMin: Double, lonMin: Double) {
+        let epsilon = 1e-9
+        let x0 = max(0, Int(ceil((region.leftLon - lonMin) / dx - epsilon)))
+        let x1 = min(fullNx - 1, Int(floor((region.rightLon - lonMin) / dx + epsilon)))
+        let y0 = max(0, Int(ceil((region.bottomLat - latMin) / dy - epsilon)))
+        let y1 = min(fullNy - 1, Int(floor((region.topLat - latMin) / dy + epsilon)))
+        guard x0 <= x1, y0 <= y1 else {
+            fatalError("Configured WEATHER_REGION does not overlap source grid")
+        }
+        return (
+            nx: x1 - x0 + 1,
+            ny: y1 - y0 + 1,
+            latMin: latMin + Double(y0) * dy,
+            lonMin: lonMin + Double(x0) * dx
+        )
+    }
+}
+
 /**
  GFS025 inventory: https://www.nco.ncep.noaa.gov/pmb/products/gfs/gfs.t00z.pgrb2.0p25.f003.shtml
  GFS013 inventory: https://www.nco.ncep.noaa.gov/pmb/products/gfs/gfs.t00z.sfluxgrbf001.grib2.shtml
@@ -274,9 +345,36 @@ enum GfsDomain: String, GenericDomain, CaseIterable {
         case .gfs05_ens ,.gefs05_ensemble_mean:
             return RegularGrid(nx: 720, ny: 361, latMin: -90, lonMin: -180, dx: 0.5, dy: 0.5)
         case .gfs013:
+            if WeatherForecastServerSourceConfig.gfsFilterDownloadEnabled {
+                let dx = 360.0 / 3072.0
+                let dy = 0.11714935
+                let latMin = -dy * Double(1536 - 1) / 2
+                let slice = WeatherForecastServerSourceConfig.regularGridSlice(
+                    fullNx: 3072,
+                    fullNy: 1536,
+                    latMin: latMin,
+                    lonMin: -180,
+                    dx: dx,
+                    dy: dy,
+                    region: WeatherForecastServerSourceConfig.region
+                )
+                return RegularGrid(nx: slice.nx, ny: slice.ny, latMin: Float(slice.latMin), lonMin: Float(slice.lonMin), dx: Float(dx), dy: Float(dy))
+            }
             // Coordinates confirmed with eccodes coordinate output
             return RegularGrid(nx: 3072, ny: 1536, latMin: -0.11714935 * (1536 - 1) / 2, lonMin: -180, dx: 360 / 3072, dy: 0.11714935)
         case .gfs025_ens, .gfs025, .gfswave025, .gfswave025_ens, .gefs025_ensemble_mean, .gefswave025_ensemble_mean:
+            if self == .gfs025, WeatherForecastServerSourceConfig.gfsFilterDownloadEnabled {
+                let slice = WeatherForecastServerSourceConfig.regularGridSlice(
+                    fullNx: 1440,
+                    fullNy: 721,
+                    latMin: -90,
+                    lonMin: -180,
+                    dx: 0.25,
+                    dy: 0.25,
+                    region: WeatherForecastServerSourceConfig.region
+                )
+                return RegularGrid(nx: slice.nx, ny: slice.ny, latMin: Float(slice.latMin), lonMin: Float(slice.lonMin), dx: 0.25, dy: 0.25)
+            }
             return RegularGrid(nx: 1440, ny: 721, latMin: -90, lonMin: -180, dx: 0.25, dy: 0.25)
         case .nam_conus:
             /// labert conformal grid https://www.emc.ncep.noaa.gov/mmb/namgrids/hrrrspecs.html
