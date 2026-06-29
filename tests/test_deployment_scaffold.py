@@ -192,6 +192,7 @@ def test_runtime_data_download_defaults_to_raw_local_om_generation():
 
     assert "WEATHER_GFS_DOWNLOAD_MODE=raw" in singapore_env
     assert "WEATHER_GFS_FILTER_DOWNLOAD=true" in singapore_env
+    assert "WEATHER_GFS_FILTER_INDEX_BASE_URL=https://noaa-gfs-bdp-pds.s3.amazonaws.com" in singapore_env
     assert "WEATHER_CAMS_AREA_DOWNLOAD=true" in singapore_env
     assert "WEATHER_CAMS_ADS_KEY=" in singapore_env
     assert "WEATHER_ALLOW_GLOBAL_RAW_DOWNLOAD" in script

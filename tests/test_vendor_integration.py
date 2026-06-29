@@ -40,6 +40,8 @@ def test_vendored_openmeteo_only_patches_download_transport_and_region_grid():
     assert "WEATHER_GFS_FILTER_DOWNLOAD" in domain
     assert "GfsFilterDownload" in download
     assert "downloadFilteredIndexedGrib" in download
+    assert "WEATHER_GFS_FILTER_INDEX_BASE_URL" in download
+    assert "filteredIndexUrls" in download
     assert "regularGridSlice" in domain
     assert "WEATHER_CAMS_AREA_DOWNLOAD" in domain
     assert "downloadCamsGlobalArea" in cams_download

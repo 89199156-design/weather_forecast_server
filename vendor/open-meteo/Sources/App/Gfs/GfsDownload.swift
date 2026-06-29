@@ -536,6 +536,20 @@ private enum GfsFilterDownload {
         }
     }
 
+    static func filteredIndexUrls(sourceUrls: [String]) -> [String] {
+        let baseUrl = WeatherForecastServerSourceConfig.string(
+            "WEATHER_GFS_FILTER_INDEX_BASE_URL",
+            fallback: "https://noaa-gfs-bdp-pds.s3.amazonaws.com"
+        ).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+
+        return sourceUrls.map { sourceUrl in
+            guard let suffix = gfsPathSuffix(from: sourceUrl) else {
+                return "\(sourceUrl).idx"
+            }
+            return "\(baseUrl)/\(suffix).idx"
+        }
+    }
+
     private static func filterBase(domain: GfsDomain, file: String) -> String? {
         switch domain {
         case .gfs025:
@@ -557,6 +571,17 @@ private enum GfsFilterDownload {
         default:
             return nil
         }
+    }
+
+    private static func gfsPathSuffix(from sourceUrl: String) -> String? {
+        guard let url = URL(string: sourceUrl) else {
+            return nil
+        }
+        let parts = url.path.split(separator: "/").map(String.init)
+        guard let gfsIndex = parts.firstIndex(where: { $0.hasPrefix("gfs.") }) else {
+            return nil
+        }
+        return parts[gfsIndex...].joined(separator: "/")
     }
 
     private static func fileAndDir(from sourceUrl: String) -> (file: String, dir: String)? {
@@ -628,7 +653,7 @@ private extension Curl {
         guard indexUrl.count == filteredUrl.count else {
             fatalError("filtered URL count does not match index URL count")
         }
-        let inventories = try await downloadFilteredIndexAndDecode(indexUrl: indexUrl.map { "\($0).idx" }, variables: variables, errorOnMissing: errorOnMissing)
+        let inventories = try await downloadFilteredIndexAndDecode(indexUrl: GfsFilterDownload.filteredIndexUrls(sourceUrls: indexUrl), variables: variables, errorOnMissing: errorOnMissing)
         guard !inventories.isEmpty else {
             return []
         }
