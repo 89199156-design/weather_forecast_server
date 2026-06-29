@@ -162,6 +162,18 @@ def test_singapore_config_uses_bounded_pressure_level_product_contract():
     assert "specific_humidity" not in config
 
 
+def test_singapore_config_enables_temporary_openmeteo_http_cache():
+    config = (ROOT / "config" / "singapore.example.env").read_text(encoding="utf-8")
+    script = (ROOT / "scripts" / "download_openmeteo_runtime_data.sh").read_text(encoding="utf-8")
+
+    assert "WEATHER_OPENMETEO_HTTP_CACHE_ENABLED=true" in config
+    assert "WEATHER_OPENMETEO_HTTP_CACHE_DIR=/app/data/http_cache" in config
+    assert "WEATHER_OPENMETEO_HTTP_CACHE_CLEANUP=true" in config
+    assert "HTTP_CACHE=" in script
+    assert "host_http_cache_dir" in script
+    assert 'rm -rf "$CACHE_DIR_HOST"' in script
+
+
 def test_runtime_data_download_can_pin_domain_runs_without_engine_fork():
     script = (ROOT / "scripts" / "download_openmeteo_runtime_data.sh").read_text(encoding="utf-8")
 

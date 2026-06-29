@@ -9,7 +9,7 @@ declare -A WEATHER_ENV_OVERRIDES=()
 capture_weather_env_overrides() {
   local name
   while IFS='=' read -r name _; do
-    if [[ "$name" == WEATHER_* || "$name" == "REMOTE_DATA_DIRECTORY" || "$name" == "REMOTE_DATA_DIRECTORY_MINIMUM_AGE" || "$name" == "CACHE_FILE" || "$name" == "CACHE_SIZE" || "$name" == "BLOCK_SIZE" || "$name" == "CACHE_META_FILE" || "$name" == "CACHE_META_SIZE" ]]; then
+    if [[ "$name" == WEATHER_* || "$name" == "HTTP_CACHE" || "$name" == "REMOTE_DATA_DIRECTORY" || "$name" == "REMOTE_DATA_DIRECTORY_MINIMUM_AGE" || "$name" == "CACHE_FILE" || "$name" == "CACHE_SIZE" || "$name" == "BLOCK_SIZE" || "$name" == "CACHE_META_FILE" || "$name" == "CACHE_META_SIZE" ]]; then
       WEATHER_ENV_OVERRIDES["$name"]="${!name}"
     fi
   done < <(env)
@@ -69,6 +69,9 @@ IMAGE_TAG="${WEATHER_OPENMETEO_TAG:-$(default_image_tag)}"
 DATA_DIR="${WEATHER_OPENMETEO_DATA_DIR:-$APP_DIR/data/openmeteo}"
 OPENMETEO_UID="${WEATHER_OPENMETEO_UID:-999}"
 OPENMETEO_GID="${WEATHER_OPENMETEO_GID:-999}"
+OPENMETEO_HTTP_CACHE_ENABLED="${WEATHER_OPENMETEO_HTTP_CACHE_ENABLED:-true}"
+OPENMETEO_HTTP_CACHE_DIR="${WEATHER_OPENMETEO_HTTP_CACHE_DIR:-/app/data/http_cache}"
+OPENMETEO_HTTP_CACHE_CLEANUP="${WEATHER_OPENMETEO_HTTP_CACHE_CLEANUP:-true}"
 GFS_MAX_FORECAST_HOUR="${WEATHER_GFS_MAX_FORECAST_HOUR:-120}"
 GFS_CONCURRENT="${WEATHER_GFS_DOWNLOAD_CONCURRENT:-4}"
 CAMS_CONCURRENT="${WEATHER_CAMS_DOWNLOAD_CONCURRENT:-1}"
@@ -101,6 +104,12 @@ DEM_PRESEED_CONCURRENT="${WEATHER_DEM_PRESEED_CONCURRENT:-4}"
 cd "$APP_DIR"
 mkdir -p "$DATA_DIR"
 
+openmeteo_http_cache_enabled="${OPENMETEO_HTTP_CACHE_ENABLED,,}"
+if [[ "$openmeteo_http_cache_enabled" == "1" || "$openmeteo_http_cache_enabled" == "true" || "$openmeteo_http_cache_enabled" == "yes" || "$openmeteo_http_cache_enabled" == "on" ]]; then
+  HTTP_CACHE="${HTTP_CACHE:-$OPENMETEO_HTTP_CACHE_DIR}"
+  export HTTP_CACHE
+fi
+
 SANITIZED_ENV_FILE="$(mktemp)"
 
 cleanup_sanitized_env() {
@@ -109,7 +118,7 @@ cleanup_sanitized_env() {
 trap cleanup_sanitized_env EXIT
 
 env | sort | awk -F= '
-  ($1 ~ /^WEATHER_/ || $1 == "REMOTE_DATA_DIRECTORY" || $1 == "REMOTE_DATA_DIRECTORY_MINIMUM_AGE" || $1 == "CACHE_FILE" || $1 == "CACHE_SIZE" || $1 == "BLOCK_SIZE" || $1 == "CACHE_META_FILE" || $1 == "CACHE_META_SIZE") && $2 != "" { print }
+  ($1 ~ /^WEATHER_/ || $1 == "HTTP_CACHE" || $1 == "REMOTE_DATA_DIRECTORY" || $1 == "REMOTE_DATA_DIRECTORY_MINIMUM_AGE" || $1 == "CACHE_FILE" || $1 == "CACHE_SIZE" || $1 == "BLOCK_SIZE" || $1 == "CACHE_META_FILE" || $1 == "CACHE_META_SIZE") && $2 != "" { print }
 ' > "$SANITIZED_ENV_FILE"
 
 is_truthy() {
@@ -465,4 +474,24 @@ elif [[ -n "${WEATHER_CAMS_FTP_USER:-}" && -n "${WEATHER_CAMS_FTP_PASSWORD:-}" ]
     --concurrent "$CAMS_CONCURRENT"
 else
   printf '%s\n' "Skipping CAMS global download: WEATHER_CAMS_FTP_USER/WEATHER_CAMS_FTP_PASSWORD are not set."
+fi
+
+host_http_cache_dir() {
+  if [[ -z "${HTTP_CACHE:-}" ]]; then
+    return
+  fi
+  if [[ "$HTTP_CACHE" == /app/data/* ]]; then
+    printf '%s\n' "$DATA_DIR/${HTTP_CACHE#/app/data/}"
+    return
+  fi
+  if [[ "$HTTP_CACHE" == "$DATA_DIR"/* ]]; then
+    printf '%s\n' "$HTTP_CACHE"
+  fi
+}
+
+if is_truthy "$OPENMETEO_HTTP_CACHE_CLEANUP"; then
+  CACHE_DIR_HOST="$(host_http_cache_dir)"
+  if [[ -n "${CACHE_DIR_HOST:-}" && "$CACHE_DIR_HOST" == "$DATA_DIR"/* ]]; then
+    rm -rf "$CACHE_DIR_HOST"
+  fi
 fi
