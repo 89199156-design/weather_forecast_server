@@ -83,6 +83,11 @@ def test_singapore_deploy_filters_empty_env_values_before_docker_run():
 def test_singapore_deploy_requires_dem_source_for_openmeteo_parity():
     script = (ROOT / "scripts" / "deploy_singapore_candidate.sh").read_text(encoding="utf-8")
 
+    assert "dem_region_lat_bounds" in script
+    assert "WEATHER_REGION_BOTTOM_LAT" in script
+    assert "WEATHER_REGION_TOP_LAT" in script
+    assert 'lat_${lat}.om' in script
+    assert "compgen -G" not in script
     assert "require_dem_source" in script
     assert "REMOTE_DATA_DIRECTORY" in script
     assert "copernicus_dem90/static/lat_*.om" in script
@@ -214,6 +219,14 @@ def test_runtime_data_download_filters_empty_env_values_before_docker_run():
 def test_runtime_data_download_requires_dem_source_for_openmeteo_parity():
     script = (ROOT / "scripts" / "download_openmeteo_runtime_data.sh").read_text(encoding="utf-8")
 
+    assert "preseed_dem_region_static_files" in script
+    assert "WEATHER_DEM_PRESEED_ENABLED" in script
+    assert "WEATHER_DEM_PRESEED_BASE_URL" in script
+    assert "WEATHER_DEM_PRESEED_CONCURRENT" in script
+    assert "WEATHER_REGION_BOTTOM_LAT" in script
+    assert "WEATHER_REGION_TOP_LAT" in script
+    assert 'lat_${lat}.om' in script
+    assert "compgen -G" not in script
     assert "require_dem_source" in script
     assert "REMOTE_DATA_DIRECTORY" in script
     assert "copernicus_dem90/static/lat_*.om" in script

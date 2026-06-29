@@ -29,8 +29,45 @@ is_truthy() {
   [[ "$value" == "1" || "$value" == "true" || "$value" == "yes" || "$value" == "on" ]]
 }
 
+floor_float() {
+  awk -v value="$1" 'BEGIN {
+    parsed = value + 0
+    integer = int(parsed)
+    if (parsed < 0 && parsed != integer) {
+      integer -= 1
+    }
+    printf "%d\n", integer
+  }'
+}
+
+dem_region_lat_bounds() {
+  local lat_start
+  local lat_end
+  lat_start="$(floor_float "${WEATHER_REGION_BOTTOM_LAT:-0}")"
+  lat_end="$(floor_float "${WEATHER_REGION_TOP_LAT:-58}")"
+  if [[ "$lat_start" -lt -90 ]]; then
+    lat_start=-90
+  fi
+  if [[ "$lat_end" -gt 89 ]]; then
+    lat_end=89
+  fi
+  if [[ "$lat_start" -gt "$lat_end" ]]; then
+    printf '%s\n' "Configured DEM region latitude range is empty." >&2
+    exit 2
+  fi
+  printf '%s %s\n' "$lat_start" "$lat_end"
+}
+
 has_local_dem_static_files() {
-  compgen -G "$DATA_DIR/copernicus_dem90/static/lat_*.om" >/dev/null
+  local lat_start
+  local lat_end
+  local lat
+  read -r lat_start lat_end < <(dem_region_lat_bounds)
+  for lat in $(seq "$lat_start" "$lat_end"); do
+    if [[ ! -s "$DATA_DIR/copernicus_dem90/static/lat_${lat}.om" ]]; then
+      return 1
+    fi
+  done
 }
 
 require_dem_source() {

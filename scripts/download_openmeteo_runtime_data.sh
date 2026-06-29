@@ -94,6 +94,9 @@ SKIP_GFS025_SURFACE_DOWNLOAD="${WEATHER_SKIP_GFS025_SURFACE_DOWNLOAD:-false}"
 SKIP_GFS025_UPPER_LEVEL_DOWNLOAD="${WEATHER_SKIP_GFS025_UPPER_LEVEL_DOWNLOAD:-false}"
 SKIP_CAMS_DOWNLOAD="${WEATHER_SKIP_CAMS_DOWNLOAD:-false}"
 REQUIRE_DEM_SOURCE="${WEATHER_REQUIRE_DEM_SOURCE:-true}"
+DEM_PRESEED_ENABLED="${WEATHER_DEM_PRESEED_ENABLED:-false}"
+DEM_PRESEED_BASE_URL="${WEATHER_DEM_PRESEED_BASE_URL:-https://openmeteo.s3.amazonaws.com/data/copernicus_dem90/static}"
+DEM_PRESEED_CONCURRENT="${WEATHER_DEM_PRESEED_CONCURRENT:-4}"
 
 cd "$APP_DIR"
 mkdir -p "$DATA_DIR"
@@ -146,11 +149,94 @@ append_sync_server_arg() {
   fi
 }
 
+floor_float() {
+  awk -v value="$1" 'BEGIN {
+    parsed = value + 0
+    integer = int(parsed)
+    if (parsed < 0 && parsed != integer) {
+      integer -= 1
+    }
+    printf "%d\n", integer
+  }'
+}
+
+dem_region_lat_bounds() {
+  local lat_start
+  local lat_end
+  lat_start="$(floor_float "${WEATHER_REGION_BOTTOM_LAT:-0}")"
+  lat_end="$(floor_float "${WEATHER_REGION_TOP_LAT:-58}")"
+  if [[ "$lat_start" -lt -90 ]]; then
+    lat_start=-90
+  fi
+  if [[ "$lat_end" -gt 89 ]]; then
+    lat_end=89
+  fi
+  if [[ "$lat_start" -gt "$lat_end" ]]; then
+    printf '%s\n' "Configured DEM region latitude range is empty." >&2
+    exit 2
+  fi
+  printf '%s %s\n' "$lat_start" "$lat_end"
+}
+
 has_local_dem_static_files() {
-  compgen -G "$DATA_DIR/copernicus_dem90/static/lat_*.om" >/dev/null
+  local lat_start
+  local lat_end
+  local lat
+  read -r lat_start lat_end < <(dem_region_lat_bounds)
+  for lat in $(seq "$lat_start" "$lat_end"); do
+    if [[ ! -s "$DATA_DIR/copernicus_dem90/static/lat_${lat}.om" ]]; then
+      return 1
+    fi
+  done
+}
+
+preseed_dem_region_static_files() {
+  if ! is_truthy "$DEM_PRESEED_ENABLED"; then
+    return
+  fi
+  if has_local_dem_static_files; then
+    return
+  fi
+
+  if ! [[ "$DEM_PRESEED_CONCURRENT" =~ ^[0-9]+$ ]] || [[ "$DEM_PRESEED_CONCURRENT" -lt 1 ]]; then
+    printf '%s\n' "WEATHER_DEM_PRESEED_CONCURRENT must be a positive integer." >&2
+    exit 2
+  fi
+
+  local lat_start
+  local lat_end
+  read -r lat_start lat_end < <(dem_region_lat_bounds)
+
+  local dem_dir="$DATA_DIR/copernicus_dem90/static"
+  mkdir -p "$dem_dir"
+
+  local active=0
+  local lat
+  for lat in $(seq "$lat_start" "$lat_end"); do
+    (
+      local target="$dem_dir/lat_${lat}.om"
+      local tmp="$target.tmp.$$"
+      if [[ -s "$target" ]]; then
+        exit 0
+      fi
+      printf '%s\n' "Downloading DEM90 static latitude $lat..."
+      curl -fL --retry 5 --retry-delay 2 --retry-all-errors \
+        -o "$tmp" \
+        "${DEM_PRESEED_BASE_URL%/}/lat_${lat}.om"
+      mv "$tmp" "$target"
+    ) &
+    active=$((active + 1))
+    if [[ "$active" -ge "$DEM_PRESEED_CONCURRENT" ]]; then
+      wait -n
+      active=$((active - 1))
+    fi
+  done
+  wait
 }
 
 require_dem_source() {
+  preseed_dem_region_static_files
+
   if ! is_truthy "$REQUIRE_DEM_SOURCE"; then
     return
   fi
