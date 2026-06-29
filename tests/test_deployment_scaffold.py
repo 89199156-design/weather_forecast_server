@@ -145,6 +145,18 @@ def test_runtime_data_download_chunks_gfs025_upper_levels_and_can_resume():
     assert '--concurrent "$GFS_CONCURRENT"' not in upper_function
 
 
+def test_singapore_config_uses_bounded_pressure_level_product_contract():
+    config = (ROOT / "config" / "singapore.example.env").read_text(encoding="utf-8")
+
+    assert "WEATHER_GFS_UPPER_LEVELS=1000,975,950,925,900,850,800,750,700,650,600,550,500,400,300,200" in config
+    assert (
+        "WEATHER_GFS_UPPER_LEVEL_VARIABLES="
+        "temperature,wind_u_component,wind_v_component,geopotential_height,cloud_cover,relative_humidity"
+    ) in config
+    assert "vertical_velocity" not in config
+    assert "specific_humidity" not in config
+
+
 def test_runtime_data_download_can_pin_domain_runs_without_engine_fork():
     script = (ROOT / "scripts" / "download_openmeteo_runtime_data.sh").read_text(encoding="utf-8")
 
