@@ -53,15 +53,16 @@ def test_vendored_openmeteo_uses_upstream_remote_data_directory_contract():
     assert 'remoteDirectory.replacingOccurrences(of: "data", with: "data_run")' in om_file_type
 
 
-def test_openmeteo_processed_database_sync_is_the_parity_download_mode():
+def test_openmeteo_raw_download_is_the_default_runtime_data_mode():
     script = (ROOT / "scripts" / "download_openmeteo_runtime_data.sh").read_text(encoding="utf-8")
     singapore_env = (ROOT / "config" / "singapore.example.env").read_text(encoding="utf-8")
 
-    assert "WEATHER_GFS_DOWNLOAD_MODE=sync" in singapore_env
+    assert "WEATHER_GFS_DOWNLOAD_MODE=raw" in singapore_env
     assert "WEATHER_OPENMETEO_SYNC_BASE_URL" in singapore_env
     assert "REMOTE_DATA_DIRECTORY=" in singapore_env
     assert "CACHE_SIZE=10GB" in singapore_env
-    assert "Open-Meteo's processed `.om`" in singapore_env
+    assert "Production uses `raw`" in singapore_env
+    assert "local `.om` database" in singapore_env
     assert "sync_openmeteo_database ncep_gfs013" in script
     assert "sync_openmeteo_database ncep_gfs025" in script
-    assert "NOAA raw/filter conversion is not the parity baseline" in script
+    assert "Open-Meteo downloader convert original source files into local `.om` chunks" in script

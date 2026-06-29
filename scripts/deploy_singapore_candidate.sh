@@ -57,8 +57,12 @@ if [[ -f "$ENV_FILE" ]]; then
 fi
 restore_weather_env_overrides
 
+default_image_tag() {
+  git -C "$APP_DIR" rev-parse --short HEAD 2>/dev/null || printf '%s' latest
+}
+
 IMAGE_NAME="${WEATHER_OPENMETEO_IMAGE:-weather-forecast-openmeteo}"
-IMAGE_TAG="${WEATHER_OPENMETEO_TAG:-latest}"
+IMAGE_TAG="${WEATHER_OPENMETEO_TAG:-$(default_image_tag)}"
 CONTAINER_NAME="${WEATHER_OPENMETEO_CONTAINER:-weather-forecast-openmeteo-candidate}"
 PORT="${WEATHER_OPENMETEO_PORT:-18080}"
 DATA_DIR="${WEATHER_OPENMETEO_DATA_DIR:-$APP_DIR/data/openmeteo}"

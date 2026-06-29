@@ -31,9 +31,15 @@ if [[ -f "$ENV_FILE" ]]; then
 fi
 restore_weather_env_overrides
 
+default_image_tag() {
+  git -C "$APP_DIR" rev-parse --short HEAD 2>/dev/null || printf '%s' latest
+}
+
 IMAGE_NAME="${WEATHER_OPENMETEO_IMAGE:-weather-forecast-openmeteo}"
-IMAGE_TAG="${WEATHER_OPENMETEO_TAG:-latest}"
+IMAGE_TAG="${WEATHER_OPENMETEO_TAG:-$(default_image_tag)}"
 DATA_DIR="${WEATHER_OPENMETEO_DATA_DIR:-$APP_DIR/data/openmeteo}"
+OPENMETEO_UID="${WEATHER_OPENMETEO_UID:-999}"
+OPENMETEO_GID="${WEATHER_OPENMETEO_GID:-999}"
 GFS_MAX_FORECAST_HOUR="${WEATHER_GFS_MAX_FORECAST_HOUR:-120}"
 GFS_CONCURRENT="${WEATHER_GFS_DOWNLOAD_CONCURRENT:-4}"
 CAMS_CONCURRENT="${WEATHER_CAMS_DOWNLOAD_CONCURRENT:-1}"
@@ -75,6 +81,14 @@ is_truthy() {
   value="${value,,}"
   [[ "$value" == "1" || "$value" == "true" || "$value" == "yes" || "$value" == "on" ]]
 }
+
+if [[ "$(id -u)" -eq 0 ]]; then
+  if is_truthy "${WEATHER_OPENMETEO_CHOWN_RECURSIVE:-false}"; then
+    chown -R "$OPENMETEO_UID:$OPENMETEO_GID" "$DATA_DIR"
+  else
+    chown "$OPENMETEO_UID:$OPENMETEO_GID" "$DATA_DIR"
+  fi
+fi
 
 append_run_arg() {
   local run_value="${1:-}"
@@ -247,12 +261,11 @@ sync_openmeteo_database() {
     --concurrent "$OPENMETEO_SYNC_CONCURRENT"
 }
 
-# gfs_global in Open-Meteo mixes gfs013 with gfs025. For strict parity with the
-# public Open-Meteo API, use WEATHER_GFS_DOWNLOAD_MODE=sync. Leave
-# WEATHER_OPENMETEO_SYNC_BASE_URL empty for Open-Meteo's upstream public data
-# source, or set it only for datasets that require our authorized mirror. The
-# raw mode is retained for source-download debugging and regional approximations,
-# but NOAA raw/filter conversion is not the parity baseline.
+# gfs_global in Open-Meteo mixes gfs013 with gfs025. The normal Singapore
+# production path is WEATHER_GFS_DOWNLOAD_MODE=raw, which lets the unmodified
+# Open-Meteo downloader convert original source files into local `.om` chunks.
+# Keep sync mode as a manual reference/debug path for explicitly approved
+# processed `.om` mirrors.
 require_dem_source
 
 case "$GFS_DOWNLOAD_MODE" in

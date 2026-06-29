@@ -153,16 +153,17 @@ def test_runtime_data_download_can_pin_domain_runs_without_engine_fork():
     assert "--run" in script
 
 
-def test_runtime_data_download_sync_mode_uses_processed_openmeteo_database_for_parity():
+def test_runtime_data_download_defaults_to_raw_local_om_generation():
     script = (ROOT / "scripts" / "download_openmeteo_runtime_data.sh").read_text(encoding="utf-8")
     singapore_env = (ROOT / "config" / "singapore.example.env").read_text(encoding="utf-8")
 
-    assert "WEATHER_GFS_DOWNLOAD_MODE=sync" in singapore_env
+    assert "WEATHER_GFS_DOWNLOAD_MODE=raw" in singapore_env
     assert "WEATHER_GFS_FILTER_DOWNLOAD" not in singapore_env
     assert "WEATHER_OPENMETEO_SYNC_BASE_URL" in singapore_env
     assert "REMOTE_DATA_DIRECTORY=" in singapore_env
     assert "CACHE_SIZE=10GB" in singapore_env
-    assert "NOAA raw/filter conversion does not exactly match" in singapore_env
+    assert "Production uses `raw`" in singapore_env
+    assert "local `.om` database" in singapore_env
     assert "sync)" in script
     assert "raw)" in script
     assert 'run_openmeteo sync "$models" "$variables"' in script
@@ -172,6 +173,7 @@ def test_runtime_data_download_sync_mode_uses_processed_openmeteo_database_for_p
     assert "GFS013_SYNC_VARIABLES" in script
     assert "GFS025_SURFACE_SYNC_VARIABLES" in script
     assert "gfs025_pressure_sync_variables" in script
+    assert "Open-Meteo downloader convert original source files into local `.om` chunks" in script
 
 
 def test_runtime_data_download_filters_empty_env_values_before_docker_run():

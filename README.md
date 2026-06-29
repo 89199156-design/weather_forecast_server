@@ -8,7 +8,7 @@ maintaining a Python reimplementation of Open-Meteo weather logic. Our local
 code is limited to:
 
 - China and surrounding-region domain selection.
-- External mirror/sync configuration for lightweight regional data serving.
+- Source-download configuration for lightweight regional data serving.
 - Point-package and layer-product export formats used by our clients.
 - Deployment, scheduling, and validation tooling.
 
@@ -33,7 +33,7 @@ excluded because it has been split to another server.
 The implementation order is:
 
 1. Vendor and document the Open-Meteo engine baseline.
-2. Configure external Open-Meteo data mirrors without modifying the engine.
+2. Configure Open-Meteo raw source downloads without modifying the engine.
 3. Export point API packages from Open-Meteo-derived data.
 4. Export layers from the same Open-Meteo-derived data.
 5. Deploy to Singapore and remove old satellite code/tasks there.
@@ -50,16 +50,17 @@ The reusable API-backed layer encoder remains available as
 `scripts/build_openmeteo_layers.py`, and the production GFS path uses
 `scripts/render_gfs_layers_from_point_package.py` for point/layer consistency.
 
-Before serving or exporting products, download the Open-Meteo runtime data. The
-GFS point API uses Open-Meteo's `gfs_global` mixer, so both `gfs013` and `gfs025`
-must be present locally. `gfs025` supplies variables missing from GFS013 sflux
-files, including visibility and several weather-code dependencies.
+Before serving or exporting products, generate the local Open-Meteo `.om`
+runtime data from source files. The GFS point API uses Open-Meteo's `gfs_global`
+mixer, so both `gfs013` and `gfs025` must be present locally. `gfs025` supplies
+variables missing from GFS013 sflux files, including visibility and several
+weather-code dependencies.
 
 Point-output parity also requires Open-Meteo's Copernicus DEM90 static data for
-land elevation correction. The upstream engine reads it through the standard
-`REMOTE_DATA_DIRECTORY`, or from local preseeded files. Keep upstream
-Open-Meteo public, commercial-safe, no-key data URLs unchanged. Use our own
-authorized source only for datasets that require credentials or a license key.
+land elevation correction. For production, keep the runtime data local and
+preseed `copernicus_dem90/static/lat_*.om` files; use `REMOTE_DATA_DIRECTORY`
+only for explicitly approved reference/debug runs because it allows HTTP range
+reads from processed `.om` mirrors.
 
 ```bash
 bash scripts/download_openmeteo_runtime_data.sh
