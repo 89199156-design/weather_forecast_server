@@ -103,7 +103,9 @@ def test_runtime_data_download_covers_openmeteo_gfs_mixer_and_cams_global():
     assert "--upper-level" not in script
     assert "download-cams cams_global" in script
     assert "WEATHER_CAMS_AREA_DOWNLOAD" in script
-    assert "--cdskey \"$CAMS_ADS_KEY\"" in script
+    assert "read_cdsapi_key" in script
+    assert "/home/ubuntu/.cdsapirc" in script
+    assert "--cdskey \"$CAMS_ADS_KEY\"" not in script
     assert "WEATHER_CAMS_FTP_USER" in script
     assert "WEATHER_CAMS_FTP_PASSWORD" in script
     assert "set -a" in script

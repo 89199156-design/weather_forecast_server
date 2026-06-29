@@ -31,6 +31,35 @@ if [[ -f "$ENV_FILE" ]]; then
 fi
 restore_weather_env_overrides
 
+read_cdsapi_key() {
+  local candidate
+  for candidate in \
+    "${WEATHER_CAMS_CDSAPI_RC:-}" \
+    "${CDSAPI_RC:-}" \
+    "$HOME/.cdsapirc" \
+    "/home/ubuntu/.cdsapirc" \
+    "/root/.cdsapirc"; do
+    if [[ -z "$candidate" || ! -r "$candidate" ]]; then
+      continue
+    fi
+    awk '
+      $0 ~ /^[[:space:]]*key[[:space:]]*:/ {
+        sub(/^[[:space:]]*key[[:space:]]*:/, "", $0)
+        sub(/^[[:space:]]+/, "", $0)
+        sub(/[[:space:]]+$/, "", $0)
+        print $0
+        exit
+      }
+    ' "$candidate"
+    return
+  done
+}
+
+if [[ -z "${WEATHER_CAMS_ADS_KEY:-}" && -z "${WEATHER_CAMS_CDS_KEY:-}" ]]; then
+  WEATHER_CAMS_ADS_KEY="$(read_cdsapi_key)"
+  export WEATHER_CAMS_ADS_KEY
+fi
+
 default_image_tag() {
   git -C "$APP_DIR" rev-parse --short HEAD 2>/dev/null || printf '%s' latest
 }
@@ -340,7 +369,6 @@ if is_truthy "$SKIP_CAMS_DOWNLOAD"; then
   printf '%s\n' "Skipping CAMS global download: WEATHER_SKIP_CAMS_DOWNLOAD is enabled."
 elif is_truthy "$CAMS_AREA_DOWNLOAD" && [[ -n "$CAMS_ADS_KEY" ]]; then
   run_openmeteo download-cams cams_global \
-    --cdskey "$CAMS_ADS_KEY" \
     --concurrent "$CAMS_CONCURRENT"
 elif is_truthy "$CAMS_AREA_DOWNLOAD"; then
   printf '%s\n' "Skipping CAMS global area download: WEATHER_CAMS_ADS_KEY/WEATHER_CAMS_CDS_KEY is not set."
