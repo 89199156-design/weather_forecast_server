@@ -216,7 +216,7 @@ struct DownloadCamsCommand: AsyncCommand {
         try FileManager.default.createDirectory(atPath: domain.downloadDirectory, withIntermediateDirectories: true)
         let logger = application.logger
 
-        let apiVariables = variables.compactMap { $0.getCamsGlobalAreaApiName() }.uniqued()
+        let apiVariables = Array(variables.compactMap { $0.getCamsGlobalAreaApiName() }.uniqued())
         guard !apiVariables.isEmpty else {
             logger.warning("No CAMS global ADS variables selected")
             return []
