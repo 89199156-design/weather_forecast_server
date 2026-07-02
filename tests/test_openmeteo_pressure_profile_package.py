@@ -2,9 +2,6 @@ import importlib.util
 import sys
 from pathlib import Path
 
-import numpy as np
-
-
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "build_openmeteo_pressure_profile_package.py"
 
@@ -46,13 +43,13 @@ def test_pressure_profile_has_eight_fields_per_level():
 
     assert [field.name for field in profile.PROFILE_FIELDS] == [
         "geopotential_height_m",
-        "height_agl_m",
         "temperature_c",
         "relative_humidity_pct",
         "dew_point_c",
         "cloud_cover_pct",
         "wind_speed_ms",
         "wind_direction_deg",
+        "vertical_velocity_ms",
     ]
 
 
@@ -68,18 +65,5 @@ def test_pressure_profile_required_variables_are_openmeteo_pressure_api_names():
     assert "wind_speed_850hPa" in variables
     assert "wind_direction_850hPa" in variables
     assert "geopotential_height_850hPa" in variables
-    assert "height_agl_850hPa" not in variables
     assert "specific_humidity_850hPa" not in variables
-    assert "vertical_velocity_850hPa" not in variables
-
-
-def test_pressure_profile_height_agl_is_derived_from_elevation_only():
-    profile = load_module()
-    values = {
-        "geopotential_height_850hPa": np.asarray([[1450.0, 1525.0]], dtype=np.float32),
-    }
-    field = next(field for field in profile.PROFILE_FIELDS if field.name == "height_agl_m")
-
-    actual = profile.derive_level_values(field, values, level=850, elevations=np.asarray([500.0, 1800.0]))
-
-    np.testing.assert_allclose(actual, [[950.0, -275.0]])
+    assert "vertical_velocity_850hPa" in variables

@@ -80,6 +80,42 @@ struct CamsReader: GenericReaderDerivedSimple, GenericReaderProtocol {
             let timeAhead = time.with(start: time.range.lowerBound.add(-8 * 3600))
             let co = try await get(raw: .carbon_monoxide, time: timeAhead).data.slidingAverageDroppingFirstDt(dt: 8 * 3600 / time.dtSeconds)
             return DataAndUnit(co.map({ UnitedStatesAirQuality.indexCo(co_8h_mean: $0 / 1.15 / 1000) }), .usAirQualityIndex)
+        case .ch_aqi:
+            let pm2_5 = try await get(derived: .ch_iaqi_pm2_5, time: time).data
+            let pm10 = try await get(derived: .ch_iaqi_pm10, time: time).data
+            let no2 = try await get(derived: .ch_iaqi_no2, time: time).data
+            let o3 = try await get(derived: .ch_iaqi_o3, time: time).data
+            let so2 = try await get(derived: .ch_iaqi_so2, time: time).data
+            let co = try await get(derived: .ch_iaqi_co, time: time).data
+            let max = pm2_5.indices.map { i -> Float in
+                let particles = ChinaAirQuality.maxIgnoringNaN(pm2_5[i], pm10[i])
+                let gases = ChinaAirQuality.maxIgnoringNaN(
+                    ChinaAirQuality.maxIgnoringNaN(no2[i], o3[i]),
+                    ChinaAirQuality.maxIgnoringNaN(so2[i], co[i])
+                )
+                return ChinaAirQuality.maxIgnoringNaN(particles, gases)
+            }
+            return DataAndUnit(max, .dimensionlessInteger)
+        case .ch_iaqi_pm2_5:
+            let pm2_5 = try await get(raw: .pm2_5, time: time).data.map(ChinaAirQuality.indexPm2_5)
+            return DataAndUnit(pm2_5, .dimensionlessInteger)
+        case .ch_iaqi_pm10:
+            let pm10 = try await get(raw: .pm10, time: time).data.map(ChinaAirQuality.indexPm10)
+            return DataAndUnit(pm10, .dimensionlessInteger)
+        case .ch_iaqi_no2:
+            let no2 = try await get(raw: .nitrogen_dioxide, time: time).data.map(ChinaAirQuality.indexNo2)
+            return DataAndUnit(no2, .dimensionlessInteger)
+        case .ch_iaqi_o3:
+            let o3 = try await get(raw: .ozone, time: time).data.map(ChinaAirQuality.indexO3)
+            return DataAndUnit(o3, .dimensionlessInteger)
+        case .ch_iaqi_so2:
+            let so2 = try await get(raw: .sulphur_dioxide, time: time).data.map(ChinaAirQuality.indexSo2)
+            return DataAndUnit(so2, .dimensionlessInteger)
+        case .ch_iaqi_co:
+            let co = try await get(raw: .carbon_monoxide, time: time).data.map({
+                ChinaAirQuality.indexCo(co: $0 / 1000)
+            })
+            return DataAndUnit(co, .dimensionlessInteger)
         case .is_day:
             return DataAndUnit(Zensun.calculateIsDay(timeRange: time.time, lat: reader.modelLat, lon: reader.modelLon), .dimensionlessInteger)
         }
@@ -122,6 +158,25 @@ struct CamsReader: GenericReaderDerivedSimple, GenericReaderProtocol {
             try await prefetchData(raw: .ozone, time: time.with(start: time.range.lowerBound.add(-24 * 3600)))
         case .us_aqi_carbon_monoxide, .us_aqi_co:
             try await prefetchData(raw: .ozone, time: time.with(start: time.range.lowerBound.add(-8 * 3600)))
+        case .ch_aqi:
+            try await prefetchData(derived: .ch_iaqi_pm2_5, time: time)
+            try await prefetchData(derived: .ch_iaqi_pm10, time: time)
+            try await prefetchData(derived: .ch_iaqi_no2, time: time)
+            try await prefetchData(derived: .ch_iaqi_o3, time: time)
+            try await prefetchData(derived: .ch_iaqi_so2, time: time)
+            try await prefetchData(derived: .ch_iaqi_co, time: time)
+        case .ch_iaqi_pm2_5:
+            try await prefetchData(raw: .pm2_5, time: time)
+        case .ch_iaqi_pm10:
+            try await prefetchData(raw: .pm10, time: time)
+        case .ch_iaqi_no2:
+            try await prefetchData(raw: .nitrogen_dioxide, time: time)
+        case .ch_iaqi_o3:
+            try await prefetchData(raw: .ozone, time: time)
+        case .ch_iaqi_so2:
+            try await prefetchData(raw: .sulphur_dioxide, time: time)
+        case .ch_iaqi_co:
+            try await prefetchData(raw: .carbon_monoxide, time: time)
         case .is_day:
             break
         }
@@ -151,6 +206,14 @@ enum CamsVariableDerived: String, GenericVariableMixable {
     case us_aqi_ozone
     case us_aqi_sulphur_dioxide
     case us_aqi_carbon_monoxide
+
+    case ch_aqi
+    case ch_iaqi_pm2_5
+    case ch_iaqi_pm10
+    case ch_iaqi_so2
+    case ch_iaqi_no2
+    case ch_iaqi_o3
+    case ch_iaqi_co
 
     case is_day
 }

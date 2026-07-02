@@ -49,6 +49,117 @@ def test_default_layer_model_uses_openmeteo_gfs_global_mixer():
     assert layers.DEFAULT_LAYER_MODEL == "gfs_global"
 
 
+def test_frame_stems_use_valid_timestamp_and_batch_timestamp_without_version_suffix():
+    layers = load_module()
+
+    stems = layers.frame_stems(
+        ["2026-07-01T04:00", "2026-07-01T05:00"],
+        "2026-07-01T04:00",
+    )
+
+    assert stems == [
+        "1782878400_1782878400",
+        "1782882000_1782878400",
+    ]
+
+
+def test_frame_timestamps_are_manifest_files():
+    layers = load_module()
+
+    timestamps = layers.frame_timestamps(["2026-07-01T04:00", "2026-07-01T05:00"])
+
+    assert timestamps == [1782878400, 1782882000]
+
+
+def test_grid_manifest_is_compact_without_coordinate_arrays():
+    layers = load_module()
+    grid = layers.compute_gfs013_region_grid(
+        left_lon=70.0,
+        right_lon=140.0,
+        bottom_lat=0.0,
+        top_lat=58.0,
+    )
+
+    manifest = grid.manifest()
+
+    assert manifest["width"] == 597
+    assert manifest["height"] == 495
+    assert manifest["dx"] == 0.117188
+    assert manifest["dy"] == 0.117149
+    assert manifest["sample_bounds"] == {
+        "lon_min": 70.078125,
+        "lat_min": 0.058575,
+        "lon_max": 139.921875,
+        "lat_max": 57.930354,
+    }
+    assert manifest["display_bounds"] == {
+        "lon_min": 70.019531,
+        "lat_min": 0.0,
+        "lon_max": 139.980469,
+        "lat_max": 57.988929,
+    }
+    assert "longitude_values" not in manifest
+    assert "latitude_values" not in manifest
+
+
+def test_build_manifest_payload_is_minimal_batch_manifest():
+    layers = load_module()
+    grid = layers.compute_gfs013_region_grid(
+        left_lon=70.0,
+        right_lon=140.0,
+        bottom_lat=0.0,
+        top_lat=58.0,
+    )
+
+    manifest = layers.build_manifest_payload(
+        scope="gfs",
+        grid=grid,
+        batch=1782878400,
+        files=[1782878400, 1782882000],
+        generated_at=1782879000,
+    )
+
+    assert manifest == {
+        "generated_at": 1782879000,
+        "source": "gfs",
+        "batch": 1782878400,
+        "frame_count": 2,
+        "frame_step_seconds": 3600,
+        "file_pattern": "{timestamp}_{batch}.webp",
+        "files": [1782878400, 1782882000],
+        "grid": grid.manifest(),
+    }
+
+
+def test_layer_catalog_file_matches_server_definitions():
+    layers = load_module()
+
+    catalog_path = ROOT / "config" / "weather_layer_catalog.json"
+    assert catalog_path.exists()
+    assert layers.load_layer_catalog(catalog_path) == layers.layer_catalog_payload()
+
+
+def test_layer_catalog_records_layer_resolution_labels():
+    layers = load_module()
+
+    catalog = layers.layer_catalog_payload()
+    gfs_layers = catalog["products"]["gfs"]["layers"]
+    cams_layers = catalog["products"]["cams"]["layers"]
+
+    assert gfs_layers["t2m"]["source_resolution"] == "13km"
+    assert gfs_layers["tp"]["source_resolution"] == "13km"
+    assert gfs_layers["uv_index"]["source_resolution"] == "13km"
+    assert gfs_layers["vis"]["source_resolution"] == "28km"
+    assert gfs_layers["gust"]["source_resolution"] == "28km"
+    assert gfs_layers["cape"]["source_resolution"] == "28km"
+    assert gfs_layers["prmsl"]["source_resolution"] == "28km"
+    assert gfs_layers["sp"]["source_resolution"] == "28km(13+28)"
+    assert gfs_layers["precip_phase"]["source_resolution"] == "28km(13+28)"
+    assert gfs_layers["thunderstorm_code"]["source_resolution"] == "28km(13+28)"
+    assert "resolution" not in gfs_layers["vis"]
+    assert {layer["source_resolution"] for layer in cams_layers.values()} == {"44km"}
+
+
 def test_layer_definitions_are_api_variables_not_legacy_grib_fields():
     layers = load_module()
 
@@ -125,31 +236,30 @@ def test_cams_layer_definitions_cover_client_air_quality_layers():
         "aerosol_optical_depth",
         "dust",
     }
+    assert all("aqi" not in name for name in layer_names)
+    assert all("aqi" not in variable for variable in api_variables)
     assert layers.manifest_filename_for_scope("cams") == "cams_global_data.json"
 
 
-def test_layer_manifest_preserves_encoder_vmin_for_decoding():
+def test_layer_catalog_preserves_encoder_vmin_for_decoding():
     layers = load_module()
-    grid = layers.compute_gfs013_region_grid(
-        left_lon=70.0,
-        right_lon=140.0,
-        bottom_lat=0.0,
-        top_lat=58.0,
-    )
 
-    manifests = {layer.name: layer.manifest(grid) for layer in layers.DEFAULT_LAYER_DEFINITIONS}
+    manifests = layers.layer_catalog_payload()["products"]["gfs"]["layers"]
 
     assert manifests["cloud_total_1"]["vmin"] == 0.0
     assert manifests["t2m"]["vmin"] == -100.0
     assert manifests["d2m"]["vmin"] == -100.0
+    assert manifests["wind"]["vmin"] == -100.0
+    assert manifests["wind"]["encoding"] == "uv"
     assert manifests["prmsl"]["vmin"] == 50000.0
     assert manifests["sp"]["vmin"] == 50000.0
     assert manifests["cape"]["unit"] == "J/kg"
     assert manifests["uv_index"]["unit"] == "index"
     assert "weather_code" not in manifests
-    assert manifests["precip_phase"]["derive"] == "precip_phase_from_weather_code"
     assert manifests["precip_phase"]["range"] == [0.0, 4.0]
-    assert manifests["thunderstorm_code"]["derive"] == "thunderstorm_code_from_weather_code"
+    assert manifests["precip_phase"]["encoding"] == "categorical"
+    assert manifests["thunderstorm_code"]["encoding"] == "categorical"
+    assert manifests["tp"]["encoding"] == "scalar"
 
 
 def test_scalar_and_wind_encoding_round_trip():

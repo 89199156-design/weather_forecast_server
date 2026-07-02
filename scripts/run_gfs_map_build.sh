@@ -20,8 +20,6 @@ mkdir -p "$LOG_DIR"
 
   export WEATHER_OPENMETEO_PUBLIC_DATA_DIR="${WEATHER_OPENMETEO_PUBLIC_DATA_DIR:-/opt/1panel/apps/weather/data}"
   export WEATHER_OPENMETEO_LAYER_ROOT_DIR="${WEATHER_OPENMETEO_LAYER_ROOT_DIR:-$APP_DIR/data/openmeteo_layers}"
-  export WEATHER_OPENMETEO_POINT_DIR="${WEATHER_OPENMETEO_POINT_DIR:-$APP_DIR/data/openmeteo_points/gfs013_point}"
-  export WEATHER_OPENMETEO_PRESSURE_PROFILE_DIR="${WEATHER_OPENMETEO_PRESSURE_PROFILE_DIR:-$APP_DIR/data/openmeteo_points/pressure_profile}"
 
   bash scripts/build_server_openmeteo_layers.sh
 } 9>"$LOCK_FILE" >> "$LOG_DIR/openmeteo_products_build.log" 2>&1

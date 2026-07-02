@@ -24,17 +24,20 @@ updated whenever upstream code is imported, rebased, or patched.
 
 - Repository: `https://github.com/open-meteo/open-meteo`
 - License: GNU Affero General Public License v3.0 or later
-- Baseline commit selected for current `air-quality` / CAMS parity:
-  `acfb7eb13ffdca9d3772c57716c240d3a7d73da5`
+- Active local shared engine baseline:
+  `036c1d940f2dd5af48f899c2d8162d00d12d3c49`
 - Commit subject:
-  `fix wind direction for ecmwf seascape`
-- Reason for this baseline:
-  The current public `air-quality-api.open-meteo.com` JSON writer matches the
-  post-`98a3e0f0` integer rounding behavior for derived AQI values such as
-  `us_aqi`. Validation showed identical raw CAMS flatbuffer values at failing
-  points, while `036c1d94` wrote `42` and the public API wrote `43` for a raw
-  `42.5` AQI value. Running this unmodified upstream version for CAMS matches
-  the public air-quality API without patching Open-Meteo source code.
+  `feat: option to generate data_run for IFS after only a certain amount of forecast hours (#1886)`
+- Current status:
+  The public `air-quality-api.open-meteo.com` response headers checked on
+  2026-06-30 did not expose a build commit. Current local file-level audit shows
+  `Package.swift`, API writers, and `GenericVariableHandle.swift` match upstream
+  `036c1d94`. CAMS source differences are limited to the configured regional
+  grid and project-authorized ADS/CDS area download path.
+- Historical candidate:
+  `acfb7eb13ffdca9d3772c57716c240d3a7d73da5` was previously recorded as an
+  air-quality writer candidate. Treat it as historical evidence only until a
+  fresh file-level build/runtime audit proves it is the active source version.
 
 ## Open-Meteo SDK
 
@@ -54,13 +57,17 @@ updated whenever upstream code is imported, rebased, or patched.
 
 ## Local Modification Boundary
 
-The vendored `vendor/open-meteo` tree is kept as upstream source at the
-recorded baseline commit for the image being built. Public API parity currently
-uses separate unmodified upstream images for forecast/GFS and air-quality/CAMS
-because the public Open-Meteo subdomains match different upstream writer
-behaviors. Do not patch Open-Meteo reader behavior,
-interpolation, model fallback, weather-code derivation, domain grids, download
-transport, or API serialization in the vendored tree.
+The vendored `vendor/open-meteo` tree is kept as close as possible to the
+recorded upstream baseline. Do not patch Open-Meteo reader behavior,
+interpolation, model fallback, weather-code derivation, API serialization, or
+unit precision in the vendored tree.
+
+Allowed vendored changes are limited to product-source integration that cannot
+stay outside the engine:
+
+- configured China/surrounding-region domain grids;
+- configured source-data download endpoints and area requests;
+- configured output variable selection.
 
 Local changes must stay outside the vendored engine:
 
@@ -75,6 +82,17 @@ not from a separately maintained Python clone.
 
 ## Local Patches In Vendored Open-Meteo
 
-None. `vendor/open-meteo` is intended to match the selected baseline commit
-byte-for-byte except for line-ending normalization performed by Git on
-checkout.
+Current intentional differences from upstream `036c1d94`:
+
+- `CamsDomain.swift`: `cams_global` uses the configured China/surrounding-region
+  grid slice.
+- `CamsDownload.swift`: `cams_global` prefers ECMWF CAMS FTP/ECPDS credentials
+  and keeps the project-authorized ADS/CDS area request as an explicit
+  `WEATHER_CAMS_SOURCE=ads` backup path. FTP/ECPDS NetCDF fields are cropped to
+  the same configured China/surrounding-region grid slice before Open-Meteo
+  writes `.om` files.
+- GFS domain/download files also contain the configured China/surrounding-region
+  source and production area adaptations.
+
+Any other vendored difference requires a root-cause note and validation record
+before it can be treated as intentional.

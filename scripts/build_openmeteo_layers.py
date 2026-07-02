@@ -17,11 +17,10 @@ import requests
 from PIL import Image
 
 
-LAYER_PRODUCT_VERSION = 1
 DEFAULT_GFS_API_BASE_URL = os.environ.get("WEATHER_OPENMETEO_GFS_API_URL", "http://127.0.0.1:18080/v1/forecast")
 DEFAULT_CAMS_API_BASE_URL = os.environ.get(
     "WEATHER_OPENMETEO_CAMS_API_URL",
-    "http://127.0.0.1:18084/v1/air-quality",
+    "http://127.0.0.1:18080/v1/air-quality",
 )
 DEFAULT_API_BASE_URL = os.environ.get("WEATHER_OPENMETEO_API_URL", DEFAULT_GFS_API_BASE_URL)
 DEFAULT_GFS_OUTPUT_DIR = os.environ.get(
@@ -63,33 +62,31 @@ class RegionGrid:
         return y, x, self.latitude_values[y], self.longitude_values[x]
 
     def manifest(self) -> dict[str, Any]:
+        def rounded(value: float) -> float:
+            return round(float(value), 6)
+
         lon_min = min(self.longitude_values)
         lon_max = max(self.longitude_values)
         lat_min = min(self.latitude_values)
         lat_max = max(self.latitude_values)
         return {
-            "grid_type": "openmeteo_gfs013_regular_latlon",
-            "bounds_semantics": "point_centers",
+            "width": self.width,
+            "height": self.height,
+            "row_order": self.row_order,
+            "dx": rounded(self.dx),
+            "dy": rounded(self.dy),
             "sample_bounds": {
-                "lon_min": lon_min,
-                "lat_min": lat_min,
-                "lon_max": lon_max,
-                "lat_max": lat_max,
+                "lon_min": rounded(lon_min),
+                "lat_min": rounded(lat_min),
+                "lon_max": rounded(lon_max),
+                "lat_max": rounded(lat_max),
             },
             "display_bounds": {
-                "lon_min": lon_min - self.dx / 2.0,
-                "lat_min": lat_min - self.dy / 2.0,
-                "lon_max": lon_max + self.dx / 2.0,
-                "lat_max": lat_max + self.dy / 2.0,
+                "lon_min": rounded(lon_min - self.dx / 2.0),
+                "lat_min": rounded(lat_min - self.dy / 2.0),
+                "lon_max": rounded(lon_max + self.dx / 2.0),
+                "lat_max": rounded(lat_max + self.dy / 2.0),
             },
-            "display_bounds_semantics": "outer_edges_approx",
-            "grid_width": self.width,
-            "grid_height": self.height,
-            "center_dx": self.dx,
-            "center_dy": self.dy,
-            "longitude_values": self.longitude_values,
-            "latitude_values": self.latitude_values,
-            "row_order": self.row_order,
         }
 
 
@@ -106,27 +103,21 @@ class LayerDefinition:
     api_multiplier: float = 1.0
     data_type: str = "continuous"
     derive: str | None = None
+    interpolation: str = "linear"
 
-    def manifest(self, grid: RegionGrid) -> dict[str, Any]:
-        field: str | list[str] = self.api_variables[0] if len(self.api_variables) == 1 else list(self.api_variables)
-        manifest = {
-            "field": field,
-            "render_var": self.render_var,
+    def manifest(self, grid: RegionGrid | None = None, *, source_resolution: str | None = None) -> dict[str, Any]:
+        _ = grid
+        payload = {
+            "subdir": self.subdir,
             "unit": self.unit,
+            "encoding": layer_encoding(self),
             "scale": self.scale,
             "vmin": self.vmin,
             "range": list(self.value_range),
-            "data_type": self.data_type,
-            "interpolation": "linear",
-            "source": "openmeteo_api",
-            "api_variables": list(self.api_variables),
-            "api_multiplier": self.api_multiplier,
-            "grid": grid.manifest(),
-            "subdir": self.subdir,
         }
-        if self.derive:
-            manifest["derive"] = self.derive
-        return manifest
+        if source_resolution is not None:
+            payload["source_resolution"] = source_resolution
+        return payload
 
 
 DEFAULT_LAYER_DEFINITIONS: tuple[LayerDefinition, ...] = (
@@ -145,6 +136,7 @@ DEFAULT_LAYER_DEFINITIONS: tuple[LayerDefinition, ...] = (
         "m/s",
         10.0,
         (-100.0, 100.0),
+        vmin=-100.0,
         data_type="vector",
     ),
     LayerDefinition("tp", "tp", ("precipitation",), "tp", "mm", 100.0, (0.0, 600.0)),
@@ -161,6 +153,7 @@ DEFAULT_LAYER_DEFINITIONS: tuple[LayerDefinition, ...] = (
         (0.0, 4.0),
         data_type="categorical",
         derive="precip_phase_from_weather_code",
+        interpolation="nearest",
     ),
     LayerDefinition(
         "thunderstorm_code",
@@ -172,6 +165,7 @@ DEFAULT_LAYER_DEFINITIONS: tuple[LayerDefinition, ...] = (
         (0.0, 100.0),
         data_type="categorical",
         derive="thunderstorm_code_from_weather_code",
+        interpolation="nearest",
     ),
     LayerDefinition("cape", "cape", ("cape",), "cape", "J/kg", 1.0, (0.0, 65535.0)),
     LayerDefinition(
@@ -213,6 +207,81 @@ def layer_definitions_for_scope(scope: str) -> tuple[LayerDefinition, ...]:
     if scope == "cams":
         return CAMS_LAYER_DEFINITIONS
     raise ValueError(f"unknown layer scope: {scope}")
+
+
+def layer_encoding(layer: LayerDefinition) -> str:
+    if layer.data_type == "vector":
+        return "uv"
+    if layer.data_type == "categorical":
+        return "categorical"
+    return "scalar"
+
+
+GFS_LAYER_RESOLUTIONS: dict[str, str] = {
+    "cloud_total_1": "13km",
+    "cloud_high_1": "13km",
+    "cloud_mid_1": "13km",
+    "cloud_low_1": "13km",
+    "t2m": "13km",
+    "d2m": "13km",
+    "r2": "13km",
+    "wind": "13km",
+    "tp": "13km",
+    "snod": "13km",
+    "gust": "28km",
+    "vis": "28km",
+    "precip_phase": "28km(13+28)",
+    "thunderstorm_code": "28km(13+28)",
+    "cape": "28km",
+    "prmsl": "28km",
+    "sp": "28km(13+28)",
+    "uv_index": "13km",
+}
+
+CAMS_LAYER_RESOLUTIONS: dict[str, str] = {
+    "pm2_5": "44km",
+    "pm10": "44km",
+    "aerosol_optical_depth": "44km",
+    "dust": "44km",
+}
+
+
+def layer_resolution_for_layer(scope: str, layer_name: str) -> str:
+    if scope == "gfs":
+        return GFS_LAYER_RESOLUTIONS[layer_name]
+    if scope == "cams":
+        return CAMS_LAYER_RESOLUTIONS[layer_name]
+    raise ValueError(f"unknown layer scope: {scope}")
+
+
+def layer_catalog_payload() -> dict[str, Any]:
+    return {
+        "version": 1,
+        "products": {
+            "gfs": {
+                "source": "gfs",
+                "manifest": manifest_filename_for_scope("gfs"),
+                "file_pattern": "{timestamp}_{batch}.webp",
+                "layers": {
+                    layer.name: layer.manifest(source_resolution=layer_resolution_for_layer("gfs", layer.name))
+                    for layer in DEFAULT_LAYER_DEFINITIONS
+                },
+            },
+            "cams": {
+                "source": "cams",
+                "manifest": manifest_filename_for_scope("cams"),
+                "file_pattern": "{timestamp}_{batch}.webp",
+                "layers": {
+                    layer.name: layer.manifest(source_resolution=layer_resolution_for_layer("cams", layer.name))
+                    for layer in CAMS_LAYER_DEFINITIONS
+                },
+            },
+        },
+    }
+
+
+def load_layer_catalog(path: Path) -> dict[str, Any]:
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def layer_api_options_for_scope(scope: str) -> dict[str, str]:
@@ -572,13 +641,33 @@ def parse_utc_hour(value: str) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
+def frame_timestamps(times: Sequence[str]) -> list[int]:
+    return [int(parse_utc_hour(value).timestamp()) for value in times]
+
+
 def frame_stems(times: Sequence[str], source_start_hour: str) -> list[str]:
-    version = parse_utc_hour(source_start_hour).strftime("%y%m%d%H")
-    stems: list[str] = []
-    for value in times:
-        valid_ts = int(parse_utc_hour(value).timestamp())
-        stems.append(f"{valid_ts}_{version}_oml{LAYER_PRODUCT_VERSION}")
-    return stems
+    batch = int(parse_utc_hour(source_start_hour).timestamp())
+    return [f"{valid_ts}_{batch}" for valid_ts in frame_timestamps(times)]
+
+
+def build_manifest_payload(
+    *,
+    scope: str,
+    grid: RegionGrid,
+    batch: int,
+    files: Sequence[int],
+    generated_at: int,
+) -> dict[str, Any]:
+    return {
+        "generated_at": generated_at,
+        "source": scope,
+        "batch": batch,
+        "frame_count": len(files),
+        "frame_step_seconds": 3600,
+        "file_pattern": "{timestamp}_{batch}.webp",
+        "files": list(files),
+        "grid": grid.manifest(),
+    }
 
 
 def request_forecast_hours_for_window(*, run: str | None, end_hour: str) -> int | None:
@@ -666,9 +755,9 @@ def publish_build(
     manifest: dict[str, Any],
     *,
     manifest_filename: str,
+    subdirs: Sequence[str],
 ) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
-    subdirs = manifest["subdirs"]
     for subdir in subdirs:
         (output_dir / subdir).mkdir(parents=True, exist_ok=True)
         source_dir = build_dir / subdir
@@ -805,6 +894,7 @@ def build_layers(
             completed_points += len(response)
             print(f"[openmeteo-layers] fetched {completed_points}/{grid.flat_count()} grid points", flush=True)
 
+        file_timestamps = frame_timestamps(times)
         stems = frame_stems(times, start_hour)
         filenames = {f"{stem}.webp" for stem in stems}
         for layer in layers:
@@ -823,38 +913,20 @@ def build_layers(
                 save_webp_rgba(rgba, layer_dir / f"{stem}.webp")
             print(f"[openmeteo-layers] rendered {layer.name} frames={len(stems)}", flush=True)
 
-        start_dt = parse_utc_hour(start_hour)
-        manifest = {
-            "update_timestamp": int(start_dt.timestamp()),
-            "generated_at": int(time.time()),
-            "version": LAYER_PRODUCT_VERSION,
-            "scope": scope,
-            "model": model,
-            "domain": domain,
-            "file_count": len(stems),
-            "grid": grid.manifest(),
-            "files": stems,
-            "times": times,
-            "start_hour": start_hour,
-            "end_hour": end_hour,
-            "subdirs": [layer.subdir for layer in layers],
-            "layers": {layer.name: layer.manifest(grid) for layer in layers},
-            "source": "openmeteo_api",
-            "api_base_url": api_base_url,
-            "api_host_header": api_host_header,
-            "api_options": api_options,
-            "run": run,
-            "request_forecast_hours": request_forecast_hours,
-            "request_retries": request_retries,
-            "request_retry_delay": request_retry_delay,
-            "request_pause": request_pause,
-        }
+        manifest = build_manifest_payload(
+            scope=scope,
+            grid=grid,
+            batch=int(parse_utc_hour(start_hour).timestamp()),
+            files=file_timestamps,
+            generated_at=int(time.time()),
+        )
         publish_build(
             build_dir,
             output_dir,
             filenames,
             manifest,
             manifest_filename=manifest_filename_for_scope(scope),
+            subdirs=[layer.subdir for layer in layers],
         )
         return manifest
     finally:
@@ -912,8 +984,8 @@ def main() -> None:
     )
     print(
         "[openmeteo-layers] ready "
-        f"scope={manifest['scope']} model={manifest['model']} domain={manifest.get('domain')} frames={manifest['file_count']} "
-        f"grid={manifest['grid']['grid_width']}x{manifest['grid']['grid_height']} "
+        f"source={manifest['source']} batch={manifest['batch']} frames={manifest['frame_count']} "
+        f"grid={manifest['grid']['width']}x{manifest['grid']['height']} "
         f"output={output_dir}",
         flush=True,
     )

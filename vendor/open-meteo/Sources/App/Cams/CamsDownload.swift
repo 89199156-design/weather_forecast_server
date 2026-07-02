@@ -18,9 +18,6 @@ struct DownloadCamsCommand: AsyncCommand {
         @Option(name: "only-variables")
         var onlyVariables: String?
 
-        @Option(name: "cdskey", short: "k", help: "CDS API key like: f412e2d2-4123-456...")
-        var cdskey: String?
-
         @Option(name: "ftpuser", short: "u", help: "Username for the ECMWF CAMS FTP server")
         var ftpuser: String?
 
@@ -30,9 +27,6 @@ struct DownloadCamsCommand: AsyncCommand {
         @Option(name: "upload-s3-bucket", help: "Upload open-meteo database to an S3 bucket after processing")
         var uploadS3Bucket: String?
 
-        @Option(name: "timeinterval", short: "t", help: "Timeinterval to download past forecasts. Format 20220101-20220131")
-        var timeinterval: String?
-
         @Flag(name: "create-netcdf")
         var createNetcdf: Bool
 
@@ -41,7 +35,7 @@ struct DownloadCamsCommand: AsyncCommand {
     }
 
     var help: String {
-        "Download global and european CAMS air quality forecasts"
+        "Download global CAMS air quality forecasts from ECMWF FTP/ECPDS"
     }
 
     func run(using context: CommandContext, signature: Signature) async throws {
@@ -58,65 +52,21 @@ struct DownloadCamsCommand: AsyncCommand {
 
         let variables = onlyVariables ?? CamsVariable.allCases
         switch domain {
-        case .cams_europe_reanalysis_interim, .cams_europe_reanalysis_validated, .cams_europe_reanalysis_validated_pre2020, .cams_europe_reanalysis_validated_pre2018:
-            guard let cdskey = signature.cdskey else {
-                fatalError("cds key is required")
-            }
-            if let timeinterval = signature.timeinterval {
-                let interval = try Timestamp.parseRange(yyyymmdd: timeinterval)
-                for month in YearMonth(timestamp: interval.lowerBound)..<YearMonth(timestamp: interval.upperBound) {
-                    let run = month.timestamp
-                    try await downloadCamsEuropeReanalysis(application: context.application, domain: domain, run: run, skipFilesIfExisting: signature.skipExisting, variables: variables, cdskey: cdskey)
-                    try await convertCamsEuropeReanalysis(logger: logger, domain: domain, run: run, variables: variables)
-                }
-                return
-            }
-            try await downloadCamsEuropeReanalysis(application: context.application, domain: domain, run: run, skipFilesIfExisting: signature.skipExisting, variables: variables, cdskey: cdskey)
-            try await convertCamsEuropeReanalysis(logger: logger, domain: domain, run: run, variables: variables)
         case .cams_global:
-            let handles: [GenericVariableHandle]
-            if WeatherForecastServerSourceConfig.camsAreaDownloadEnabled {
-                let envCdsKey = WeatherForecastServerSourceConfig.string(
-                    "WEATHER_CAMS_ADS_KEY",
-                    fallback: WeatherForecastServerSourceConfig.string("WEATHER_CAMS_CDS_KEY", fallback: "")
-                )
-                guard let cdskey = signature.cdskey ?? (envCdsKey.isEmpty ? nil : envCdsKey), !cdskey.isEmpty else {
-                    fatalError("cds key is required for WEATHER_CAMS_AREA_DOWNLOAD")
-                }
-                handles = try await downloadCamsGlobalArea(application: context.application, domain: domain, run: run, variables: variables, cdskey: cdskey, concurrent: signature.concurrent ?? 1, uploadS3Bucket: signature.uploadS3Bucket)
-            } else {
-                guard let ftpuser = signature.ftpuser else {
-                    fatalError("ftpuser is required")
-                }
-                guard let ftppassword = signature.ftppassword else {
-                    fatalError("ftppassword is required")
-                }
-                handles = try await downloadCamsGlobal(application: context.application, domain: domain, run: run, variables: variables, user: ftpuser, password: ftppassword, uploadS3Bucket: signature.uploadS3Bucket)
+            let envFtpUser = WeatherForecastServerSourceConfig.string("WEATHER_CAMS_FTP_USER", fallback: "")
+            let envFtpPassword = WeatherForecastServerSourceConfig.string("WEATHER_CAMS_FTP_PASSWORD", fallback: "")
+            let ftpuser = signature.ftpuser ?? (envFtpUser.isEmpty ? nil : envFtpUser)
+            let ftppassword = signature.ftppassword ?? (envFtpPassword.isEmpty ? nil : envFtpPassword)
+
+            guard let ftpuser = ftpuser, let ftppassword = ftppassword, !ftpuser.isEmpty, !ftppassword.isEmpty else {
+                fatalError("Both WEATHER_CAMS_FTP_USER and WEATHER_CAMS_FTP_PASSWORD are required for CAMS global FTP/ECPDS download")
             }
+            logger.info("Using CAMS global FTP/ECPDS source")
+            let handles = try await downloadCamsGlobal(application: context.application, domain: domain, run: run, variables: variables, user: ftpuser, password: ftppassword, uploadS3Bucket: signature.uploadS3Bucket)
             try await GenericVariableHandle.convert(logger: logger, domain: domain, createNetcdf: signature.createNetcdf, run: run, handles: handles, concurrent: signature.concurrent ?? 1, writeUpdateJson: true, uploadS3Bucket: signature.uploadS3Bucket, uploadS3OnlyProbabilities: false)
             return
-        case .cams_europe:
-            guard let cdskey = signature.cdskey else {
-                fatalError("cds key is required")
-            }
-            if let timeinterval = signature.timeinterval {
-                for run in try Timestamp.parseRange(yyyymmdd: timeinterval).toRange(dt: 86400).with(dtSeconds: 86400) {
-                    let handles = try await downloadCamsEurope(application: context.application, domain: domain, run: run, variables: variables, cdskey: cdskey, forecastHours: 24, concurrent: signature.concurrent ?? 1, uploadS3Bucket: nil)
-                    try await GenericVariableHandle.convert(logger: logger, domain: domain, createNetcdf: signature.createNetcdf, run: run, handles: handles, concurrent: signature.concurrent ?? 1, writeUpdateJson: false, uploadS3Bucket: nil, uploadS3OnlyProbabilities: false)
-                }
-                return
-            }
-            let handles = try await downloadCamsEurope(application: context.application, domain: domain, run: run, variables: variables, cdskey: cdskey, forecastHours: nil, concurrent: signature.concurrent ?? 1, uploadS3Bucket: signature.uploadS3Bucket)
-            try await GenericVariableHandle.convert(logger: logger, domain: domain, createNetcdf: signature.createNetcdf, run: run, handles: handles, concurrent: signature.concurrent ?? 1, writeUpdateJson: true, uploadS3Bucket: signature.uploadS3Bucket, uploadS3OnlyProbabilities: false)
-            return
-        case .cams_global_greenhouse_gases:
-            guard let cdskey = signature.cdskey else {
-                fatalError("cds key is required")
-            }
-            let concurrent = signature.concurrent ?? 1
-            let handles = try await downloadCamsGlobalGreenhouseGases(application: context.application, domain: domain, run: run, skipFilesIfExisting: signature.skipExisting, variables: variables, cdskey: cdskey, concurrent: concurrent, uploadS3Bucket: signature.uploadS3Bucket)
-            try await GenericVariableHandle.convert(logger: logger, domain: domain, createNetcdf: signature.createNetcdf, run: run, handles: handles, concurrent: concurrent, writeUpdateJson: true, uploadS3Bucket: signature.uploadS3Bucket, uploadS3OnlyProbabilities: false)
-            return
+        default:
+            fatalError("download-cams only supports cams_global from ECMWF FTP/ECPDS")
         }
     }
 
@@ -128,6 +78,9 @@ struct DownloadCamsCommand: AsyncCommand {
 
         let nx = domain.grid.nx
         let ny = domain.grid.ny
+        let regionalSlice = CamsRegionalDownload.slice(domain: domain)
+        let sourceNx = regionalSlice?.fullNx ?? nx
+        let sourceNy = regionalSlice?.fullNy ?? ny
 
         let curl = Curl(logger: logger, client: application.dedicatedHttpClient, retryUnauthorized: true)
         Process.alarm(seconds: 6 * 3600)
@@ -149,10 +102,6 @@ struct DownloadCamsCommand: AsyncCommand {
                 guard let meta = variable.getCamsGlobalMeta() else {
                    continue
                 }
-                if meta.isMultiLevel && hour % 3 != 0 {
-                    continue // multi level variables are only 3 hour
-                }
-
                 /// Multi level name `z_cams_c_ecmf_20220811120000_prod_fc_ml137_000_aermr03.nc`
                 /// Surface level name `z_cams_c_ecmf_20220803000000_prod_fc_sfc_012_uvbed.nc`
                 let levelType = meta.isMultiLevel ? "ml137" : "sfc"
@@ -169,7 +118,10 @@ struct DownloadCamsCommand: AsyncCommand {
                 }
 
                 var data = try ncVar.readLevel()
-                data.shift180LongitudeAndFlipLatitude(nt: 1, ny: ny, nx: nx)
+                data.shift180LongitudeAndFlipLatitude(nt: 1, ny: sourceNy, nx: sourceNx)
+                if let regionalSlice = regionalSlice {
+                    data = data.sliceGrid(x0: regionalSlice.x0, y0: regionalSlice.y0, nx: regionalSlice.nx, ny: regionalSlice.ny, sourceNx: sourceNx)
+                }
 
                 for i in data.indices {
                     data[i] *= meta.scalefactor
@@ -184,254 +136,44 @@ struct DownloadCamsCommand: AsyncCommand {
         return handles
     }
 
-    struct CamsEuropeQuery: Encodable {
-        let model: [String]?
-        let date: String?
-        let type: [String]?
-        let data_format: String?
-        let variable: [String]
-        let level: [String]?
-        let time: String?
-        let leadtime_hour: [String]?
-        let year: [String]?
-        let month: [String]?
-        let model_level: [Int]?
+}
+
+private struct CamsRegionalDownload {
+    struct Slice {
+        let fullNx: Int
+        let fullNy: Int
+        let x0: Int
+        let y0: Int
+        let nx: Int
+        let ny: Int
     }
 
-    struct CamsGlobalAreaQuery: Encodable {
-        let date: String
-        let type: [String]
-        let data_format: String
-        let download_format: String
-        let variable: [String]
-        let model_level: [Int]
-        let time: String
-        let leadtime_hour: [String]
-        let area: [Double]
-    }
-
-    /// Download global CAMS through the official ADS API with an area subset.
-    /// The conversion and writer remain Open-Meteo's normal CAMS path.
-    func downloadCamsGlobalArea(application: Application, domain: CamsDomain, run: Timestamp, variables: [CamsVariable], cdskey: String, concurrent: Int, uploadS3Bucket: String?) async throws -> [GenericVariableHandle] {
-        try FileManager.default.createDirectory(atPath: domain.downloadDirectory, withIntermediateDirectories: true)
-        let logger = application.logger
-
-        let apiVariables = Array(variables.compactMap { $0.getCamsGlobalAreaApiName() }.uniqued())
-        guard !apiVariables.isEmpty else {
-            logger.warning("No CAMS global ADS variables selected")
-            return []
+    static func slice(domain: CamsDomain) -> Slice? {
+        guard domain == .cams_global else {
+            return nil
         }
-
-        let forecastHours = domain.forecastHours
-        let date = run.iso8601_YYYY_MM_dd
-        let query = CamsGlobalAreaQuery(
-            date: "\(date)/\(date)",
-            type: ["forecast"],
-            data_format: "grib",
-            download_format: "unarchived",
-            variable: apiVariables,
-            model_level: [137],
-            time: "\(run.hour.zeroPadded(len: 2)):00",
-            leadtime_hour: (0..<forecastHours).map(String.init),
-            area: WeatherForecastServerSourceConfig.regionAreaNorthWestSouthEast
+        let slice = WeatherForecastServerSourceConfig.regularGridSlice(
+            fullNx: 900,
+            fullNy: 451,
+            latMin: -90,
+            lonMin: -180,
+            dx: 0.4,
+            dy: 0.4,
+            region: WeatherForecastServerSourceConfig.region
         )
-
-        let curl = Curl(logger: logger, client: application.dedicatedHttpClient, deadLineHours: 24)
-        var handles = [GenericVariableHandle]()
-
-        do {
-            let h = try await curl.withCdsApi(dataset: "cams-global-atmospheric-composition-forecasts", query: query, apikey: cdskey, server: "https://ads.atmosphere.copernicus.eu/api") { messages in
-                let writer = OmSpatialMultistepWriter(domain: domain, run: run, storeOnDisk: true, realm: nil, logger: logger)
-                try await messages.foreachConcurrent(nConcurrent: concurrent) { message in
-                    let shortName = try message.getOrThrow(attribute: "shortName")
-                    guard let variable = CamsVariable.camsGlobalAreaFromGribShortName(shortName) else {
-                        logger.warning("Could not map CAMS global ADS GRIB shortName=\(shortName)")
-                        return
-                    }
-                    guard variables.contains(variable) else {
-                        return
-                    }
-                    guard let meta = variable.getCamsGlobalMeta() else {
-                        return
-                    }
-                    let timestamp = try message.getValidTimestamp()
-                    logger.info("Converting CAMS global ADS variable \(variable) \(timestamp.format_YYYYMMddHH) \(shortName)")
-
-                    var grib2d = try message.to2D(nx: domain.grid.nx, ny: domain.grid.ny, shift180LongitudeAndFlipLatitudeIfRequired: true)
-                    for i in grib2d.array.data.indices {
-                        grib2d.array.data[i] *= meta.scalefactor
-                    }
-                    try await writer.write(time: timestamp, member: 0, variable: variable, data: grib2d.array.data)
-                }
-                return try await writer.finalise(completed: true, validTimes: nil, uploadS3Bucket: uploadS3Bucket)
-            }
-            handles.append(contentsOf: h)
-        } catch CdsApiError.restrictedAccessToValidData {
-            logger.info("CAMS global ADS run \(run.iso8601_YYYY_MM_dd_HH_mm) seems to be unavailable. Skipping downloading now.")
-        }
-        return handles
+        return Slice(fullNx: 900, fullNy: 451, x0: slice.x0, y0: slice.y0, nx: slice.nx, ny: slice.ny)
     }
+}
 
-    /// Download one month of reanalysis data as a zipped NetCDF file
-    func downloadCamsEuropeReanalysis(application: Application, domain: CamsDomain, run: Timestamp, skipFilesIfExisting: Bool, variables: [CamsVariable], cdskey: String) async throws {
-        let type: String
-        let type2: String
-        switch domain {
-        case .cams_europe_reanalysis_validated, .cams_europe_reanalysis_validated_pre2020, .cams_europe_reanalysis_validated_pre2018:
-            type = "validated_reanalysis"
-            type2 = "vra"
-        case .cams_europe_reanalysis_interim:
-            type = "interim_reanalysis"
-            type2 = "ira"
-        default:
-            fatalError()
+private extension Array where Element == Float {
+    func sliceGrid(x0: Int, y0: Int, nx: Int, ny: Int, sourceNx: Int) -> [Float] {
+        var output = [Float](repeating: .nan, count: nx * ny)
+        for y in 0..<ny {
+            let sourceStart = (y0 + y) * sourceNx + x0
+            let targetStart = y * nx
+            output.replaceSubrange(targetStart..<(targetStart + nx), with: self[sourceStart..<(sourceStart + nx)])
         }
-
-        let logger = application.logger
-        let curl = Curl(logger: logger, client: application.dedicatedHttpClient, deadLineHours: 24)
-        let date = run.toComponents()
-
-        for variable in variables {
-            guard let meta = variable.getCamsEuMeta(), let fname = meta.reanalysisFileName else {
-                continue
-            }
-            try FileManager.default.createDirectory(atPath: domain.downloadDirectory, withIntermediateDirectories: true)
-            let downloadFile = "\(domain.downloadDirectory)download.nc.zip"
-            let targetFile = "\(domain.downloadDirectory)cams.eaq.\(type2).ENSa.\(fname).l0.\(date.year)-\(date.month.zeroPadded(len: 2)).nc"
-
-            if FileManager.default.fileExists(atPath: targetFile) {
-                continue
-            }
-            let query = CamsEuropeQuery(
-                model: ["ensemble"],
-                date: nil,
-                type: [type],
-                data_format: nil,
-                variable: [meta.apiName],
-                level: ["0"],
-                time: nil,
-                leadtime_hour: nil,
-                year: [String(date.year)],
-                month: [date.month.zeroPadded(len: 2)],
-                model_level: nil
-            )
-
-            do {
-                try await curl.downloadCdsApi(
-                    dataset: "cams-europe-air-quality-reanalyses",
-                    query: query,
-                    apikey: cdskey,
-                    server: "https://ads.atmosphere.copernicus.eu/api",
-                    destinationFile: downloadFile
-                )
-                try Process.spawn(cmd: "unzip", args: ["-od", domain.downloadDirectory, downloadFile])
-            } catch {
-                logger.info("Ignoring error \(error)")
-                continue
-            }
-        }
-    }
-
-    /// Process each variable and update time-series optimised files
-    func convertCamsEuropeReanalysis(logger: Logger, domain: CamsDomain, run: Timestamp, variables: [CamsVariable]) async throws {
-        let om = OmFileSplitter(domain)
-
-        let type2: String
-        switch domain {
-        case .cams_europe_reanalysis_validated, .cams_europe_reanalysis_validated_pre2020, .cams_europe_reanalysis_validated_pre2018:
-            type2 = "vra"
-        case .cams_europe_reanalysis_interim:
-            type2 = "ira"
-        default:
-            fatalError()
-        }
-        let date = run.toComponents()
-
-        for variable in variables {
-            guard let meta = variable.getCamsEuMeta(), let fname = meta.reanalysisFileName else {
-                continue
-            }
-            let targetFile = "\(domain.downloadDirectory)cams.eaq.\(type2).ENSa.\(fname).l0.\(date.year)-\(date.month.zeroPadded(len: 2)).nc"
-            guard let ncFile = try NetCDF.open(path: targetFile, allowUpdate: false) else {
-                logger.info("Missing file, skipping. \(targetFile)")
-                continue
-            }
-
-            logger.info("Converting \(variable)")
-            guard let ncVar = ncFile.getVariable(name: fname) else {
-                fatalError("Could not open variable \(fname)")
-            }
-            guard let ncFloat = ncVar.asType(Float.self) else {
-                fatalError("Could not open float variable \(fname)")
-            }
-            let nTime = ncVar.dimensions.first!.length
-            var data2d = Array2DFastSpace(data: try ncFloat.read(), nLocations: domain.grid.count, nTime: nTime).transpose()
-            for i in data2d.data.indices {
-                if data2d.data[i] <= -999 {
-                    data2d.data[i] = .nan
-                }
-            }
-
-            logger.info("Create om file")
-            let startOm = DispatchTime.now()
-            let time = TimerangeDt(start: run, nTime: data2d.nTime, dtSeconds: domain.dtSeconds)
-            try await om.updateFromTimeOriented(variable: variable.rawValue, array2d: data2d, run: run, time: time, scalefactor: variable.scalefactor)
-            logger.info("Update om finished in \(startOm.timeElapsedPretty())")
-        }
-    }
-
-    /// Download all timesteps and preliminarily covnert it to compressed files
-    func downloadCamsEurope(application: Application, domain: CamsDomain, run: Timestamp, variables: [CamsVariable], cdskey: String, forecastHours: Int?, concurrent: Int, uploadS3Bucket: String?) async throws -> [GenericVariableHandle] {
-        let logger = application.logger
-
-        try FileManager.default.createDirectory(atPath: domain.downloadDirectory, withIntermediateDirectories: true)
-        // let downloadFile = "\(domain.downloadDirectory)download.nc"
-
-        let forecastHours = forecastHours ?? domain.forecastHours
-        let date = run.iso8601_YYYY_MM_dd
-        let query = CamsEuropeQuery(
-            model: ["ensemble"],
-            date: "\(date)/\(date)",
-            type: ["forecast"],
-            data_format: "grib",
-            variable: variables.compactMap { $0.getCamsEuMeta()?.apiName },
-            level: ["0"],
-            time: "\(run.hour.zeroPadded(len: 2)):00",
-            leadtime_hour: (0..<forecastHours).map(String.init),
-            year: nil,
-            month: nil,
-            model_level: nil
-        )
-
-        let curl = Curl(logger: logger, client: application.dedicatedHttpClient, deadLineHours: 24)
-        var handles = [GenericVariableHandle]()
-
-        do {
-            let h = try await curl.withCdsApi(dataset: "cams-europe-air-quality-forecasts", query: query, apikey: cdskey, server: "https://ads.atmosphere.copernicus.eu/api") { messages in
-                let writer = OmSpatialMultistepWriter(domain: domain, run: run, storeOnDisk: true, realm: nil, logger: logger)
-                try await messages.foreachConcurrent(nConcurrent: concurrent) { message in
-                    let attributes = try GribAttributes(message: message)
-                    let timestamp = attributes.timestamp
-                    guard let variable = CamsVariable.camsEuropeFromGrib(attributes: attributes) else {
-                        logger.warning("Could not find \(attributes) in grib")
-                        return
-                    }
-                    logger.info("Converting variable \(variable) \(timestamp.format_YYYYMMddHH) \(message.get(attribute: "name")!)")
-
-                    var grib2d = try message.to2D(nx: domain.grid.nx, ny: domain.grid.ny, shift180LongitudeAndFlipLatitudeIfRequired: false)
-                    if attributes.unit == "kg m**-3" {
-                        /// kilogram to microgram
-                        grib2d.array.data.multiplyAdd(multiply: 1e9, add: 0)
-                    }
-                    try await writer.write(time: timestamp, member: 0, variable: variable, data: grib2d.array.data)
-                }
-                return try await writer.finalise(completed: true, validTimes: nil, uploadS3Bucket: uploadS3Bucket)
-            }
-            handles.append(contentsOf: h)
-        } catch CdsApiError.restrictedAccessToValidData {
-            logger.info("Timestep \(run.iso8601_YYYY_MM_dd) seems to be unavailable. Skipping downloading now.")
-        }
-        return handles
+        return output
     }
 }
 

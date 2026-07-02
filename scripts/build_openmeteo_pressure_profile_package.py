@@ -67,13 +67,13 @@ class ProfileField:
 
 PROFILE_FIELDS: tuple[ProfileField, ...] = (
     ProfileField("geopotential_height_m", "m", 1.0, "geopotential_height_{level}hPa"),
-    ProfileField("height_agl_m", "m", 1.0, "geopotential_height_{level}hPa", derive="height_agl_from_elevation"),
     ProfileField("temperature_c", "C", 0.05, "temperature_{level}hPa"),
     ProfileField("relative_humidity_pct", "%", 1.0, "relative_humidity_{level}hPa"),
     ProfileField("dew_point_c", "C", 0.05, "dew_point_{level}hPa"),
     ProfileField("cloud_cover_pct", "%", 1.0, "cloud_cover_{level}hPa"),
     ProfileField("wind_speed_ms", "m/s", 0.01, "wind_speed_{level}hPa"),
     ProfileField("wind_direction_deg", "deg", 1.0, "wind_direction_{level}hPa"),
+    ProfileField("vertical_velocity_ms", "m/s", 0.001, "vertical_velocity_{level}hPa"),
 )
 
 
@@ -146,17 +146,11 @@ def derive_level_values(
     variables: Mapping[str, np.ndarray],
     *,
     level: int,
-    elevations: np.ndarray,
 ) -> np.ndarray:
     source = field.source_for_level(level)
     if source is None:
         raise ValueError(f"profile field has no source: {field.name}")
     values = np.asarray(variables[source], dtype=np.float32)
-    if field.derive == "height_agl_from_elevation":
-        elevation_values = np.asarray(elevations, dtype=np.float32)
-        if values.ndim == 2 and values.shape[0] == elevation_values.shape[0]:
-            return values - elevation_values[:, None]
-        return values - elevation_values
     if field.derive:
         raise ValueError(f"unknown profile field derive: {field.derive}")
     return values
@@ -197,12 +191,10 @@ def fill_pressure_profile_package(
         raise ValueError(f"response point count mismatch: got {len(response)} expected {len(flat_indices)}")
     ys: list[int] = []
     xs: list[int] = []
-    elevations: list[float] = []
     for item, flat_index in zip(response, flat_indices):
         y, x, _lat, _lon = grid.point_for_flat_index(flat_index)
         ys.append(y)
         xs.append(x)
-        elevations.append(float(item.get("elevation", 0.0) or 0.0))
 
     variable_values: dict[str, np.ndarray] = {}
     for variable in variables:
@@ -220,10 +212,9 @@ def fill_pressure_profile_package(
 
     y_index = np.asarray(ys, dtype=np.intp)
     x_index = np.asarray(xs, dtype=np.intp)
-    elevation_array = np.asarray(elevations, dtype=np.float32)
     for level_index, level in enumerate(levels):
         for field_index, field in enumerate(fields):
-            values = derive_level_values(field, variable_values, level=level, elevations=elevation_array)
+            values = derive_level_values(field, variable_values, level=level)
             encoded = encode_values(values, scale=field.scale)
             package[y_index, x_index, :, level_index, field_index] = encoded
 
@@ -412,12 +403,6 @@ def build_pressure_profile_package(
             "api_host_header": api_host_header,
             "api_options": api_options,
             "variables": variables,
-            "derived_fields": {
-                "height_agl_m": {
-                    "source": "geopotential_height_m - Open-Meteo response elevation",
-                    "weather_logic": "none",
-                },
-            },
         }
         meta_path = build_dir / "pressure_profile_meta.json"
         meta_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")

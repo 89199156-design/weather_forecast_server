@@ -2,14 +2,18 @@
 set -euo pipefail
 
 APP_DIR="${WEATHER_FORECAST_APP_DIR:-/opt/1panel/apps/weather_forecast_server}"
-ENV_FILE="${WEATHER_OPENMETEO_ENV_FILE:-$APP_DIR/config/singapore.example.env}"
+DEFAULT_ENV_FILE="$APP_DIR/config/singapore.private.env"
+if [[ ! -f "$DEFAULT_ENV_FILE" ]]; then
+  DEFAULT_ENV_FILE="$APP_DIR/config/singapore.example.env"
+fi
+ENV_FILE="${WEATHER_OPENMETEO_ENV_FILE:-$DEFAULT_ENV_FILE}"
 
 declare -A WEATHER_ENV_OVERRIDES=()
 
 capture_weather_env_overrides() {
   local name
   while IFS='=' read -r name _; do
-    if [[ "$name" == WEATHER_* || "$name" == "HTTP_CACHE" || "$name" == "REMOTE_DATA_DIRECTORY" || "$name" == "REMOTE_DATA_DIRECTORY_MINIMUM_AGE" || "$name" == "CACHE_FILE" || "$name" == "CACHE_SIZE" || "$name" == "BLOCK_SIZE" || "$name" == "CACHE_META_FILE" || "$name" == "CACHE_META_SIZE" ]]; then
+    if [[ "$name" == WEATHER_* || "$name" == "HTTP_CACHE" || "$name" == "DATA_RUN_DIRECTORY" || "$name" == "CACHE_FILE" || "$name" == "CACHE_SIZE" || "$name" == "BLOCK_SIZE" || "$name" == "CACHE_META_FILE" || "$name" == "CACHE_META_SIZE" ]]; then
       WEATHER_ENV_OVERRIDES["$name"]="${!name}"
     fi
   done < <(env)
@@ -23,42 +27,19 @@ restore_weather_env_overrides() {
   done
 }
 
+source_env_file() {
+  local file="$1"
+  # Normalize CRLF so Windows-side packaging cannot break bash source.
+  source <(sed 's/\r$//' "$file")
+}
+
 capture_weather_env_overrides
 if [[ -f "$ENV_FILE" ]]; then
   set -a
-  source "$ENV_FILE"
+  source_env_file "$ENV_FILE"
   set +a
 fi
 restore_weather_env_overrides
-
-read_cdsapi_key() {
-  local candidate
-  for candidate in \
-    "${WEATHER_CAMS_CDSAPI_RC:-}" \
-    "${CDSAPI_RC:-}" \
-    "$HOME/.cdsapirc" \
-    "/home/ubuntu/.cdsapirc" \
-    "/root/.cdsapirc"; do
-    if [[ -z "$candidate" || ! -r "$candidate" ]]; then
-      continue
-    fi
-    awk '
-      $0 ~ /^[[:space:]]*key[[:space:]]*:/ {
-        sub(/^[[:space:]]*key[[:space:]]*:/, "", $0)
-        sub(/^[[:space:]]+/, "", $0)
-        sub(/[[:space:]]+$/, "", $0)
-        print $0
-        exit
-      }
-    ' "$candidate"
-    return
-  done
-}
-
-if [[ -z "${WEATHER_CAMS_ADS_KEY:-}" && -z "${WEATHER_CAMS_CDS_KEY:-}" ]]; then
-  WEATHER_CAMS_ADS_KEY="$(read_cdsapi_key)"
-  export WEATHER_CAMS_ADS_KEY
-fi
 
 default_image_tag() {
   git -C "$APP_DIR" rev-parse --short HEAD 2>/dev/null || printf '%s' latest
@@ -75,30 +56,20 @@ OPENMETEO_HTTP_CACHE_CLEANUP="${WEATHER_OPENMETEO_HTTP_CACHE_CLEANUP:-true}"
 GFS_MAX_FORECAST_HOUR="${WEATHER_GFS_MAX_FORECAST_HOUR:-120}"
 GFS_CONCURRENT="${WEATHER_GFS_DOWNLOAD_CONCURRENT:-4}"
 CAMS_CONCURRENT="${WEATHER_CAMS_DOWNLOAD_CONCURRENT:-1}"
-GFS_DOWNLOAD_MODE="${WEATHER_GFS_DOWNLOAD_MODE:-raw}"
-GFS_FILTER_DOWNLOAD="${WEATHER_GFS_FILTER_DOWNLOAD:-false}"
-ALLOW_GLOBAL_RAW_DOWNLOAD="${WEATHER_ALLOW_GLOBAL_RAW_DOWNLOAD:-false}"
-CAMS_AREA_DOWNLOAD="${WEATHER_CAMS_AREA_DOWNLOAD:-false}"
-CAMS_ADS_KEY="${WEATHER_CAMS_ADS_KEY:-${WEATHER_CAMS_CDS_KEY:-}}"
-OPENMETEO_SYNC_BASE_URL="${WEATHER_OPENMETEO_SYNC_BASE_URL:-}"
-OPENMETEO_SYNC_PAST_DAYS="${WEATHER_OPENMETEO_SYNC_PAST_DAYS:-2}"
-OPENMETEO_SYNC_CONCURRENT="${WEATHER_OPENMETEO_SYNC_CONCURRENT:-4}"
-GFS_UPPER_LEVELS="${WEATHER_GFS_UPPER_LEVELS:-10,15,20,30,40,50,70,100,125,150,175,200,225,250,275,300,325,350,375,400,425,450,475,500,525,550,575,600,625,650,675,700,725,750,775,800,825,850,875,900,925,950,975,1000}"
-GFS_UPPER_LEVEL_PGRB2_LEVELS="${WEATHER_GFS_UPPER_LEVEL_PGRB2_LEVELS:-10,15,20,30,40,50,70,100,150,200,250,300,350,400,450,500,550,600,650,700,750,800,850,900,925,950,975,1000}"
+CAMS_FTP_USER="${WEATHER_CAMS_FTP_USER:-}"
+CAMS_FTP_PASSWORD="${WEATHER_CAMS_FTP_PASSWORD:-}"
+CAMS_VARIABLES="${WEATHER_CAMS_VARIABLES:-pm2_5,pm10,aerosol_optical_depth,dust,carbon_monoxide,nitrogen_dioxide,ozone,sulphur_dioxide}"
+GFS_UPPER_LEVELS="${WEATHER_GFS_UPPER_LEVELS:-1000,975,950,925,900,850,800,750,700,650,600,550,500,400,300,200}"
+GFS_UPPER_LEVEL_PGRB2_LEVELS="${WEATHER_GFS_UPPER_LEVEL_PGRB2_LEVELS:-1000,975,950,925,900,850,800,750,700,650,600,550,500,400,300,200}"
 GFS_UPPER_LEVEL_VARIABLES="${WEATHER_GFS_UPPER_LEVEL_VARIABLES:-temperature,wind_u_component,wind_v_component,geopotential_height,cloud_cover,relative_humidity,vertical_velocity}"
 GFS_UPPER_LEVEL_CHUNK_SIZE="${WEATHER_GFS_UPPER_LEVEL_CHUNK_SIZE:-4}"
 GFS_UPPER_LEVEL_CONCURRENT="${WEATHER_GFS_UPPER_LEVEL_DOWNLOAD_CONCURRENT:-1}"
-GFS013_SYNC_VARIABLES="${WEATHER_GFS013_SYNC_VARIABLES:-temperature_2m,temperature_80m,temperature_100m,cloud_cover,cloud_cover_low,cloud_cover_mid,cloud_cover_high,pressure_msl,relative_humidity_2m,precipitation,wind_v_component_10m,wind_u_component_10m,wind_v_component_80m,wind_u_component_80m,wind_v_component_100m,wind_u_component_100m,surface_temperature,soil_temperature_0_to_10cm,soil_temperature_10_to_40cm,soil_temperature_40_to_100cm,soil_temperature_100_to_200cm,soil_moisture_0_to_10cm,soil_moisture_10_to_40cm,soil_moisture_40_to_100cm,soil_moisture_100_to_200cm,snow_depth,sensible_heat_flux,latent_heat_flux,showers,snowfall_water_equivalent,shortwave_radiation,diffuse_radiation,uv_index,uv_index_clear_sky,boundary_layer_height,total_column_integrated_water_vapour}"
-GFS025_SURFACE_SYNC_VARIABLES="${WEATHER_GFS025_SURFACE_SYNC_VARIABLES:-temperature_80m,temperature_100m,wind_u_component_80m,wind_v_component_80m,wind_u_component_100m,wind_v_component_100m,wind_gusts_10m,visibility,cape,lifted_index,convective_inhibition,freezing_level_height,categorical_freezing_rain}"
 GFS013_RUN="${WEATHER_GFS013_RUN:-}"
 GFS025_RUN="${WEATHER_GFS025_RUN:-}"
-SKIP_GFS013_DOWNLOAD="${WEATHER_SKIP_GFS013_DOWNLOAD:-false}"
-SKIP_GFS025_SURFACE_DOWNLOAD="${WEATHER_SKIP_GFS025_SURFACE_DOWNLOAD:-false}"
-SKIP_GFS025_UPPER_LEVEL_DOWNLOAD="${WEATHER_SKIP_GFS025_UPPER_LEVEL_DOWNLOAD:-false}"
-SKIP_CAMS_DOWNLOAD="${WEATHER_SKIP_CAMS_DOWNLOAD:-false}"
+CAMS_RUN="${WEATHER_CAMS_RUN:-}"
 REQUIRE_DEM_SOURCE="${WEATHER_REQUIRE_DEM_SOURCE:-true}"
 DEM_PRESEED_ENABLED="${WEATHER_DEM_PRESEED_ENABLED:-false}"
-DEM_PRESEED_BASE_URL="${WEATHER_DEM_PRESEED_BASE_URL:-https://openmeteo.s3.amazonaws.com/data/copernicus_dem90/static}"
+DEM_PRESEED_BASE_URL="${WEATHER_DEM_PRESEED_BASE_URL:-}"
 DEM_PRESEED_CONCURRENT="${WEATHER_DEM_PRESEED_CONCURRENT:-4}"
 
 cd "$APP_DIR"
@@ -118,7 +89,7 @@ cleanup_sanitized_env() {
 trap cleanup_sanitized_env EXIT
 
 env | sort | awk -F= '
-  ($1 ~ /^WEATHER_/ || $1 == "HTTP_CACHE" || $1 == "REMOTE_DATA_DIRECTORY" || $1 == "REMOTE_DATA_DIRECTORY_MINIMUM_AGE" || $1 == "CACHE_FILE" || $1 == "CACHE_SIZE" || $1 == "BLOCK_SIZE" || $1 == "CACHE_META_FILE" || $1 == "CACHE_META_SIZE") && $2 != "" { print }
+  ($1 ~ /^WEATHER_/ || $1 == "HTTP_CACHE" || $1 == "DATA_RUN_DIRECTORY" || $1 == "CACHE_FILE" || $1 == "CACHE_SIZE" || $1 == "BLOCK_SIZE" || $1 == "CACHE_META_FILE" || $1 == "CACHE_META_SIZE") && $2 != "" { print }
 ' > "$SANITIZED_ENV_FILE"
 
 is_truthy() {
@@ -151,11 +122,25 @@ run_openmeteo() {
     "$@"
 }
 
-append_sync_server_arg() {
-  if [[ -n "$OPENMETEO_SYNC_BASE_URL" ]]; then
-    printf '%s\n' "--server"
-    printf '%s\n' "$OPENMETEO_SYNC_BASE_URL"
-  fi
+cleanup_download_work_dirs() {
+  local path
+  local targets=(
+    "$DATA_DIR/download-ncep_gfs013"
+    "$DATA_DIR/download-ncep_gfs025"
+    "$DATA_DIR/download-cams_global"
+  )
+
+  for path in "${targets[@]}"; do
+    case "$path" in
+      "$DATA_DIR"/*)
+        rm -rf -- "$path"
+        ;;
+      *)
+        printf '%s\n' "Refusing to remove path outside DATA_DIR: $path" >&2
+        exit 2
+        ;;
+    esac
+  done
 }
 
 floor_float() {
@@ -249,15 +234,12 @@ require_dem_source() {
   if ! is_truthy "$REQUIRE_DEM_SOURCE"; then
     return
   fi
-  if [[ -n "${REMOTE_DATA_DIRECTORY:-}" ]]; then
-    return
-  fi
   if has_local_dem_static_files; then
     return
   fi
 
   printf '%s\n' \
-    "Missing Copernicus DEM90 source. Set REMOTE_DATA_DIRECTORY to the Open-Meteo data URL, or pre-seed $DATA_DIR/copernicus_dem90/static/lat_*.om." >&2
+    "Missing Copernicus DEM90 source. Set WEATHER_DEM_PRESEED_BASE_URL to a project-owned DEM mirror, or pre-seed $DATA_DIR/copernicus_dem90/static/lat_*.om." >&2
   exit 2
 }
 
@@ -350,131 +332,38 @@ download_gfs025_upper_level_variable() {
   done < <(upper_level_only_variable_chunks "$variable")
 }
 
-gfs025_pressure_sync_variables() {
-  local IFS=","
-  local variable
-  local level
-  local variables=()
-  local levels=()
-  local items=()
-
-  read -ra variables <<< "$GFS_UPPER_LEVEL_VARIABLES"
-  read -ra levels <<< "$GFS_UPPER_LEVELS"
-  for variable in "${variables[@]}"; do
-    variable="${variable//[[:space:]]/}"
-    if [[ -z "$variable" ]]; then
-      continue
-    fi
-    for level in "${levels[@]}"; do
-      level="${level//[[:space:]]/}"
-      if [[ -z "$level" ]]; then
-        continue
-      fi
-      if [[ "$variable" == "cloud_cover" && ( "$level" -lt 50 || "$level" == "70" ) ]]; then
-        continue
-      fi
-      items+=("${variable}_${level}hPa")
-    done
-  done
-  (IFS=","; printf '%s\n' "${items[*]}")
-}
-
-sync_openmeteo_database() {
-  local models="$1"
-  local variables="$2"
-
-  run_openmeteo sync "$models" "$variables" \
-    $(append_sync_server_arg) \
-    --past-days "$OPENMETEO_SYNC_PAST_DAYS" \
-    --concurrent "$OPENMETEO_SYNC_CONCURRENT"
-}
-
-# gfs_global in Open-Meteo mixes gfs013 with gfs025. The normal Singapore
-# production path is WEATHER_GFS_DOWNLOAD_MODE=raw, which lets the unmodified
-# Open-Meteo downloader convert original source files into local `.om` chunks.
-# Keep sync mode as a manual reference/debug path for explicitly approved
-# processed `.om` mirrors.
 require_dem_source
+cleanup_download_work_dirs
 
-case "$GFS_DOWNLOAD_MODE" in
-  sync)
-    if is_truthy "$SKIP_GFS013_DOWNLOAD"; then
-      printf '%s\n' "Skipping GFS013 sync: WEATHER_SKIP_GFS013_DOWNLOAD is enabled."
-    else
-      sync_openmeteo_database ncep_gfs013 "$GFS013_SYNC_VARIABLES"
-    fi
+run_openmeteo download-gfs gfs013 \
+  $(append_run_arg "$GFS013_RUN") \
+  --max-forecast-hour "$GFS_MAX_FORECAST_HOUR" \
+  --concurrent "$GFS_CONCURRENT"
 
-    if is_truthy "$SKIP_GFS025_SURFACE_DOWNLOAD"; then
-      printf '%s\n' "Skipping GFS025 surface sync: WEATHER_SKIP_GFS025_SURFACE_DOWNLOAD is enabled."
-    else
-      sync_openmeteo_database ncep_gfs025 "$GFS025_SURFACE_SYNC_VARIABLES"
-    fi
+run_openmeteo download-gfs gfs025 \
+  $(append_run_arg "$GFS025_RUN") \
+  --max-forecast-hour "$GFS_MAX_FORECAST_HOUR" \
+  --concurrent "$GFS_CONCURRENT"
 
-    if is_truthy "$SKIP_GFS025_UPPER_LEVEL_DOWNLOAD"; then
-      printf '%s\n' "Skipping GFS025 pressure-level sync: WEATHER_SKIP_GFS025_UPPER_LEVEL_DOWNLOAD is enabled."
-    else
-      sync_openmeteo_database ncep_gfs025 "$(gfs025_pressure_sync_variables)"
-    fi
-    ;;
-  raw)
-    if ! is_truthy "$GFS_FILTER_DOWNLOAD" && ! is_truthy "$ALLOW_GLOBAL_RAW_DOWNLOAD"; then
-      printf '%s\n' \
-        "Refusing global Open-Meteo raw GFS download. Enable WEATHER_GFS_FILTER_DOWNLOAD=true for China-region GFS, or set WEATHER_ALLOW_GLOBAL_RAW_DOWNLOAD=true only for an explicitly approved diagnostic run." >&2
-      exit 2
-    fi
+IFS="," read -ra upper_variables <<< "$GFS_UPPER_LEVEL_VARIABLES"
+for variable in "${upper_variables[@]}"; do
+  variable="${variable//[[:space:]]/}"
+  if [[ -z "$variable" ]]; then
+    continue
+  fi
+  download_gfs025_upper_level_variable "$variable"
+done
 
-    if is_truthy "$SKIP_GFS013_DOWNLOAD"; then
-      printf '%s\n' "Skipping GFS013 download: WEATHER_SKIP_GFS013_DOWNLOAD is enabled."
-    else
-      run_openmeteo download-gfs gfs013 \
-        $(append_run_arg "$GFS013_RUN") \
-        --max-forecast-hour "$GFS_MAX_FORECAST_HOUR" \
-        --concurrent "$GFS_CONCURRENT"
-    fi
-
-    if is_truthy "$SKIP_GFS025_SURFACE_DOWNLOAD"; then
-      printf '%s\n' "Skipping GFS025 surface download: WEATHER_SKIP_GFS025_SURFACE_DOWNLOAD is enabled."
-    else
-      run_openmeteo download-gfs gfs025 \
-        $(append_run_arg "$GFS025_RUN") \
-        --max-forecast-hour "$GFS_MAX_FORECAST_HOUR" \
-        --concurrent "$GFS_CONCURRENT"
-    fi
-
-    if is_truthy "$SKIP_GFS025_UPPER_LEVEL_DOWNLOAD"; then
-      printf '%s\n' "Skipping GFS025 pressure-level download: WEATHER_SKIP_GFS025_UPPER_LEVEL_DOWNLOAD is enabled."
-    else
-      IFS="," read -ra upper_variables <<< "$GFS_UPPER_LEVEL_VARIABLES"
-      for variable in "${upper_variables[@]}"; do
-        variable="${variable//[[:space:]]/}"
-        if [[ -z "$variable" ]]; then
-          continue
-        fi
-        download_gfs025_upper_level_variable "$variable"
-      done
-    fi
-    ;;
-  *)
-    printf '%s\n' "WEATHER_GFS_DOWNLOAD_MODE must be 'sync' or 'raw'." >&2
-    exit 2
-    ;;
-esac
-
-if is_truthy "$SKIP_CAMS_DOWNLOAD"; then
-  printf '%s\n' "Skipping CAMS global download: WEATHER_SKIP_CAMS_DOWNLOAD is enabled."
-elif is_truthy "$CAMS_AREA_DOWNLOAD" && [[ -n "$CAMS_ADS_KEY" ]]; then
-  run_openmeteo download-cams cams_global \
-    --concurrent "$CAMS_CONCURRENT"
-elif is_truthy "$CAMS_AREA_DOWNLOAD"; then
-  printf '%s\n' "Skipping CAMS global area download: WEATHER_CAMS_ADS_KEY/WEATHER_CAMS_CDS_KEY is not set."
-elif [[ -n "${WEATHER_CAMS_FTP_USER:-}" && -n "${WEATHER_CAMS_FTP_PASSWORD:-}" ]]; then
-  run_openmeteo download-cams cams_global \
-    --ftpuser "$WEATHER_CAMS_FTP_USER" \
-    --ftppassword "$WEATHER_CAMS_FTP_PASSWORD" \
-    --concurrent "$CAMS_CONCURRENT"
-else
-  printf '%s\n' "Skipping CAMS global download: WEATHER_CAMS_FTP_USER/WEATHER_CAMS_FTP_PASSWORD are not set."
+if [[ -z "$CAMS_FTP_USER" || -z "$CAMS_FTP_PASSWORD" ]]; then
+  printf '%s\n' "Both WEATHER_CAMS_FTP_USER and WEATHER_CAMS_FTP_PASSWORD are required for CAMS FTP/ECPDS download." >&2
+  exit 2
 fi
+
+cleanup_download_work_dirs "$DATA_DIR/download-cams_global"
+run_openmeteo download-cams cams_global \
+  $(append_run_arg "$CAMS_RUN") \
+  --only-variables "$CAMS_VARIABLES" \
+  --concurrent "$CAMS_CONCURRENT"
 
 host_http_cache_dir() {
   if [[ -z "${HTTP_CACHE:-}" ]]; then

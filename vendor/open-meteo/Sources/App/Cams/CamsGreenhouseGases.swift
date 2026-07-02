@@ -20,7 +20,7 @@
 import Vapor
 import OmFileFormat
 
-extension DownloadCamsCommand {
+extension DownloadCamsAdsCommand {
     /**
      Download CAMS Global Greenhouse Gas forecast from ADS
      */

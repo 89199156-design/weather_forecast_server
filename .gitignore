@@ -9,6 +9,7 @@
 /cache/
 /downloads/
 /secrets/
+/config/*.private.env
 /vendor/open-meteo/.git/
 /vendor/openmeteo-sdk/.git/
 /docs/validation/reports/**/*.progress.json

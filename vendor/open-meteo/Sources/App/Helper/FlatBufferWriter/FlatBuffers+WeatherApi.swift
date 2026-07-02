@@ -548,6 +548,14 @@ extension VariableAndPreviousDay: FlatBuffersVariable {
             return .init(variable: .usAqiSulphurDioxide)
         case .us_aqi_carbon_monoxide, .us_aqi_co:
             return .init(variable: .usAqiCarbonMonoxide)
+        case .ch_aqi,
+             .ch_iaqi_pm2_5,
+             .ch_iaqi_pm10,
+             .ch_iaqi_so2,
+             .ch_iaqi_no2,
+             .ch_iaqi_o3,
+             .ch_iaqi_co:
+            return .init(variable: .undefined)
         case .lightning_density:
             return .init(variable: .lightningDensity)
         case .sea_ice_thickness:

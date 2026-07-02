@@ -57,6 +57,13 @@ def test_target_variables_match_client_weather_scope_without_soil_outputs():
     assert "dust" in cams
     assert "us_aqi" in cams
     assert "european_aqi" in cams
+    assert "ch_aqi" in cams
+    assert "ch_iaqi_pm2_5" in cams
+    assert "ch_iaqi_pm10" in cams
+    assert "ch_iaqi_so2" in cams
+    assert "ch_iaqi_no2" in cams
+    assert "ch_iaqi_o3" in cams
+    assert "ch_iaqi_co" in cams
 
 
 def test_batch_summary_stops_after_third_failed_group():

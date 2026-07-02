@@ -13,6 +13,10 @@ RUN ENABLE_PARQUET=TRUE MARCH_SKYLAKE=TRUE swift build -c release
 
 FROM ghcr.io/open-meteo/docker-container-run:latest
 
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends unzip \
+  && rm -rf /var/lib/apt/lists/*
+
 RUN useradd --user-group --create-home --system --skel /dev/null --home-dir /app openmeteo
 WORKDIR /app
 

@@ -369,6 +369,14 @@ enum ForecastSurfaceVariable: String, GenericVariableMixable {
     case us_aqi_ozone
     case us_aqi_sulphur_dioxide
     case us_aqi_carbon_monoxide
+
+    case ch_aqi
+    case ch_iaqi_pm2_5
+    case ch_iaqi_pm10
+    case ch_iaqi_so2
+    case ch_iaqi_no2
+    case ch_iaqi_o3
+    case ch_iaqi_co
     
     case wave_direction
     case wave_height

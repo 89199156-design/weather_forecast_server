@@ -44,9 +44,26 @@ def test_inventory_extracts_forecast_gfs_and_cams_variables_from_vendored_source
 
     assert inventory["air_quality"]["domain"] == "cams_global"
     assert "pm2_5" in inventory["air_quality"]["raw_variables"]
+    assert "pm10" in inventory["air_quality"]["raw_variables"]
+    assert "sulphur_dioxide" in inventory["air_quality"]["raw_variables"]
+    assert "nitrogen_dioxide" in inventory["air_quality"]["raw_variables"]
+    assert "ozone" in inventory["air_quality"]["raw_variables"]
+    assert "carbon_monoxide" in inventory["air_quality"]["raw_variables"]
     assert "aerosol_optical_depth" in inventory["air_quality"]["raw_variables"]
     assert "us_aqi" in inventory["air_quality"]["derived_variables"]
     assert "european_aqi" in inventory["air_quality"]["derived_variables"]
+    assert "china_aqi" not in inventory["air_quality"]["derived_variables"]
+    assert "ch_aqi" in inventory["air_quality"]["derived_variables"]
+    assert "ch_iaqi_pm2_5" in inventory["air_quality"]["derived_variables"]
+    assert "ch_iaqi_pm10" in inventory["air_quality"]["derived_variables"]
+    assert "ch_iaqi_so2" in inventory["air_quality"]["derived_variables"]
+    assert "ch_iaqi_no2" in inventory["air_quality"]["derived_variables"]
+    assert "ch_iaqi_o3" in inventory["air_quality"]["derived_variables"]
+    assert "ch_iaqi_co" in inventory["air_quality"]["derived_variables"]
+    assert not any(
+        variable.startswith("ch_aqi_")
+        for variable in inventory["air_quality"]["derived_variables"]
+    )
     assert "is_day" in inventory["air_quality"]["derived_variables"]
 
 

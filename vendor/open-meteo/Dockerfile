@@ -35,6 +35,9 @@ RUN mkdir -p /app/Resources
 # COPY --from=build --chown=openmeteo:openmeteo /build/Resources /app/Resources
 COPY --from=build --chown=openmeteo:openmeteo /build/.build/release/SwiftTimeZoneLookup_SwiftTimeZoneLookup.resources /app/Resources/SwiftTimeZoneLookup_SwiftTimeZoneLookup.resources
 COPY --from=build --chown=openmeteo:openmeteo /build/Public /app/Public
+COPY --from=build /usr/lib/x86_64-linux-gnu/libarrow*.so* /usr/lib/x86_64-linux-gnu/
+COPY --from=build /usr/lib/x86_64-linux-gnu/libparquet*.so* /usr/lib/x86_64-linux-gnu/
+RUN ldconfig
 
 # Attach a volumne
 RUN mkdir /app/data && chown openmeteo:openmeteo /app/data

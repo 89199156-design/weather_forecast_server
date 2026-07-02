@@ -33,7 +33,8 @@ excluded because it has been split to another server.
 The implementation order is:
 
 1. Vendor and document the Open-Meteo engine baseline.
-2. Configure Open-Meteo raw source downloads without modifying the engine.
+2. Configure Open-Meteo raw source ingestion with only the required
+   region/variable boundary patches.
 3. Export point API packages from Open-Meteo-derived data.
 4. Export layers from the same Open-Meteo-derived data.
 5. Deploy to Singapore and remove old satellite code/tasks there.
@@ -42,13 +43,11 @@ The implementation order is:
 
 ## Layer Export
 
-The GFS point package is generated from the local Open-Meteo API, not from the
-old Python GRIB parsing chain. GFS WebP layers are then rendered from that same
-point package so the point API and map layers use the same Open-Meteo snapshot.
-CAMS layers are generated from the local Open-Meteo air-quality API.
-The reusable API-backed layer encoder remains available as
-`scripts/build_openmeteo_layers.py`, and the production GFS path uses
-`scripts/render_gfs_layers_from_point_package.py` for point/layer consistency.
+GFS and CAMS WebP layers are generated from the local Open-Meteo API, not from
+the old Python GRIB parsing chain or precomputed point `.bin` packages. Point
+weather queries should read the same Open-Meteo `.om` runtime through the local
+API, so the production layer flow only builds map-layer products. The reusable
+API-backed layer encoder remains `scripts/build_openmeteo_layers.py`.
 
 Before serving or exporting products, generate the local Open-Meteo `.om`
 runtime data from source files. The GFS point API uses Open-Meteo's `gfs_global`
@@ -56,11 +55,21 @@ mixer, so both `gfs013` and `gfs025` must be present locally. `gfs025` supplies
 variables missing from GFS013 sflux files, including visibility and several
 weather-code dependencies.
 
+CAMS production is selected explicitly with `WEATHER_CAMS_SOURCE`. Use `ftp`
+for ECMWF CAMS FTP/ECPDS production and `ads` only for the ADS/CDS backup path;
+FTP/ECPDS runs are probed for remote file availability before production. The
+scripts do not automatically switch sources after a failed FTP/ECPDS run. Put
+real credential values in `config/singapore.private.env`; the tracked example
+config only contains empty variable names.
+
+For CAMS FTP/ECPDS, the scheduler can run every 30 minutes like GFS. It probes
+the newest complete remote run first; ADS/CDS mode keeps the fixed UTC target
+schedule because it is an API request path rather than direct file publication.
+
 Point-output parity also requires Open-Meteo's Copernicus DEM90 static data for
 land elevation correction. For production, keep the runtime data local and
-preseed `copernicus_dem90/static/lat_*.om` files; use `REMOTE_DATA_DIRECTORY`
-only for explicitly approved reference/debug runs because it allows HTTP range
-reads from processed `.om` mirrors.
+preseed `copernicus_dem90/static/lat_*.om` files from a project-owned DEM
+source.
 
 ```bash
 bash scripts/download_openmeteo_runtime_data.sh
@@ -88,26 +97,6 @@ python3 scripts/run_openmeteo_target_validation.py \
   --output-dir docs/validation/reports
 ```
 
-Build the matching point package for a known validated Open-Meteo window:
-
-```bash
-python3 scripts/build_openmeteo_point_package.py \
-  --api-base-url http://127.0.0.1:18080/v1/forecast \
-  --output-dir ./data/openmeteo_points/gfs013_point \
-  --model gfs_global \
-  --run 2026-06-26T18:00 \
-  --start-hour 2026-06-25T07:00 \
-  --end-hour 2026-06-27T08:00
-```
-
-Render GFS layers from that point package:
-
-```bash
-python3 scripts/render_gfs_layers_from_point_package.py \
-  --point-dir ./data/openmeteo_points/gfs013_point \
-  --output-dir ./data/openmeteo_layers/gfs013_surface
-```
-
 Build the server layer products used by production:
 
 ```bash
@@ -116,9 +105,10 @@ bash scripts/build_server_openmeteo_layers.sh
 
 The server flow writes GFS WebP layers to
 `data/openmeteo_layers/gfs013_surface` and CAMS WebP layers to
-`data/openmeteo_layers/cams_global`, and writes the matching GFS point package to
-`data/openmeteo_points/gfs013_point`. It defaults to 50 hourly frames from the
-current UTC hour and can be pinned with `WEATHER_OPENMETEO_LAYER_START_HOUR`,
+`data/openmeteo_layers/cams_global`. It does not build or publish
+`point_weather.bin`, `pressure_profile.bin`, `point_package`, or
+`pressure_profile_package`. It defaults to 121 hourly frames from the current UTC
+hour and can be pinned with `WEATHER_OPENMETEO_LAYER_START_HOUR`,
 `WEATHER_OPENMETEO_LAYER_END_HOUR`, `WEATHER_OPENMETEO_LAYER_FRAME_COUNT`, or
 `WEATHER_OPENMETEO_GFS_RUN`.
 
@@ -135,3 +125,36 @@ python3 scripts/validate_openmeteo_layers.py \
 Run the current validation gate as 100 batches of 10 unique points x 24 frames.
 Stop after 3 failed batches and record the changed revision, report, and
 source-chain analysis before changing code again.
+
+## Production Scheduling
+
+Production scheduling is expressed in UTC only. Do not encode local server time
+or region-specific time-zone names in scripts or crontab entries.
+
+GFS uses a lightweight official-source probe every 30 minutes. The probe checks
+NOAA GFS `.idx` files for `gfs013` sflux, `gfs025` pgrb2, and `gfs025` pgrb2b
+through the configured forecast horizon. Only after a newer run is complete does
+the GFS production cycle download source data, restart the local Open-Meteo API,
+and rebuild the GFS WebP layers. While a GFS production cycle is still running,
+later probe ticks skip instead of probing or starting another cycle:
+
+```bash
+bash scripts/run_gfs_probe_and_cycle.sh
+```
+
+CAMS global forecasts are checked only twice per day after the normal official
+availability windows. The scheduled script computes the target `00Z` or `12Z`
+run using UTC and starts CAMS production only when that run is not already
+current:
+
+```bash
+bash scripts/run_cams_scheduled_cycle.sh
+```
+
+The production crontab should use:
+
+```cron
+CRON_TZ=UTC
+*/30 * * * * WEATHER_FORECAST_APP_DIR=/opt/1panel/apps/weather_forecast_server /bin/bash /opt/1panel/apps/weather_forecast_server/scripts/run_gfs_probe_and_cycle.sh
+30 10,22 * * * WEATHER_FORECAST_APP_DIR=/opt/1panel/apps/weather_forecast_server /bin/bash /opt/1panel/apps/weather_forecast_server/scripts/run_cams_scheduled_cycle.sh
+```

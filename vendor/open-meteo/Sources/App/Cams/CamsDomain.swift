@@ -107,19 +107,17 @@ enum CamsDomain: String, GenericDomain, CaseIterable {
     var grid: any Gridable {
         switch self {
         case .cams_global:
-            if WeatherForecastServerSourceConfig.camsAreaDownloadEnabled {
-                let slice = WeatherForecastServerSourceConfig.regularGridSlice(
-                    fullNx: 900,
-                    fullNy: 451,
-                    latMin: -90,
-                    lonMin: -180,
-                    dx: 0.4,
-                    dy: 0.4,
-                    region: WeatherForecastServerSourceConfig.region
-                )
-                return RegularGrid(nx: slice.nx, ny: slice.ny, latMin: Float(slice.latMin), lonMin: Float(slice.lonMin), dx: 0.4, dy: 0.4)
-            }
-            return RegularGrid(nx: 900, ny: 451, latMin: -90, lonMin: -180, dx: 0.4, dy: 0.4)
+            let base = RegularGrid(nx: 900, ny: 451, latMin: -90, lonMin: -180, dx: 0.4, dy: 0.4)
+            let slice = WeatherForecastServerSourceConfig.regularGridSlice(
+                fullNx: 900,
+                fullNy: 451,
+                latMin: Double(base.latMin),
+                lonMin: Double(base.lonMin),
+                dx: 0.4,
+                dy: 0.4,
+                region: WeatherForecastServerSourceConfig.region
+            )
+            return RegionalRegularGrid(base: base, x0: slice.x0, y0: slice.y0, nx: slice.nx, ny: slice.ny)
         case .cams_global_greenhouse_gases:
             return RegularGrid(nx: 3600, ny: 1801, latMin: -90, lonMin: -180, dx: 0.1, dy: 0.1)
         case .cams_europe:
@@ -501,31 +499,6 @@ enum CamsVariable: String, CaseIterable, GenericVariable, GenericVariableMixable
             return ("carbon_monoxide", massMixingToUgm3, "co")
         case .methane:
             return ("methane", massMixingToUgm3, "ch4")
-        default:
-            return nil
-        }
-    }
-
-    func getCamsGlobalAreaApiName() -> String? {
-        switch self {
-        case .aerosol_optical_depth:
-            return "total_aerosol_optical_depth_550nm"
-        case .pm2_5:
-            return "particulate_matter_2.5um"
-        case .pm10:
-            return "particulate_matter_10um"
-        case .uv_index:
-            return "uv_biologically_effective_dose"
-        case .carbon_monoxide:
-            return "carbon_monoxide"
-        case .nitrogen_dioxide:
-            return "nitrogen_dioxide"
-        case .sulphur_dioxide:
-            return "sulphur_dioxide"
-        case .ozone:
-            return "ozone"
-        case .dust:
-            return "dust_aerosol_0.9-20um_mixing_ratio"
         default:
             return nil
         }

@@ -65,6 +65,13 @@ CAMS_TARGET_VARIABLES = [
     "uv_index_clear_sky",
     "us_aqi",
     "european_aqi",
+    "ch_aqi",
+    "ch_iaqi_pm2_5",
+    "ch_iaqi_pm10",
+    "ch_iaqi_so2",
+    "ch_iaqi_no2",
+    "ch_iaqi_o3",
+    "ch_iaqi_co",
 ]
 
 

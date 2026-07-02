@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+source "$(dirname "$0")/openmeteo_runtime_common.sh"
+
+load_weather_env
+openmeteo_set_runtime_defaults
+write_sanitized_env_file
+cleanup_sanitized_env() {
+  rm -f "$SANITIZED_ENV_FILE"
+}
+trap cleanup_sanitized_env EXIT
+
+CAMS_CONCURRENT="${WEATHER_CAMS_DOWNLOAD_CONCURRENT:-1}"
+CAMS_FTP_USER="${WEATHER_CAMS_FTP_USER:-}"
+CAMS_FTP_PASSWORD="${WEATHER_CAMS_FTP_PASSWORD:-}"
+CAMS_VARIABLES="${WEATHER_CAMS_VARIABLES:-pm2_5,pm10,aerosol_optical_depth,dust,carbon_monoxide,nitrogen_dioxide,ozone,sulphur_dioxide}"
+CAMS_RUN="${WEATHER_CAMS_RUN:-}"
+
+if [[ -z "$CAMS_FTP_USER" || -z "$CAMS_FTP_PASSWORD" ]]; then
+  printf '%s\n' "Both WEATHER_CAMS_FTP_USER and WEATHER_CAMS_FTP_PASSWORD are required for CAMS FTP/ECPDS download." >&2
+  exit 2
+fi
+
+cleanup_download_work_dirs "$DATA_DIR/download-cams_global"
+run_openmeteo download-cams cams_global \
+  $(append_run_arg "$CAMS_RUN") \
+  --only-variables "$CAMS_VARIABLES" \
+  --concurrent "$CAMS_CONCURRENT"
+
+cleanup_openmeteo_http_cache
