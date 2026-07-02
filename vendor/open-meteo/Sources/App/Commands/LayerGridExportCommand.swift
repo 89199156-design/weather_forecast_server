@@ -53,15 +53,21 @@ struct LayerGridExportCommand: AsyncCommand {
 
     struct Signature: CommandSignature {
         @Option(name: "request", help: "JSON request produced by scripts/build_openmeteo_layers.py")
-        var request: String
+        var request: String?
 
         @Option(name: "output-dir", help: "Directory where float32 variable files are written")
-        var outputDirectory: String
+        var outputDirectory: String?
     }
 
     func run(using context: CommandContext, signature: Signature) async throws {
         let logger = context.application.logger
-        let requestData = try Data(contentsOf: URL(fileURLWithPath: signature.request))
+        guard let requestPath = signature.request else {
+            throw ForecastApiError.generic(message: "--request is required")
+        }
+        guard let outputDirectory = signature.outputDirectory else {
+            throw ForecastApiError.generic(message: "--output-dir is required")
+        }
+        let requestData = try Data(contentsOf: URL(fileURLWithPath: requestPath))
         let request = try JSONDecoder().decode(LayerGridExportRequest.self, from: requestData)
 
         guard request.width == request.longitudes.count else {
@@ -82,7 +88,7 @@ struct LayerGridExportCommand: AsyncCommand {
         let timeSettings = timeRange.toSettings(run: run)
         let timestamps = timeRange.map { $0.timeIntervalSince1970 }
 
-        let outputURL = URL(fileURLWithPath: signature.outputDirectory, isDirectory: true)
+        let outputURL = URL(fileURLWithPath: outputDirectory, isDirectory: true)
         try FileManager.default.createDirectory(at: outputURL, withIntermediateDirectories: true)
 
         let metadata = LayerGridExportMetadata(
@@ -107,7 +113,7 @@ struct LayerGridExportCommand: AsyncCommand {
 
         for variable in request.variables {
             let url = outputURL.appendingPathComponent("\(variable).float32")
-            FileManager.default.createFile(atPath: url.path, contents: nil)
+            _ = FileManager.default.createFile(atPath: url.path, contents: nil)
             guard let handle = FileHandle(forWritingAtPath: url.path) else {
                 throw ForecastApiError.generic(message: "cannot open output file for \(variable)")
             }
