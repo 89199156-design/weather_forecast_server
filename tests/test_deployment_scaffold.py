@@ -34,53 +34,44 @@ def test_build_script_uses_root_context_and_new_repository_paths_only():
     assert "satellite" not in script.lower()
 
 
-def test_singapore_deploy_example_uses_new_path_and_openmeteo_container():
-    script = (ROOT / "scripts" / "deploy_singapore_candidate.sh").read_text(encoding="utf-8")
-
-    assert "/opt/1panel/apps/weather_forecast_server" in script
-    assert "weather_server_gfs" not in script
-    assert "weather-forecast-openmeteo" in script
-    assert "satellite" not in script.lower()
+def test_singapore_internal_http_deploy_script_is_removed():
+    assert not (ROOT / "scripts" / "deploy_singapore_candidate.sh").exists()
 
 
-def test_singapore_deploy_makes_data_directory_writable_by_openmeteo_user():
-    script = (ROOT / "scripts" / "deploy_singapore_candidate.sh").read_text(encoding="utf-8")
+def test_legacy_bin_product_builders_are_removed():
+    removed_paths = [
+        ROOT / "scripts" / "build_openmeteo_point_package.py",
+        ROOT / "scripts" / "build_openmeteo_pressure_profile_package.py",
+        ROOT / "scripts" / "render_gfs_layers_from_point_package.py",
+        ROOT / "tests" / "test_openmeteo_point_package.py",
+        ROOT / "tests" / "test_openmeteo_pressure_profile_package.py",
+    ]
+    for path in removed_paths:
+        assert not path.exists()
 
-    assert "WEATHER_OPENMETEO_UID" in script
-    assert "WEATHER_OPENMETEO_GID" in script
-    assert "chown" in script
-    assert "$DATA_DIR" in script
-
-
-def test_singapore_deploy_filters_empty_env_values_before_docker_run():
-    script = (ROOT / "scripts" / "deploy_singapore_candidate.sh").read_text(encoding="utf-8")
-
-    assert "SANITIZED_ENV_FILE" in script
-    assert "mktemp" in script
-    assert "cleanup_sanitized_env" in script
-    assert "--env-file \"$SANITIZED_ENV_FILE\"" in script
-    assert "--env-file \"$ENV_FILE\"" not in script
-    assert "env | sort | awk -F=" in script
-    assert "$1 ~ /^WEATHER_/" in script
-    assert 'DATA_RUN_DIRECTORY' in script
-    assert 'CACHE_SIZE' in script
-    assert '$2 != ""' in script
-    assert "source_env_file" in script
-    assert 'source_env_file "$ENV_FILE"' in script
-    assert 'source "$ENV_FILE"' not in script
-
-
-def test_singapore_deploy_requires_dem_source_for_openmeteo_parity():
-    script = (ROOT / "scripts" / "deploy_singapore_candidate.sh").read_text(encoding="utf-8")
-
-    assert "dem_region_lat_bounds" in script
-    assert "WEATHER_REGION_BOTTOM_LAT" in script
-    assert "WEATHER_REGION_TOP_LAT" in script
-    assert 'lat_${lat}.om' in script
-    assert "compgen -G" not in script
-    assert "require_dem_source" in script
-    assert "copernicus_dem90/static/lat_*.om" in script
-    assert "WEATHER_REQUIRE_DEM_SOURCE" in script
+    active_paths = [
+        ROOT / "README.md",
+        ROOT / "scripts" / "build_server_openmeteo_layers.sh",
+        ROOT / "scripts" / "build_openmeteo_gfs_layers.sh",
+        ROOT / "scripts" / "build_openmeteo_cams_layers.sh",
+        ROOT / "scripts" / "run_openmeteo_production_cycle.sh",
+        ROOT / "scripts" / "run_gfs_production_cycle.sh",
+        ROOT / "scripts" / "run_cams_production_cycle.sh",
+        ROOT / "scripts" / "run_cams_ftp_production_cycle.sh",
+        ROOT / "scripts" / "run_cams_ads_production_cycle.sh",
+    ]
+    forbidden = (
+        "point_weather.bin",
+        "pressure_profile.bin",
+        "point_package",
+        "pressure_profile_package",
+        "openmeteo_points",
+        "render_gfs_layers_from_point_package",
+    )
+    for path in active_paths:
+        text = path.read_text(encoding="utf-8")
+        for value in forbidden:
+            assert value not in text
 
 
 def test_runtime_data_download_covers_openmeteo_gfs_mixer_and_cams_global():
@@ -371,17 +362,24 @@ def test_cams_global_download_is_ftp_ecpds_only():
     assert "getCamsGlobalAreaApiName" not in cams_domain
 
 
-def test_layer_scripts_are_documented_as_openmeteo_api_backed():
+def test_layer_scripts_are_documented_as_openmeteo_engine_backed():
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     build_script = (ROOT / "scripts" / "build_openmeteo_layers.py").read_text(encoding="utf-8")
     validate_script = (ROOT / "scripts" / "validate_openmeteo_layers.py").read_text(encoding="utf-8")
+    configure = (ROOT / "vendor" / "open-meteo" / "Sources" / "App" / "configure.swift").read_text(encoding="utf-8")
 
     assert "scripts/build_openmeteo_layers.py" in readme
     assert "scripts/build_openmeteo_point_package.py" not in readme
     assert "scripts/render_gfs_layers_from_point_package.py" not in readme
     assert "scripts/build_server_openmeteo_layers.sh" in readme
     assert "scripts/validate_openmeteo_layers.py" in readme
-    assert "Open-Meteo API" in readme
+    assert "Open-Meteo engine" in readme
+    assert "import requests" not in build_script
+    assert "requests.get" not in build_script
+    assert "/v1/forecast" not in build_script
+    assert "/v1/air-quality" not in build_script
+    assert "127.0.0.1:18080" not in build_script
+    assert 'app.asyncCommands.use(LayerGridExportCommand(), as: "export-layer-grid")' in configure
     assert "gfs_raw_download_core" not in build_script
     assert "gfs_raw_download_core" not in validate_script
     assert "satellite" not in build_script.lower()
@@ -394,28 +392,22 @@ def test_server_layer_flow_builds_gfs_and_cams_products():
 
     script = script_path.read_text(encoding="utf-8")
 
-    assert "WEATHER_OPENMETEO_LAYER_FRAME_COUNT" in script
-    assert 'LAYER_FRAME_COUNT="${WEATHER_OPENMETEO_LAYER_FRAME_COUNT:-121}"' in script
-    assert "gfs013_surface" in script
-    assert "cams_global" in script
+    assert "scripts/build_openmeteo_gfs_layers.sh" in script
+    assert "scripts/build_openmeteo_cams_layers.sh" in script
     assert "data/public" in script
     assert "point_package" not in script
     assert "pressure_profile_package" not in script
     assert "openmeteo_points" not in script
-    assert '--scope gfs' in script
-    assert '--scope cams' in script
-    assert "WEATHER_OPENMETEO_GFS_RUN" in script
-    assert "WEATHER_OPENMETEO_GFS_API_URL" in script
-    assert "WEATHER_OPENMETEO_CAMS_API_URL" in script
+    assert "WEATHER_OPENMETEO_GFS_API_URL" not in script
+    assert "WEATHER_OPENMETEO_CAMS_API_URL" not in script
     assert "date -u -d" not in script
-    assert "http://127.0.0.1:18080/v1/air-quality" in script
+    assert "http://127.0.0.1:18080" not in script
+    assert "/v1/forecast" not in script
+    assert "/v1/air-quality" not in script
     assert "http://127.0.0.1:18084" not in script
-    assert "scripts/build_openmeteo_layers.py" in script
     assert "scripts/build_openmeteo_point_package.py" not in script
     assert "scripts/build_openmeteo_pressure_profile_package.py" not in script
     assert "scripts/render_gfs_layers_from_point_package.py" not in script
-    assert 'publish_public_link "$GFS_OUTPUT_DIR" "$PUBLIC_DATA_DIR/gfs013_surface"' in script
-    assert 'publish_public_link "$CAMS_OUTPUT_DIR" "$PUBLIC_DATA_DIR/cams_global"' in script
 
 
 def test_production_cycle_downloads_runtime_before_layer_build():
@@ -425,10 +417,14 @@ def test_production_cycle_downloads_runtime_before_layer_build():
     script = script_path.read_text(encoding="utf-8")
 
     assert "scripts/download_openmeteo_runtime_data.sh" in script
-    assert "scripts/deploy_singapore_candidate.sh" in script
     assert "scripts/build_server_openmeteo_layers.sh" in script
-    assert script.index("scripts/download_openmeteo_runtime_data.sh") < script.index("scripts/deploy_singapore_candidate.sh")
-    assert script.index("scripts/deploy_singapore_candidate.sh") < script.index("scripts/build_server_openmeteo_layers.sh")
+    assert "scripts/deploy_singapore_candidate.sh" not in script
+    assert "restart local Open-Meteo API" not in script
+    assert script.index("scripts/download_openmeteo_runtime_data.sh") < script.index("scripts/build_server_openmeteo_layers.sh")
+    assert "download runtime data start=" in script
+    assert "download runtime data end=" in script
+    assert "build layer products start=" in script
+    assert "build layer products end=" in script
     assert "flock -n" in script
 
 
@@ -453,6 +449,12 @@ def test_gfs_probe_cycle_uses_official_indices_before_gfs_only_production():
     assert 'export WEATHER_OPENMETEO_GFS_RUN="$layer_start_hour"' in production
     assert 'export WEATHER_OPENMETEO_LAYER_FRAME_COUNT="121"' in production
     assert "unset WEATHER_OPENMETEO_LAYER_END_HOUR" in production
+    assert "restart local Open-Meteo API" not in production
+    assert "scripts/deploy_singapore_candidate.sh" not in production
+    assert "download runtime data run=$RUN start=" in production
+    assert "download runtime data run=$RUN end=" in production
+    assert "build GFS layer products start=" in production
+    assert "build GFS layer products end=" in production
     assert "download-cams" not in download
     assert "date -u" in cycle
     assert "CST" not in cycle
@@ -489,6 +491,12 @@ def test_cams_scheduled_cycle_uses_utc_twice_daily_target_logic():
     assert "download_openmeteo_cams_ads_data.sh" not in production
     assert 'export WEATHER_OPENMETEO_LAYER_FRAME_COUNT="121"' in production
     assert "unset WEATHER_OPENMETEO_LAYER_END_HOUR" in production
+    assert "restart local Open-Meteo API" not in production
+    assert "scripts/deploy_singapore_candidate.sh" not in production
+    assert "download runtime data run=$RUN start=" in production
+    assert "download runtime data run=$RUN end=" in production
+    assert "build CAMS layer products start=" in production
+    assert "build CAMS layer products end=" in production
     assert "download-gfs" not in download
     assert "date -u" in scheduled
     assert "CST" not in scheduled
@@ -505,10 +513,16 @@ def test_split_layer_builders_publish_only_their_product():
     assert "date -u -d" not in cams
     assert "--scope gfs" in gfs
     assert "--scope cams" not in gfs
+    assert "export-layer-grid" in gfs
+    assert "http://127.0.0.1:18080" not in gfs
+    assert "/v1/forecast" not in gfs
     assert "gfs013_surface" in gfs
     assert "cams_global" not in gfs
     assert "--scope cams" in cams
     assert "--scope gfs" not in cams
+    assert "export-layer-grid" in cams
+    assert "http://127.0.0.1:18080" not in cams
+    assert "/v1/air-quality" not in cams
     assert "cams_global" in cams
     assert "gfs013_surface" not in cams
     assert "date -u" in gfs

@@ -45,8 +45,11 @@ mkdir -p "$LOG_DIR"
   export WEATHER_OPENMETEO_PUBLIC_DATA_DIR="${WEATHER_OPENMETEO_PUBLIC_DATA_DIR:-/opt/1panel/apps/weather/data}"
   export WEATHER_OPENMETEO_LAYER_ROOT_DIR="${WEATHER_OPENMETEO_LAYER_ROOT_DIR:-$APP_DIR/data/openmeteo_layers}"
 
-  echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_GFS] download runtime data run=$RUN"
+  download_start="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+  echo "$download_start [OPENMETEO_GFS] download runtime data run=$RUN start=$download_start"
   bash scripts/download_openmeteo_gfs_data.sh
+  download_end="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+  echo "$download_end [OPENMETEO_GFS] download runtime data run=$RUN end=$download_end"
 
   python3 scripts/validate_openmeteo_latest_run.py \
     --data-dir "${WEATHER_OPENMETEO_DATA_DIR:-$APP_DIR/data/openmeteo}" \
@@ -54,11 +57,11 @@ mkdir -p "$LOG_DIR"
     --domains ncep_gfs013,ncep_gfs025 \
     --min-frames "$(( ${WEATHER_GFS_MAX_FORECAST_HOUR:-120} + 1 ))"
 
-  echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_GFS] restart local Open-Meteo API"
-  bash scripts/deploy_singapore_candidate.sh
-
-  echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_GFS] build GFS layer products"
+  layer_start="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+  echo "$layer_start [OPENMETEO_GFS] build GFS layer products start=$layer_start"
   bash scripts/build_openmeteo_gfs_layers.sh
+  layer_end="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+  echo "$layer_end [OPENMETEO_GFS] build GFS layer products end=$layer_end"
 
   echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_GFS] completed run=$RUN"
 } 9>"$LOCK_FILE" >> "$LOG_DIR/openmeteo_gfs_cycle.log" 2>&1

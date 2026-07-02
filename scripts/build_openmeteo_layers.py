@@ -13,16 +13,10 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
 import numpy as np
-import requests
 from PIL import Image
 
 
-DEFAULT_GFS_API_BASE_URL = os.environ.get("WEATHER_OPENMETEO_GFS_API_URL", "http://127.0.0.1:18080/v1/forecast")
-DEFAULT_CAMS_API_BASE_URL = os.environ.get(
-    "WEATHER_OPENMETEO_CAMS_API_URL",
-    "http://127.0.0.1:18080/v1/air-quality",
-)
-DEFAULT_API_BASE_URL = os.environ.get("WEATHER_OPENMETEO_API_URL", DEFAULT_GFS_API_BASE_URL)
+DEFAULT_API_BASE_URL = os.environ.get("WEATHER_OPENMETEO_API_URL", "")
 DEFAULT_GFS_OUTPUT_DIR = os.environ.get(
     "WEATHER_OPENMETEO_LAYER_DIR",
     "./data/openmeteo_layers/gfs013_surface",
@@ -293,10 +287,8 @@ def layer_api_options_for_scope(scope: str) -> dict[str, str]:
 
 
 def default_api_base_url_for_scope(scope: str) -> str:
-    if scope == "gfs":
-        return DEFAULT_GFS_API_BASE_URL
-    if scope == "cams":
-        return DEFAULT_CAMS_API_BASE_URL
+    if scope in {"gfs", "cams"}:
+        return DEFAULT_API_BASE_URL
     raise ValueError(f"unknown layer scope: {scope}")
 
 
@@ -472,159 +464,44 @@ def required_api_variables(layer_definitions: Sequence[LayerDefinition]) -> list
     return variables
 
 
-def build_forecast_params(
-    *,
-    latitudes: Sequence[float],
-    longitudes: Sequence[float],
-    variables: Sequence[str],
-    model: str,
-    start_hour: str,
-    end_hour: str,
-    api_options: Mapping[str, str] | None = None,
-) -> dict[str, str]:
-    return build_layer_api_params(
-        scope="gfs",
-        latitudes=latitudes,
-        longitudes=longitudes,
-        variables=variables,
-        model=model,
-        domain=None,
-        start_hour=start_hour,
-        end_hour=end_hour,
-        api_options=api_options,
-    )
-
-
-def build_layer_api_params(
+def build_export_request_payload(
     *,
     scope: str,
-    latitudes: Sequence[float],
-    longitudes: Sequence[float],
+    grid: RegionGrid,
     variables: Sequence[str],
     model: str | None,
     domain: str | None,
     start_hour: str,
     end_hour: str,
-    api_options: Mapping[str, str] | None = None,
     run: str | None = None,
-    request_forecast_hours: int | None = None,
-) -> dict[str, str]:
-    params = {
-        "latitude": ",".join(f"{value:.6f}" for value in latitudes),
-        "longitude": ",".join(f"{value:.6f}" for value in longitudes),
-        "hourly": ",".join(variables),
-        "timezone": "UTC",
-        "cell_selection": "land",
-    }
-    if run:
-        params["run"] = run
-        params["forecast_hours"] = str(request_forecast_hours or 1)
-    else:
-        params["start_hour"] = start_hour
-        params["end_hour"] = end_hour
+    chunk_size: int = 250,
+) -> dict[str, Any]:
     if scope == "gfs":
-        params["models"] = model or DEFAULT_LAYER_MODEL
+        selected_model = model or DEFAULT_LAYER_MODEL
     elif scope == "cams":
-        params["domains"] = domain or DEFAULT_CAMS_DOMAIN
+        selected_model = domain or DEFAULT_CAMS_DOMAIN
     else:
         raise ValueError(f"unknown layer scope: {scope}")
-    params.update(dict(layer_api_options_for_scope(scope) if api_options is None else api_options))
-    return params
+    return {
+        "scope": scope,
+        "model": selected_model,
+        "run": run,
+        "start_hour": start_hour,
+        "end_hour": end_hour,
+        "width": grid.width,
+        "height": grid.height,
+        "latitudes": grid.latitude_values,
+        "longitudes": grid.longitude_values,
+        "variables": list(variables),
+        "chunk_size": chunk_size,
+    }
 
 
-def fetch_forecast_chunk(
-    *,
-    api_base_url: str,
-    latitudes: Sequence[float],
-    longitudes: Sequence[float],
-    variables: Sequence[str],
-    model: str,
-    start_hour: str,
-    end_hour: str,
-    api_options: Mapping[str, str] | None = None,
-    timeout_seconds: float,
-    request_retries: int = 0,
-    request_retry_delay: float = 2.0,
-    request_pause: float = 0.0,
-) -> list[dict[str, Any]]:
-    return fetch_layer_api_chunk(
-        api_base_url=api_base_url,
-        latitudes=latitudes,
-        longitudes=longitudes,
-        variables=variables,
-        scope="gfs",
-        model=model,
-        domain=None,
-        start_hour=start_hour,
-        end_hour=end_hour,
-        api_options=api_options,
-        timeout_seconds=timeout_seconds,
-        request_retries=request_retries,
-        request_retry_delay=request_retry_delay,
-        request_pause=request_pause,
-    )
-
-
-def fetch_layer_api_chunk(
-    *,
-    api_base_url: str,
-    latitudes: Sequence[float],
-    longitudes: Sequence[float],
-    variables: Sequence[str],
-    scope: str,
-    model: str | None,
-    domain: str | None,
-    start_hour: str,
-    end_hour: str,
-    api_options: Mapping[str, str] | None = None,
-    timeout_seconds: float,
-    api_host_header: str | None = None,
-    run: str | None = None,
-    request_forecast_hours: int | None = None,
-    request_retries: int = 0,
-    request_retry_delay: float = 2.0,
-    request_pause: float = 0.0,
-) -> list[dict[str, Any]]:
-    params = build_layer_api_params(
-        scope=scope,
-        latitudes=latitudes,
-        longitudes=longitudes,
-        variables=variables,
-        model=model,
-        domain=domain,
-        start_hour=start_hour,
-        end_hour=end_hour,
-        api_options=api_options,
-        run=run,
-        request_forecast_hours=request_forecast_hours,
-    )
-    headers = {"Host": api_host_header} if api_host_header else None
-    attempts = max(0, request_retries) + 1
-    for attempt in range(1, attempts + 1):
-        try:
-            response = requests.get(api_base_url, params=params, headers=headers, timeout=timeout_seconds)
-            if response.status_code == 429 or response.status_code >= 500:
-                response.raise_for_status()
-            response.raise_for_status()
-            break
-        except requests.HTTPError as error:
-            status_code = error.response.status_code if error.response is not None else None
-            can_retry = status_code == 429 or (status_code is not None and status_code >= 500)
-            if attempt >= attempts or not can_retry:
-                raise
-            time.sleep(request_retry_delay)
-        except requests.RequestException:
-            if attempt >= attempts:
-                raise
-            time.sleep(request_retry_delay)
-    if request_pause > 0:
-        time.sleep(request_pause)
-    payload = response.json()
-    if isinstance(payload, dict):
-        return [payload]
-    if not isinstance(payload, list):
-        raise ValueError(f"unexpected Open-Meteo response type: {type(payload)!r}")
-    return payload
+def write_export_request(path: Path, payload: Mapping[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + f".tmp.{os.getpid()}")
+    tmp_path.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    tmp_path.replace(path)
 
 
 def iter_flat_chunks(total: int, chunk_size: int) -> Iterable[range]:
@@ -670,38 +547,6 @@ def build_manifest_payload(
     }
 
 
-def request_forecast_hours_for_window(*, run: str | None, end_hour: str) -> int | None:
-    if not run:
-        return None
-    run_dt = parse_utc_hour(run)
-    end_dt = parse_utc_hour(end_hour)
-    if end_dt < run_dt:
-        raise ValueError("--end-hour must not be before --run")
-    return int((end_dt - run_dt).total_seconds() // 3600) + 1
-
-
-def trim_response_to_time_window(response: list[dict[str, Any]], *, start_hour: str, end_hour: str) -> list[dict[str, Any]]:
-    start_dt = parse_utc_hour(start_hour)
-    end_dt = parse_utc_hour(end_hour)
-    trimmed_response: list[dict[str, Any]] = []
-    for item in response:
-        copied = dict(item)
-        hourly = dict(copied.get("hourly") or {})
-        times = list(hourly.get("time") or [])
-        selected = [
-            index
-            for index, value in enumerate(times)
-            if start_dt <= parse_utc_hour(str(value)) <= end_dt
-        ]
-        if selected:
-            for key, value in list(hourly.items()):
-                if isinstance(value, list) and len(value) == len(times):
-                    hourly[key] = [value[index] for index in selected]
-            copied["hourly"] = hourly
-        trimmed_response.append(copied)
-    return trimmed_response
-
-
 def selected_layers(names: str | None, *, scope: str = "gfs") -> tuple[LayerDefinition, ...]:
     definitions = layer_definitions_for_scope(scope)
     if not names:
@@ -714,38 +559,37 @@ def selected_layers(names: str | None, *, scope: str = "gfs") -> tuple[LayerDefi
     return layers
 
 
-def allocate_variable_store(variable_dir: Path, variables: Sequence[str], shape: tuple[int, int, int]) -> dict[str, np.memmap]:
-    variable_dir.mkdir(parents=True, exist_ok=True)
-    stores: dict[str, np.memmap] = {}
-    for variable in variables:
-        store = np.memmap(variable_dir / f"{variable}.float32", dtype=np.float32, mode="w+", shape=shape)
-        store[:] = np.nan
-        stores[variable] = store
-    return stores
-
-
-def fill_variable_store(
+def load_exported_variable_stores(
     *,
-    stores: dict[str, np.memmap],
-    response: list[dict[str, Any]],
-    flat_indices: Sequence[int],
+    export_dir: Path,
     variables: Sequence[str],
-    expected_times: Sequence[str],
     grid: RegionGrid,
-) -> None:
-    if len(response) != len(flat_indices):
-        raise ValueError(f"response point count mismatch: got {len(response)} expected {len(flat_indices)}")
-    for item, flat_index in zip(response, flat_indices):
-        hourly = item.get("hourly") or {}
-        times = hourly.get("time") or []
-        if list(times) != list(expected_times):
-            raise ValueError("Open-Meteo response time axis changed between chunks")
-        y, x, _lat, _lon = grid.point_for_flat_index(flat_index)
-        for variable in variables:
-            values = hourly.get(variable)
-            if values is None:
-                raise ValueError(f"Open-Meteo response missing variable {variable}")
-            stores[variable][:, y, x] = np.asarray(values, dtype=np.float32)
+) -> tuple[list[str], dict[str, np.memmap]]:
+    metadata_path = export_dir / "metadata.json"
+    if not metadata_path.exists():
+        raise FileNotFoundError(f"missing Open-Meteo export metadata: {metadata_path}")
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    if metadata.get("layout") != "point_time":
+        raise ValueError(f"unsupported Open-Meteo export layout: {metadata.get('layout')!r}")
+    if int(metadata.get("width", 0)) != grid.width or int(metadata.get("height", 0)) != grid.height:
+        raise ValueError("Open-Meteo export grid does not match layer grid")
+    timestamps = [int(value) for value in metadata.get("times") or []]
+    if not timestamps:
+        raise ValueError("Open-Meteo export has no time axis")
+    times = [datetime.fromtimestamp(value, timezone.utc).strftime("%Y-%m-%dT%H:00") for value in timestamps]
+    stores: dict[str, np.memmap] = {}
+    shape = (grid.flat_count(), len(times))
+    expected_bytes = grid.flat_count() * len(times) * np.dtype(np.float32).itemsize
+    for variable in variables:
+        path = export_dir / f"{variable}.float32"
+        if not path.exists():
+            raise FileNotFoundError(f"missing Open-Meteo export variable: {path}")
+        if path.stat().st_size != expected_bytes:
+            raise ValueError(
+                f"Open-Meteo export variable {variable} has {path.stat().st_size} bytes, expected {expected_bytes}"
+            )
+        stores[variable] = np.memmap(path, dtype=np.float32, mode="r", shape=shape)
+    return times, stores
 
 
 def publish_build(
@@ -774,7 +618,7 @@ def publish_build(
 
 def build_layers(
     *,
-    api_base_url: str,
+    export_dir: Path,
     output_dir: Path,
     start_hour: str,
     end_hour: str,
@@ -783,17 +627,15 @@ def build_layers(
     bottom_lat: float,
     top_lat: float,
     layer_names: str | None,
-    chunk_size: int,
-    timeout_seconds: float,
     scope: str = "gfs",
     model: str = DEFAULT_LAYER_MODEL,
     domain: str | None = None,
-    api_host_header: str | None = None,
     run: str | None = None,
-    request_retries: int = 0,
-    request_retry_delay: float = 2.0,
-    request_pause: float = 0.0,
 ) -> dict[str, Any]:
+    _ = end_hour
+    _ = model
+    _ = domain
+    _ = run
     grid = compute_gfs013_region_grid(
         left_lon=left_lon,
         right_lon=right_lon,
@@ -802,97 +644,11 @@ def build_layers(
     )
     layers = selected_layers(layer_names, scope=scope)
     variables = required_api_variables(layers)
-    api_options = layer_api_options_for_scope(scope)
-    request_forecast_hours = request_forecast_hours_for_window(run=run, end_hour=end_hour)
     build_dir = output_dir / f".build_{os.getpid()}_{int(time.time())}"
-    variable_dir = build_dir / ".variables"
     build_dir.mkdir(parents=True, exist_ok=True)
 
     try:
-        chunk_iter = iter_flat_chunks(grid.flat_count(), chunk_size)
-        first_chunk = next(chunk_iter)
-        first_latitudes: list[float] = []
-        first_longitudes: list[float] = []
-        for flat_index in first_chunk:
-            _y, _x, lat, lon = grid.point_for_flat_index(flat_index)
-            first_latitudes.append(lat)
-            first_longitudes.append(lon)
-        first_response = fetch_layer_api_chunk(
-            api_base_url=api_base_url,
-            latitudes=first_latitudes,
-            longitudes=first_longitudes,
-            variables=variables,
-            scope=scope,
-            model=model,
-            domain=domain,
-            start_hour=start_hour,
-            end_hour=end_hour,
-            api_options=api_options,
-            timeout_seconds=timeout_seconds,
-            api_host_header=api_host_header,
-            run=run,
-            request_forecast_hours=request_forecast_hours,
-            request_retries=request_retries,
-            request_retry_delay=request_retry_delay,
-            request_pause=request_pause,
-        )
-        if run:
-            first_response = trim_response_to_time_window(first_response, start_hour=start_hour, end_hour=end_hour)
-        if not first_response:
-            raise RuntimeError("Open-Meteo API returned no locations")
-        times = list((first_response[0].get("hourly") or {}).get("time") or [])
-        if not times:
-            raise RuntimeError("Open-Meteo API returned no hourly time axis")
-        stores = allocate_variable_store(variable_dir, variables, (len(times), grid.height, grid.width))
-        fill_variable_store(
-            stores=stores,
-            response=first_response,
-            flat_indices=list(first_chunk),
-            variables=variables,
-            expected_times=times,
-            grid=grid,
-        )
-
-        completed_points = len(first_response)
-        for chunk in chunk_iter:
-            latitudes: list[float] = []
-            longitudes: list[float] = []
-            chunk_indices = list(chunk)
-            for flat_index in chunk_indices:
-                _y, _x, lat, lon = grid.point_for_flat_index(flat_index)
-                latitudes.append(lat)
-                longitudes.append(lon)
-            response = fetch_layer_api_chunk(
-                api_base_url=api_base_url,
-                latitudes=latitudes,
-                longitudes=longitudes,
-                variables=variables,
-                scope=scope,
-                model=model,
-                domain=domain,
-                start_hour=start_hour,
-                end_hour=end_hour,
-                api_options=api_options,
-                timeout_seconds=timeout_seconds,
-                api_host_header=api_host_header,
-                run=run,
-                request_forecast_hours=request_forecast_hours,
-                request_retries=request_retries,
-                request_retry_delay=request_retry_delay,
-                request_pause=request_pause,
-            )
-            if run:
-                response = trim_response_to_time_window(response, start_hour=start_hour, end_hour=end_hour)
-            fill_variable_store(
-                stores=stores,
-                response=response,
-                flat_indices=chunk_indices,
-                variables=variables,
-                expected_times=times,
-                grid=grid,
-            )
-            completed_points += len(response)
-            print(f"[openmeteo-layers] fetched {completed_points}/{grid.flat_count()} grid points", flush=True)
+        times, stores = load_exported_variable_stores(export_dir=export_dir, variables=variables, grid=grid)
 
         file_timestamps = frame_timestamps(times)
         stems = frame_stems(times, start_hour)
@@ -902,11 +658,17 @@ def build_layers(
             layer_dir.mkdir(parents=True, exist_ok=True)
             for time_index, stem in enumerate(stems):
                 if layer.data_type == "vector":
-                    u = stores[layer.api_variables[0]][time_index]
-                    v = stores[layer.api_variables[1]][time_index]
+                    u = np.asarray(stores[layer.api_variables[0]][:, time_index], dtype=np.float32).reshape(
+                        grid.height, grid.width
+                    )
+                    v = np.asarray(stores[layer.api_variables[1]][:, time_index], dtype=np.float32).reshape(
+                        grid.height, grid.width
+                    )
                     rgba = encode_wind_rgba(u, v)
                 else:
-                    values = np.asarray(stores[layer.api_variables[0]][time_index], dtype=np.float32)
+                    values = np.asarray(stores[layer.api_variables[0]][:, time_index], dtype=np.float32).reshape(
+                        grid.height, grid.width
+                    )
                     values = derive_layer_values(layer, values)
                     values = values * np.float32(layer.api_multiplier)
                     rgba = encode_scalar_rgba(values, vmin=layer.vmin, scale=layer.scale)
@@ -934,10 +696,8 @@ def build_layers(
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Build regional WebP weather layers from the local Open-Meteo API.")
+    parser = argparse.ArgumentParser(description="Build regional WebP weather layers from Open-Meteo engine exports.")
     parser.add_argument("--scope", choices=["gfs", "cams"], default="gfs")
-    parser.add_argument("--api-base-url", default=None)
-    parser.add_argument("--api-host-header")
     parser.add_argument("--output-dir", default=None)
     parser.add_argument("--model", default=DEFAULT_LAYER_MODEL)
     parser.add_argument("--domain", default=DEFAULT_CAMS_DOMAIN)
@@ -950,19 +710,47 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--top-lat", type=float, default=float(os.environ.get("WEATHER_REGION_TOP_LAT", "58.0")))
     parser.add_argument("--layers", default=None, help="Comma-separated layer names. Defaults to all surface layers.")
     parser.add_argument("--chunk-size", type=int, default=int(os.environ.get("WEATHER_OPENMETEO_LAYER_CHUNK_SIZE", "250")))
-    parser.add_argument("--timeout-seconds", type=float, default=float(os.environ.get("WEATHER_OPENMETEO_LAYER_TIMEOUT", "120")))
-    parser.add_argument("--request-retries", type=int, default=int(os.environ.get("WEATHER_OPENMETEO_LAYER_REQUEST_RETRIES", "2")))
-    parser.add_argument("--request-retry-delay", type=float, default=float(os.environ.get("WEATHER_OPENMETEO_LAYER_REQUEST_RETRY_DELAY", "2")))
-    parser.add_argument("--request-pause", type=float, default=float(os.environ.get("WEATHER_OPENMETEO_LAYER_REQUEST_PAUSE", "0")))
+    parser.add_argument("--prepare-export-request", help="Write Open-Meteo export-layer-grid request JSON and exit.")
+    parser.add_argument("--export-dir", help="Directory containing export-layer-grid metadata and float32 files.")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    api_base_url = args.api_base_url or default_api_base_url_for_scope(args.scope)
+    grid = compute_gfs013_region_grid(
+        left_lon=args.left_lon,
+        right_lon=args.right_lon,
+        bottom_lat=args.bottom_lat,
+        top_lat=args.top_lat,
+    )
+    layers = selected_layers(args.layers, scope=args.scope)
+    variables = required_api_variables(layers)
+    if args.prepare_export_request:
+        payload = build_export_request_payload(
+            scope=args.scope,
+            grid=grid,
+            variables=variables,
+            model=args.model,
+            domain=args.domain if args.scope == "cams" else None,
+            start_hour=args.start_hour,
+            end_hour=args.end_hour,
+            run=args.run,
+            chunk_size=args.chunk_size,
+        )
+        request_path = Path(args.prepare_export_request)
+        write_export_request(request_path, payload)
+        print(
+            "[openmeteo-layers] export request ready "
+            f"source={payload['scope']} model={payload['model']} variables={len(variables)} "
+            f"grid={grid.width}x{grid.height} request={request_path}",
+            flush=True,
+        )
+        return
+    if not args.export_dir:
+        raise SystemExit("--export-dir is required unless --prepare-export-request is used")
     output_dir = Path(args.output_dir or default_output_dir_for_scope(args.scope))
     manifest = build_layers(
-        api_base_url=api_base_url,
+        export_dir=Path(args.export_dir),
         output_dir=output_dir,
         scope=args.scope,
         model=args.model,
@@ -974,13 +762,7 @@ def main() -> None:
         bottom_lat=args.bottom_lat,
         top_lat=args.top_lat,
         layer_names=args.layers,
-        chunk_size=args.chunk_size,
-        timeout_seconds=args.timeout_seconds,
-        api_host_header=args.api_host_header,
         run=args.run,
-        request_retries=args.request_retries,
-        request_retry_delay=args.request_retry_delay,
-        request_pause=args.request_pause,
     )
     print(
         "[openmeteo-layers] ready "

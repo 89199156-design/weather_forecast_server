@@ -326,35 +326,52 @@ def test_openmeteo_weather_code_drives_phase_and_thunderstorm_layers():
     )
 
 
-def test_api_request_params_preserve_openmeteo_point_semantics():
+def test_export_request_payload_preserves_openmeteo_engine_inputs():
     layers = load_module()
-
-    params = layers.build_forecast_params(
-        latitudes=[31.23, 23.13],
-        longitudes=[121.47, 113.26],
-        variables=["temperature_2m", "wind_u_component_10m"],
-        model="gfs013",
-        start_hour="2026-06-25T07:00",
-        end_hour="2026-06-27T08:00",
+    grid = layers.compute_gfs013_region_grid(
+        left_lon=70.0,
+        right_lon=70.2,
+        bottom_lat=20.0,
+        top_lat=20.2,
     )
 
-    assert params["latitude"] == "31.230000,23.130000"
-    assert params["longitude"] == "121.470000,113.260000"
-    assert params["hourly"] == "temperature_2m,wind_u_component_10m"
-    assert params["models"] == "gfs013"
-    assert params["timezone"] == "UTC"
-    assert params["cell_selection"] == "land"
-    assert params["wind_speed_unit"] == "ms"
-    assert "elevation" not in params
+    payload = layers.build_export_request_payload(
+        scope="gfs",
+        grid=grid,
+        variables=["temperature_2m", "wind_u_component_10m"],
+        model="gfs_global",
+        domain=None,
+        start_hour="2026-06-25T07:00",
+        end_hour="2026-06-27T08:00",
+        run="2026-06-25T06:00",
+        chunk_size=12,
+    )
+
+    assert payload["scope"] == "gfs"
+    assert payload["model"] == "gfs_global"
+    assert payload["run"] == "2026-06-25T06:00"
+    assert payload["start_hour"] == "2026-06-25T07:00"
+    assert payload["end_hour"] == "2026-06-27T08:00"
+    assert payload["variables"] == ["temperature_2m", "wind_u_component_10m"]
+    assert payload["chunk_size"] == 12
+    assert payload["width"] == grid.width
+    assert payload["height"] == grid.height
+    assert payload["latitudes"] == grid.latitude_values
+    assert payload["longitudes"] == grid.longitude_values
 
 
-def test_cams_api_request_params_use_air_quality_domain():
+def test_cams_export_request_payload_uses_air_quality_domain():
     layers = load_module()
+    grid = layers.compute_gfs013_region_grid(
+        left_lon=121.0,
+        right_lon=121.2,
+        bottom_lat=31.0,
+        top_lat=31.2,
+    )
 
-    params = layers.build_layer_api_params(
+    payload = layers.build_export_request_payload(
         scope="cams",
-        latitudes=[31.23],
-        longitudes=[121.47],
+        grid=grid,
         variables=["pm2_5", "dust"],
         model=None,
         domain="cams_global",
@@ -362,9 +379,7 @@ def test_cams_api_request_params_use_air_quality_domain():
         end_hour="2026-06-26T06:00",
     )
 
-    assert params["latitude"] == "31.230000"
-    assert params["longitude"] == "121.470000"
-    assert params["hourly"] == "pm2_5,dust"
-    assert params["domains"] == "cams_global"
-    assert "models" not in params
-    assert params["timezone"] == "UTC"
+    assert payload["scope"] == "cams"
+    assert payload["model"] == "cams_global"
+    assert payload["run"] is None
+    assert payload["variables"] == ["pm2_5", "dust"]

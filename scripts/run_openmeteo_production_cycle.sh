@@ -18,14 +18,17 @@ mkdir -p "$LOG_DIR"
     git pull --ff-only
   fi
 
-  echo "$(date '+%F %T') [OPENMETEO_PRODUCTION] download runtime data"
+  download_start="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+  echo "$download_start [OPENMETEO_PRODUCTION] download runtime data start=$download_start"
   bash scripts/download_openmeteo_runtime_data.sh
+  download_end="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+  echo "$download_end [OPENMETEO_PRODUCTION] download runtime data end=$download_end"
 
-  echo "$(date '+%F %T') [OPENMETEO_PRODUCTION] restart local Open-Meteo API"
-  bash scripts/deploy_singapore_candidate.sh
-
-  echo "$(date '+%F %T') [OPENMETEO_PRODUCTION] build layer products"
+  layer_start="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+  echo "$layer_start [OPENMETEO_PRODUCTION] build layer products start=$layer_start"
   bash scripts/build_server_openmeteo_layers.sh
+  layer_end="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+  echo "$layer_end [OPENMETEO_PRODUCTION] build layer products end=$layer_end"
 
-  echo "$(date '+%F %T') [OPENMETEO_PRODUCTION] completed"
+  echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_PRODUCTION] completed"
 } 9>"$LOCK_FILE" >> "$LOG_DIR/openmeteo_production_cycle.log" 2>&1
