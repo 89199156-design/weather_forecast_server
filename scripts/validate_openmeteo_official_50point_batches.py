@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import random
 import sys
 import time
 import urllib.parse
@@ -29,7 +30,6 @@ from validate_openmeteo_point_api import (  # noqa: E402
     fetch_json,
     fetch_json_via_ssh,
     format_utc_hour,
-    generate_points,
     parse_utc_hour,
 )
 
@@ -84,8 +84,84 @@ def parse_scopes(value: str) -> set[str]:
     return scopes
 
 
+def parse_gfs_reference_mode(value: str) -> str:
+    if value not in {"single-run", "latest"}:
+        raise ValueError("--gfs-reference-mode must be 'single-run' or 'latest'")
+    return value
+
+
 def format_points(points: list[dict[str, float]], key: str) -> str:
     return ",".join(str(point[key]) for point in points)
+
+
+def build_validation_points(
+    *,
+    total_points: int,
+    left_lon: float,
+    right_lon: float,
+    bottom_lat: float,
+    top_lat: float,
+    seed: int,
+    grid_point_ratio: float,
+) -> list[dict[str, float]]:
+    """Build reproducible random validation points with grid/off-grid coverage."""
+
+    if total_points <= 0:
+        raise ValueError("total_points must be positive")
+    if left_lon >= right_lon:
+        raise ValueError("left_lon must be less than right_lon")
+    if bottom_lat >= top_lat:
+        raise ValueError("bottom_lat must be less than top_lat")
+    if not 0.0 <= grid_point_ratio <= 1.0:
+        raise ValueError("grid_point_ratio must be in [0, 1]")
+
+    rng = random.Random(seed)
+    grid_count = int(round(total_points * grid_point_ratio))
+    grid_count = min(total_points, max(0, grid_count))
+    points: list[dict[str, float]] = []
+    seen: set[tuple[float, float]] = set()
+
+    lon_min_i = math.ceil(left_lon * 4)
+    lon_max_i = math.floor(right_lon * 4)
+    lat_min_i = math.ceil(bottom_lat * 4)
+    lat_max_i = math.floor(top_lat * 4)
+    if grid_count and (lon_min_i > lon_max_i or lat_min_i > lat_max_i):
+        raise ValueError("bounds do not contain any quarter-degree grid point")
+
+    max_attempts = total_points * 100
+    attempts = 0
+    while len(points) < grid_count:
+        attempts += 1
+        if attempts > max_attempts:
+            raise ValueError("could not generate enough unique grid points")
+        longitude = round(rng.randint(lon_min_i, lon_max_i) / 4, 6)
+        latitude = round(rng.randint(lat_min_i, lat_max_i) / 4, 6)
+        key = (latitude, longitude)
+        if key in seen:
+            continue
+        seen.add(key)
+        points.append({"latitude": latitude, "longitude": longitude})
+
+    def is_quarter_degree(value: float) -> bool:
+        return abs(value * 4 - round(value * 4)) < 1e-6
+
+    attempts = 0
+    while len(points) < total_points:
+        attempts += 1
+        if attempts > max_attempts:
+            raise ValueError("could not generate enough unique off-grid points")
+        latitude = round(rng.uniform(bottom_lat, top_lat), 6)
+        longitude = round(rng.uniform(left_lon, right_lon), 6)
+        if is_quarter_degree(latitude) and is_quarter_degree(longitude):
+            continue
+        key = (latitude, longitude)
+        if key in seen:
+            continue
+        seen.add(key)
+        points.append({"latitude": latitude, "longitude": longitude})
+
+    rng.shuffle(points)
+    return points
 
 
 def request_hours(run: str, end_hour: str) -> int:
@@ -115,6 +191,18 @@ def gfs_official_window(gfs_run: str, requested_start_hour: str, requested_frame
         "start_hour": run_hour,
         "end_hour": end_hour,
         "frames": request_hours(run_hour, end_hour),
+    }
+
+
+def gfs_latest_window(requested_start_hour: str, requested_frames: int) -> dict[str, Any]:
+    if requested_frames <= 0:
+        raise ValueError("requested_frames must be positive")
+    requested_start = parse_utc_hour(requested_start_hour)
+    requested_end = requested_start + timedelta(hours=requested_frames - 1)
+    return {
+        "start_hour": format_utc_hour(requested_start),
+        "end_hour": format_utc_hour(requested_end),
+        "frames": requested_frames,
     }
 
 
@@ -161,6 +249,7 @@ def reference_params(
     end_hour: str,
     *,
     gfs_run: str,
+    gfs_reference_mode: str = "single-run",
     gfs_model: str = "gfs_global",
 ) -> dict[str, Any]:
     params: dict[str, Any] = {
@@ -173,8 +262,14 @@ def reference_params(
     if scope == "gfs":
         params["models"] = gfs_model
         params["wind_speed_unit"] = "ms"
-        params["run"] = gfs_run
-        params["forecast_hours"] = request_hours(gfs_run, end_hour)
+        if gfs_reference_mode == "single-run":
+            params["run"] = gfs_run
+            params["forecast_hours"] = request_hours(gfs_run, end_hour)
+        elif gfs_reference_mode == "latest":
+            params["start_hour"] = start_hour
+            params["end_hour"] = end_hour
+        else:
+            raise ValueError(f"unknown GFS reference mode: {gfs_reference_mode}")
     elif scope == "cams":
         params["domains"] = "cams_global"
         params["start_hour"] = start_hour
@@ -487,6 +582,7 @@ def validate_scope_batch(
     reference_base_url: str,
     reference_ssh_host: str | None,
     gfs_run: str,
+    gfs_reference_mode: str = "single-run",
     start_hour: str,
     end_hour: str,
     frames: int,
@@ -512,7 +608,7 @@ def validate_scope_batch(
                 variable_chunk,
                 start_hour,
                 end_hour,
-                gfs_run=gfs_run if scope == "gfs" else None,
+                gfs_run=None,
                 gfs_model=gfs_model,
             ),
             host_header=None,
@@ -531,6 +627,7 @@ def validate_scope_batch(
                 start_hour,
                 end_hour,
                 gfs_run=gfs_run,
+                gfs_reference_mode=gfs_reference_mode,
                 gfs_model=gfs_model,
             ),
             host_header=None,
@@ -636,12 +733,25 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--data-dir", default=None)
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--gfs-run", required=True)
+    parser.add_argument(
+        "--gfs-reference-mode",
+        default="single-run",
+        choices=("single-run", "latest"),
+        help="Use official single-runs API or official latest forecast API for GFS reference.",
+    )
     parser.add_argument("--gfs-start-hour", required=True)
     parser.add_argument("--cams-start-hour", required=True)
     parser.add_argument("--frames", type=int, default=50)
     parser.add_argument("--batches", type=int, default=10)
     parser.add_argument("--points-per-batch", type=int, default=50)
     parser.add_argument("--point-offset", type=int, default=0, help="Skip this many deterministic points before batching.")
+    parser.add_argument("--point-seed", type=int, default=20260703, help="Seed for reproducible random validation points.")
+    parser.add_argument(
+        "--grid-point-ratio",
+        type=float,
+        default=0.25,
+        help="Share of validation points forced onto quarter-degree grid coordinates.",
+    )
     parser.add_argument("--chunk-size", type=int, default=20)
     parser.add_argument("--tolerance", type=float, default=0.001)
     parser.add_argument("--timeout", type=float, default=90.0)
@@ -669,25 +779,35 @@ def main() -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
     gfs_pressure_compare_levels = parse_level_csv(args.gfs_pressure_compare_levels)
     scopes = parse_scopes(args.scopes)
+    gfs_reference_mode = parse_gfs_reference_mode(args.gfs_reference_mode)
     if args.point_offset < 0:
         raise ValueError("--point-offset must be non-negative")
     if args.max_failed_points_per_batch < 0:
         raise ValueError("--max-failed-points-per-batch must be non-negative")
     total_points = args.point_offset + args.batches * args.points_per_batch
-    all_points = generate_points(
-        total_points,
+    all_points = build_validation_points(
+        total_points=total_points,
         left_lon=args.left_lon,
         right_lon=args.right_lon,
         bottom_lat=args.bottom_lat,
         top_lat=args.top_lat,
+        seed=args.point_seed,
+        grid_point_ratio=args.grid_point_ratio,
     )
     points = all_points[args.point_offset:]
     if len({(p["latitude"], p["longitude"]) for p in points}) != len(points):
         raise ValueError("generated points are not unique")
-    gfs_window = gfs_official_window(
-        gfs_run=args.gfs_run,
-        requested_start_hour=args.gfs_start_hour,
-        requested_frames=args.frames,
+    gfs_window = (
+        gfs_official_window(
+            gfs_run=args.gfs_run,
+            requested_start_hour=args.gfs_start_hour,
+            requested_frames=args.frames,
+        )
+        if gfs_reference_mode == "single-run"
+        else gfs_latest_window(
+            requested_start_hour=args.gfs_start_hour,
+            requested_frames=args.frames,
+        )
     )
     gfs_start = str(gfs_window["start_hour"])
     gfs_frames = int(gfs_window["frames"])
@@ -709,7 +829,10 @@ def main() -> int:
         "counts": {"gfs": len(gfs_variables), "cams": len(cams_variables)},
         "scopes": sorted(scopes),
         "gfs_model": args.gfs_model,
+        "gfs_reference_mode": gfs_reference_mode,
         "point_offset": args.point_offset,
+        "point_seed": args.point_seed,
+        "grid_point_ratio": args.grid_point_ratio,
         "availability_points": availability_points,
         "windows": {
             "gfs": {"start": gfs_start, "end": gfs_end, "run": format_utc_hour(parse_utc_hour(args.gfs_run))},
@@ -746,6 +869,7 @@ def main() -> int:
                 reference_base_url=reference_base_url,
                 reference_ssh_host=args.reference_ssh_host,
                 gfs_run=format_utc_hour(parse_utc_hour(args.gfs_run)),
+                gfs_reference_mode=gfs_reference_mode,
                 start_hour=start_hour,
                 end_hour=end_hour,
                 frames=scope_frames,
@@ -784,6 +908,8 @@ def main() -> int:
             "planned_batches": args.batches,
             "points_per_batch": args.points_per_batch,
             "point_offset": args.point_offset,
+            "point_seed": args.point_seed,
+            "grid_point_ratio": args.grid_point_ratio,
             "frames": {"gfs": gfs_frames, "cams": args.frames},
             "elapsed_seconds": round(time.time() - started, 3),
             "available_variables": {"gfs": len(gfs_variables), "cams": len(cams_variables)},
@@ -802,6 +928,8 @@ def main() -> int:
         "planned_points": args.batches * args.points_per_batch,
         "points_per_batch": args.points_per_batch,
         "point_offset": args.point_offset,
+        "point_seed": args.point_seed,
+        "grid_point_ratio": args.grid_point_ratio,
         "frames": {"gfs": gfs_frames, "cams": args.frames},
         "elapsed_seconds": round(time.time() - started, 3),
         "available_variables": {"gfs": len(gfs_variables), "cams": len(cams_variables)},

@@ -30,7 +30,7 @@ def test_gfs_official_window_starts_at_run_and_covers_requested_end():
     }
 
 
-def test_gfs_validation_does_not_trim_official_run_response(monkeypatch):
+def test_gfs_validation_uses_static_window_locally_and_pinned_run_for_reference(monkeypatch):
     validator = load_module()
 
     seen_params = []
@@ -72,12 +72,62 @@ def test_gfs_validation_does_not_trim_official_run_response(monkeypatch):
     assert report["passed"] is True
     assert report["checked_values"] == 3
     assert seen_params[0]["models"] == "gfs013"
-    assert seen_params[0]["run"] == "2026-06-29T06:00"
-    assert seen_params[0]["forecast_hours"] == 3
-    assert "start_hour" not in seen_params[0]
+    assert seen_params[0]["start_hour"] == "2026-06-29T06:00"
+    assert seen_params[0]["end_hour"] == "2026-06-29T08:00"
+    assert "run" not in seen_params[0]
+    assert "forecast_hours" not in seen_params[0]
     assert seen_params[1]["models"] == "gfs013"
     assert seen_params[1]["run"] == "2026-06-29T06:00"
     assert seen_params[1]["forecast_hours"] == 3
+    assert "start_hour" not in seen_params[1]
+
+
+def test_gfs_validation_can_use_latest_reference_window(monkeypatch):
+    validator = load_module()
+
+    seen_params = []
+
+    def fake_fetch_hourlies(**kwargs):
+        seen_params.append(kwargs["params"])
+        return [
+            {
+                "time": ["2026-06-29T06:00", "2026-06-29T07:00"],
+                "temperature_2m": [27.0, 28.0],
+            }
+        ]
+
+    monkeypatch.setattr(validator, "fetch_hourlies", fake_fetch_hourlies)
+
+    report = validator.validate_scope_batch(
+        scope="gfs",
+        batch_index=1,
+        points=[{"latitude": 10.0, "longitude": 100.0}],
+        variables=["temperature_2m"],
+        api_base_url="local",
+        reference_base_url="official",
+        reference_ssh_host=None,
+        gfs_run="2026-06-29T06:00",
+        gfs_reference_mode="latest",
+        start_hour="2026-06-29T06:00",
+        end_hour="2026-06-29T07:00",
+        frames=2,
+        chunk_size=10,
+        tolerance=0.001,
+        timeout=1,
+        retries=0,
+        retry_delay=0,
+        request_pause=0,
+        gfs_model="gfs013",
+    )
+
+    assert report["passed"] is True
+    assert seen_params[0]["start_hour"] == "2026-06-29T06:00"
+    assert seen_params[0]["end_hour"] == "2026-06-29T07:00"
+    assert "run" not in seen_params[0]
+    assert seen_params[1]["start_hour"] == "2026-06-29T06:00"
+    assert seen_params[1]["end_hour"] == "2026-06-29T07:00"
+    assert "run" not in seen_params[1]
+    assert "forecast_hours" not in seen_params[1]
 
 
 def test_failed_point_count_deduplicates_multiple_variable_failures():
@@ -91,6 +141,40 @@ def test_failed_point_count_deduplicates_multiple_variable_failures():
     ]
 
     assert validator.failed_point_count(failures) == 2
+
+
+def test_build_validation_points_covers_unique_random_grid_and_off_grid_samples():
+    validator = load_module()
+
+    points = validator.build_validation_points(
+        total_points=1000,
+        left_lon=70.0,
+        right_lon=140.0,
+        bottom_lat=0.0,
+        top_lat=58.0,
+        seed=20260703,
+        grid_point_ratio=0.25,
+    )
+
+    assert len(points) == 1000
+    assert len({(point["latitude"], point["longitude"]) for point in points}) == 1000
+
+    def is_quarter_degree(value):
+        return abs(value * 4 - round(value * 4)) < 1e-6
+
+    grid_points = [
+        point
+        for point in points
+        if is_quarter_degree(point["latitude"]) and is_quarter_degree(point["longitude"])
+    ]
+    off_grid_points = [
+        point
+        for point in points
+        if not (is_quarter_degree(point["latitude"]) and is_quarter_degree(point["longitude"]))
+    ]
+
+    assert len(grid_points) >= 200
+    assert len(off_grid_points) >= 700
 
 
 def test_failure_gate_continues_until_failed_point_threshold_is_exceeded():

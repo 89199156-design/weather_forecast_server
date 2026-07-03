@@ -38,11 +38,16 @@ def test_singapore_internal_http_deploy_script_is_removed():
     assert not (ROOT / "scripts" / "deploy_singapore_candidate.sh").exists()
 
 
-def test_legacy_bin_product_builders_are_removed():
+def test_legacy_combined_and_bin_product_builders_are_removed():
     removed_paths = [
         ROOT / "scripts" / "build_openmeteo_point_package.py",
         ROOT / "scripts" / "build_openmeteo_pressure_profile_package.py",
         ROOT / "scripts" / "render_gfs_layers_from_point_package.py",
+        ROOT / "scripts" / "run_gfs_point_package.sh",
+        ROOT / "scripts" / "run_gfs_profile_build.sh",
+        ROOT / "scripts" / "download_openmeteo_runtime_data.sh",
+        ROOT / "scripts" / "run_openmeteo_production_cycle.sh",
+        ROOT / "scripts" / "build_server_openmeteo_layers.sh",
         ROOT / "tests" / "test_openmeteo_point_package.py",
         ROOT / "tests" / "test_openmeteo_pressure_profile_package.py",
     ]
@@ -51,12 +56,9 @@ def test_legacy_bin_product_builders_are_removed():
 
     active_paths = [
         ROOT / "README.md",
-        ROOT / "scripts" / "build_server_openmeteo_layers.sh",
         ROOT / "scripts" / "build_openmeteo_gfs_layers.sh",
         ROOT / "scripts" / "build_openmeteo_cams_layers.sh",
-        ROOT / "scripts" / "run_openmeteo_production_cycle.sh",
         ROOT / "scripts" / "run_gfs_production_cycle.sh",
-        ROOT / "scripts" / "run_cams_production_cycle.sh",
         ROOT / "scripts" / "run_cams_ftp_production_cycle.sh",
         ROOT / "scripts" / "run_cams_ads_production_cycle.sh",
     ]
@@ -74,43 +76,59 @@ def test_legacy_bin_product_builders_are_removed():
             assert value not in text
 
 
-def test_runtime_data_download_covers_openmeteo_gfs_mixer_and_cams_global():
-    script = (ROOT / "scripts" / "download_openmeteo_runtime_data.sh").read_text(encoding="utf-8")
+def test_split_downloaders_cover_openmeteo_domains_without_cross_source_coupling():
+    gfs = (ROOT / "scripts" / "download_openmeteo_gfs_data.sh").read_text(encoding="utf-8")
+    ftp = (ROOT / "scripts" / "download_openmeteo_cams_data.sh").read_text(encoding="utf-8")
+    ads = (ROOT / "scripts" / "download_openmeteo_cams_ads_data.sh").read_text(encoding="utf-8")
 
-    assert "download-gfs gfs013" in script
-    assert "download-gfs gfs025" in script
-    assert "download_gfs025_upper_level_variable" in script
-    assert "--only-variables" in script
-    assert "--upper-level" not in script
-    assert "download-cams cams_global" in script
-    assert "CAMS_VARIABLES=" in script
-    assert "--only-variables \"$CAMS_VARIABLES\"" in script
-    assert "CAMS_FTP_USER=" in script
-    assert "CAMS_FTP_PASSWORD=" in script
-    assert "carbon_monoxide,nitrogen_dioxide,ozone,sulphur_dioxide" in script
-    assert "WEATHER_CAMS_ADS" not in script
-    assert "WEATHER_CAMS_CDS" not in script
-    assert "read_cdsapi_key" not in script
-    assert "--cdskey" not in script
-    assert "--ftpuser" not in script
-    assert "--ftppassword" not in script
-    assert "set -a" in script
-    assert "source_env_file" in script
-    assert 'source_env_file "$ENV_FILE"' in script
-    assert "weather_server_gfs" not in script
-    assert "satellite" not in script.lower()
+    assert "download-gfs gfs013" in gfs
+    assert "download-gfs gfs025" in gfs
+    assert "download_gfs025_upper_level_variables" in gfs
+    assert "--only-variables" in gfs
+    assert "--upper-level" not in gfs
+    assert "download-cams" not in gfs
+    assert "CAMS_" not in gfs
+
+    assert "download-cams cams_global" in ftp
+    assert "CAMS_VARIABLES=" in ftp
+    assert "--only-variables \"$CAMS_VARIABLES\"" in ftp
+    assert "CAMS_FTP_USER=" in ftp
+    assert "CAMS_FTP_PASSWORD=" in ftp
+    assert "carbon_monoxide,nitrogen_dioxide,ozone,sulphur_dioxide" in ftp
+    assert "download-gfs" not in ftp
+    assert "WEATHER_CAMS_ADS" not in ftp
+    assert "WEATHER_CAMS_CDS" not in ftp
+    assert "read_cdsapi_key" not in ftp
+    assert "--cdskey" not in ftp
+
+    assert "download-cams-ads cams_global" in ads
+    assert "--cdskey \"$CAMS_ADS_KEY\"" in ads
+    assert "read_cdsapi_key" in ads
+    assert "download-gfs" not in ads
+    assert "download-cams cams_global" not in ads
+    assert "WEATHER_CAMS_FTP" not in ads
+    assert "CAMS_FTP" not in ads
 
 
-def test_runtime_data_download_cleans_only_temporary_download_workdirs_before_rebuild():
-    script = (ROOT / "scripts" / "download_openmeteo_runtime_data.sh").read_text(encoding="utf-8")
+def test_split_downloaders_clean_only_their_temporary_workdirs_before_rebuild():
+    gfs = (ROOT / "scripts" / "download_openmeteo_gfs_data.sh").read_text(encoding="utf-8")
+    ftp = (ROOT / "scripts" / "download_openmeteo_cams_data.sh").read_text(encoding="utf-8")
+    ads = (ROOT / "scripts" / "download_openmeteo_cams_ads_data.sh").read_text(encoding="utf-8")
 
-    assert "cleanup_download_work_dirs" in script
+    assert "cleanup_download_work_dirs" in gfs
     for path in (
         '"$DATA_DIR/download-ncep_gfs013"',
         '"$DATA_DIR/download-ncep_gfs025"',
-        '"$DATA_DIR/download-cams_global"',
     ):
-        assert path in script
+        assert path in gfs
+    assert '"$DATA_DIR/download-cams_global"' not in gfs
+
+    for script in (ftp, ads):
+        assert 'cleanup_download_work_dirs "$DATA_DIR/download-cams_global"' in script
+        assert '"$DATA_DIR/download-ncep_gfs013"' not in script
+        assert '"$DATA_DIR/download-ncep_gfs025"' not in script
+
+    combined = "\n".join((gfs, ftp, ads))
     for path in (
         '"$DATA_DIR/ncep_gfs013"',
         '"$DATA_DIR/ncep_gfs025"',
@@ -118,40 +136,120 @@ def test_runtime_data_download_cleans_only_temporary_download_workdirs_before_re
         '"$DATA_DIR/data_run/ncep_gfs013"',
         '"$DATA_DIR/data_run/ncep_gfs025"',
     ):
-        assert path not in script
+        assert path not in combined
 
 
-def test_runtime_data_download_sources_env_before_runtime_defaults():
-    script = (ROOT / "scripts" / "download_openmeteo_runtime_data.sh").read_text(encoding="utf-8")
+def test_split_downloaders_source_env_before_runtime_defaults():
+    scripts = [
+        (ROOT / "scripts" / "download_openmeteo_gfs_data.sh").read_text(encoding="utf-8"),
+        (ROOT / "scripts" / "download_openmeteo_cams_data.sh").read_text(encoding="utf-8"),
+        (ROOT / "scripts" / "download_openmeteo_cams_ads_data.sh").read_text(encoding="utf-8"),
+    ]
 
-    assert script.index('source_env_file "$ENV_FILE"') < script.index("GFS_MAX_FORECAST_HOUR=")
-    assert script.index('source_env_file "$ENV_FILE"') < script.index("CAMS_CONCURRENT=")
+    for script in scripts:
+        assert script.index("load_weather_env") < script.index("openmeteo_set_runtime_defaults")
 
 
-def test_runtime_data_download_chunks_gfs025_upper_levels_and_can_resume():
-    script = (ROOT / "scripts" / "download_openmeteo_runtime_data.sh").read_text(encoding="utf-8")
-    upper_function = script.split("download_gfs025_upper_level_variable()", 1)[1].split(
+def test_runtime_data_download_packages_gfs025_upper_levels_as_one_variable_collection():
+    script = (ROOT / "scripts" / "download_openmeteo_gfs_data.sh").read_text(encoding="utf-8")
+    common = (ROOT / "scripts" / "openmeteo_runtime_common.sh").read_text(encoding="utf-8")
+    config = (ROOT / "config" / "singapore.example.env").read_text(encoding="utf-8")
+    upper_function = script.split("download_gfs025_upper_level_variables()", 1)[1].split(
         "require_dem_source", 1
     )[0]
 
-    assert "GFS_UPPER_LEVEL_CHUNK_SIZE" in script
     assert "GFS_UPPER_LEVEL_CONCURRENT" in script
     assert "WEATHER_GFS_UPPER_LEVEL_DOWNLOAD_CONCURRENT" in script
-    assert "GFS_UPPER_LEVEL_PGRB2_LEVELS" in script
+    assert 'GFS_UPPER_LEVEL_CONCURRENT="${WEATHER_GFS_UPPER_LEVEL_DOWNLOAD_CONCURRENT:-4}"' in script
+    assert "WEATHER_GFS_UPPER_LEVEL_DOWNLOAD_CONCURRENT=4" in config
+    assert "GFS_UPPER_LEVEL_CHUNK_SIZE" not in script
+    assert "WEATHER_GFS_UPPER_LEVEL_CHUNK_SIZE" not in config
+    assert "GFS_UPPER_LEVEL_PGRB2_LEVELS" not in script
+    assert "WEATHER_GFS_UPPER_LEVEL_PGRB2_LEVELS" not in config
     assert "1000,975,950,925,900,850,800,750,700,650,600,550,500,400,300,200" in script
-    assert "level_is_in_csv" in script
-    assert "primary_levels" in script
-    assert "secondary_levels" in script
-    assert "upper_level_only_variable_chunks" in script
-    assert "while IFS= read -r only_variables" in script
-    assert "download_gfs025_upper_level_variable" in script
+    assert "gfs025_upper_level_only_variables" in script
+    assert "join_by_comma" in script
+    assert "level_is_in_csv" not in script
+    assert "primary_levels" not in script
+    assert "secondary_levels" not in script
+    assert "upper_level_only_variable_chunks" not in script
+    assert "while IFS= read -r only_variables" not in script
+    assert "download_gfs025_upper_level_variables" in script
+    assert "download_gfs025_upper_level_variable()" not in script
     assert "WEATHER_SKIP_GFS013_DOWNLOAD" not in script
     assert "WEATHER_SKIP_GFS025_SURFACE_DOWNLOAD" not in script
     assert "WEATHER_SKIP_GFS025_UPPER_LEVEL_DOWNLOAD" not in script
     assert "WEATHER_SKIP_CAMS_DOWNLOAD" not in script
-    assert "is_truthy" in script
+    assert "is_truthy" in common
+    assert '--only-variables "$only_variables"' in upper_function
     assert '--concurrent "$GFS_UPPER_LEVEL_CONCURRENT"' in upper_function
     assert '--concurrent "$GFS_CONCURRENT"' not in upper_function
+    assert script.count("run_openmeteo download-gfs gfs025") == 2
+
+
+def test_gfs_surface_download_uses_explicit_minimal_allowlists():
+    script = (ROOT / "scripts" / "download_openmeteo_gfs_data.sh").read_text(encoding="utf-8")
+    config = (ROOT / "config" / "singapore.example.env").read_text(encoding="utf-8")
+
+    assert "GFS013_SURFACE_VARIABLES=" in script
+    assert "GFS025_SURFACE_VARIABLES=" in script
+    assert "WEATHER_GFS013_SURFACE_VARIABLES=" in config
+    assert "WEATHER_GFS025_SURFACE_VARIABLES=" in config
+
+    gfs013_default = (
+        "temperature_2m,cloud_cover,cloud_cover_low,cloud_cover_mid,cloud_cover_high,"
+        "pressure_msl,relative_humidity_2m,precipitation,wind_v_component_10m,"
+        "wind_u_component_10m,snow_depth,showers,frozen_precipitation_percent,"
+        "uv_index,boundary_layer_height"
+    )
+    gfs025_default = (
+        "pressure_msl,categorical_freezing_rain,wind_gusts_10m,cape,lifted_index,"
+        "convective_inhibition,visibility"
+    )
+    assert gfs013_default in script
+    assert gfs025_default in script
+    assert f"WEATHER_GFS013_SURFACE_VARIABLES={gfs013_default}" in config
+    assert f"WEATHER_GFS025_SURFACE_VARIABLES={gfs025_default}" in config
+
+    for command_block in (
+        script.split("run_openmeteo download-gfs gfs013", 1)[1].split("run_openmeteo download-gfs gfs025", 1)[0],
+        script.split("run_openmeteo download-gfs gfs025", 1)[1].split('IFS="," read -ra upper_variables', 1)[0],
+    ):
+        assert "--only-variables" in command_block
+
+    gfs013_block = script.split("run_openmeteo download-gfs gfs013", 1)[1].split("run_openmeteo download-gfs gfs025", 1)[0]
+    gfs025_block = script.split("run_openmeteo download-gfs gfs025", 1)[1].split('IFS="," read -ra upper_variables', 1)[0]
+    assert '--only-variables "$GFS013_SURFACE_VARIABLES"' in gfs013_block
+    assert '--only-variables "$GFS025_SURFACE_VARIABLES"' in gfs025_block
+
+    unused_surface_variables = (
+        "temperature_80m",
+        "temperature_100m",
+        "wind_v_component_80m",
+        "wind_u_component_80m",
+        "wind_v_component_100m",
+        "wind_u_component_100m",
+        "surface_temperature",
+        "soil_temperature_0_to_10cm",
+        "soil_temperature_10_to_40cm",
+        "soil_temperature_40_to_100cm",
+        "soil_temperature_100_to_200cm",
+        "soil_moisture_0_to_10cm",
+        "soil_moisture_10_to_40cm",
+        "soil_moisture_40_to_100cm",
+        "soil_moisture_100_to_200cm",
+        "sensible_heat_flux",
+        "latent_heat_flux",
+        "freezing_level_height",
+        "shortwave_radiation",
+        "diffuse_radiation",
+        "uv_index_clear_sky",
+        "total_column_integrated_water_vapour",
+        "mass_density_8m",
+    )
+    configured_surface = f"{gfs013_default},{gfs025_default}"
+    for variable in unused_surface_variables:
+        assert variable not in configured_surface
 
 
 def test_singapore_config_uses_bounded_pressure_level_product_contract():
@@ -162,38 +260,121 @@ def test_singapore_config_uses_bounded_pressure_level_product_contract():
         "WEATHER_GFS_UPPER_LEVEL_VARIABLES="
         "temperature,wind_u_component,wind_v_component,geopotential_height,cloud_cover,relative_humidity,vertical_velocity"
     ) in config
+    assert "WEATHER_GFS_UPPER_LEVEL_PGRB2_LEVELS" not in config
+    assert "WEATHER_GFS_UPPER_LEVEL_CHUNK_SIZE" not in config
     assert "specific_humidity" not in config
 
 
 def test_singapore_config_enables_temporary_openmeteo_http_cache():
     config = (ROOT / "config" / "singapore.example.env").read_text(encoding="utf-8")
-    script = (ROOT / "scripts" / "download_openmeteo_runtime_data.sh").read_text(encoding="utf-8")
+    common = (ROOT / "scripts" / "openmeteo_runtime_common.sh").read_text(encoding="utf-8")
+    gfs_script = (ROOT / "scripts" / "download_openmeteo_gfs_data.sh").read_text(encoding="utf-8")
+    cams_script = (ROOT / "scripts" / "download_openmeteo_cams_data.sh").read_text(encoding="utf-8")
+    cams_ads_script = (ROOT / "scripts" / "download_openmeteo_cams_ads_data.sh").read_text(encoding="utf-8")
 
     assert "WEATHER_OPENMETEO_HTTP_CACHE_ENABLED=true" in config
     assert "WEATHER_OPENMETEO_HTTP_CACHE_DIR=/app/data/http_cache" in config
     assert "WEATHER_OPENMETEO_HTTP_CACHE_CLEANUP=true" in config
-    assert "HTTP_CACHE=" in script
-    assert "host_http_cache_dir" in script
-    assert 'rm -rf "$CACHE_DIR_HOST"' in script
+    assert "HTTP_CACHE=" in common
+    assert "host_http_cache_dir" in common
+    assert 'rm -rf "$cache_dir_host"' in common
+
+    for script in (gfs_script, cams_script, cams_ads_script):
+        assert "cleanup_sensitive_artifacts()" in script
+        assert "cleanup_openmeteo_http_cache" in script
+        assert "trap cleanup_sensitive_artifacts EXIT" in script
+        assert "trap cleanup_download_artifacts EXIT" not in script
+        assert "cleanup_download_artifacts()" not in script
+        trap_index = script.index("trap cleanup_sensitive_artifacts EXIT")
+        start_cleanup_index = script.index("\ncleanup_openmeteo_http_cache\n", trap_index)
+        first_download_index = script.index("run_openmeteo")
+        assert trap_index < start_cleanup_index < first_download_index
+        success_cleanup_index = script.rindex("\ncleanup_openmeteo_http_cache\n")
+        assert first_download_index < success_cleanup_index
+
+    expected_cache_dirs = {
+        gfs_script: "/app/data/http_cache/gfs",
+        cams_script: "/app/data/http_cache/cams_ftp",
+        cams_ads_script: "/app/data/http_cache/cams_ads",
+    }
+    for script, cache_dir in expected_cache_dirs.items():
+        cache_index = script.index(f'WEATHER_OPENMETEO_HTTP_CACHE_DIR="{cache_dir}"')
+        http_cache_index = script.index(f'HTTP_CACHE="{cache_dir}"')
+        defaults_index = script.index("openmeteo_set_runtime_defaults")
+        assert cache_index < http_cache_index < defaults_index
 
 
-def test_runtime_data_download_can_pin_domain_runs_without_engine_fork():
-    script = (ROOT / "scripts" / "download_openmeteo_runtime_data.sh").read_text(encoding="utf-8")
+def test_downloaders_clean_source_cache_only_at_start_and_after_success():
+    scripts = [
+        (ROOT / "scripts" / "download_openmeteo_gfs_data.sh").read_text(encoding="utf-8"),
+        (ROOT / "scripts" / "download_openmeteo_cams_data.sh").read_text(encoding="utf-8"),
+        (ROOT / "scripts" / "download_openmeteo_cams_ads_data.sh").read_text(encoding="utf-8"),
+    ]
 
-    assert "GFS013_RUN" in script
-    assert "GFS025_RUN" in script
-    assert "CAMS_RUN" in script
-    assert "WEATHER_GFS013_RUN" in script
-    assert "WEATHER_GFS025_RUN" in script
-    assert "WEATHER_CAMS_RUN" in script
-    assert 'append_run_arg "$GFS013_RUN"' in script
-    assert 'append_run_arg "$GFS025_RUN"' in script
-    assert 'append_run_arg "$CAMS_RUN"' in script
-    assert "--run" in script
+    for script in scripts:
+        assert "trap cleanup_sensitive_artifacts EXIT" in script
+        assert "trap cleanup_download_artifacts EXIT" not in script
+        assert "cleanup_download_artifacts()" not in script
+        cleanup_calls = [line for line in script.splitlines() if line.strip() == "cleanup_openmeteo_http_cache"]
+        assert len(cleanup_calls) == 2
+        first_run = script.index("run_openmeteo")
+        last_run = script.rindex("run_openmeteo")
+        first_cleanup = script.index("\ncleanup_openmeteo_http_cache\n")
+        last_cleanup = script.rindex("\ncleanup_openmeteo_http_cache\n")
+        assert first_cleanup < first_run
+        assert last_run < last_cleanup
+        assert "cleanup_openmeteo_http_cache" not in script[first_run:last_run]
+
+
+def test_production_cycles_clean_only_their_own_generated_om_products_before_download():
+    gfs = (ROOT / "scripts" / "run_gfs_production_cycle.sh").read_text(encoding="utf-8")
+    cams_ftp = (ROOT / "scripts" / "run_cams_ftp_production_cycle.sh").read_text(encoding="utf-8")
+    cams_ads = (ROOT / "scripts" / "run_cams_ads_production_cycle.sh").read_text(encoding="utf-8")
+
+    assert "cleanup_gfs_generated_products" in gfs
+    assert '"$DATA_DIR/ncep_gfs013"' in gfs
+    assert '"$DATA_DIR/ncep_gfs025"' in gfs
+    assert '"$DATA_DIR/data_run/ncep_gfs013"' in gfs
+    assert '"$DATA_DIR/data_run/ncep_gfs025"' in gfs
+    assert '"$DATA_DIR/cams_global"' not in gfs
+    assert "cleanup_gfs_generated_products" not in cams_ftp
+    assert "cleanup_gfs_generated_products" not in cams_ads
+
+    for script in (cams_ftp, cams_ads):
+        assert "cleanup_cams_generated_products" in script
+        assert '"$DATA_DIR/cams_global"' in script
+        assert '"$DATA_DIR/data_run/cams_global"' in script
+        assert "ncep_gfs013" not in script
+        assert "ncep_gfs025" not in script
+
+    assert gfs.index("cleanup_gfs_generated_products") < gfs.index("bash scripts/download_openmeteo_gfs_data.sh")
+    assert cams_ftp.index("cleanup_cams_generated_products") < cams_ftp.index("bash scripts/download_openmeteo_cams_data.sh")
+    assert cams_ads.index("cleanup_cams_generated_products") < cams_ads.index("bash scripts/download_openmeteo_cams_ads_data.sh")
+
+
+def test_runtime_data_download_can_pin_source_runs_without_engine_fork():
+    gfs = (ROOT / "scripts" / "download_openmeteo_gfs_data.sh").read_text(encoding="utf-8")
+    cams = (ROOT / "scripts" / "download_openmeteo_cams_data.sh").read_text(encoding="utf-8")
+    ads = (ROOT / "scripts" / "download_openmeteo_cams_ads_data.sh").read_text(encoding="utf-8")
+    production = (ROOT / "scripts" / "run_gfs_production_cycle.sh").read_text(encoding="utf-8")
+
+    assert "GFS_RUN" in gfs
+    assert "WEATHER_GFS_RUN" in gfs
+    assert "GFS013_RUN" not in gfs
+    assert "GFS025_RUN" not in gfs
+    assert "WEATHER_GFS013_RUN" not in gfs
+    assert "WEATHER_GFS025_RUN" not in gfs
+    assert gfs.count('append_run_arg "$GFS_RUN"') == 3
+    assert "WEATHER_GFS013_RUN" not in production
+    assert "WEATHER_GFS025_RUN" not in production
+    for script in (cams, ads):
+        assert "CAMS_RUN" in script
+        assert "WEATHER_CAMS_RUN" in script
+        assert 'append_run_arg "$CAMS_RUN"' in script
 
 
 def test_runtime_data_download_defaults_to_raw_local_om_generation():
-    script = (ROOT / "scripts" / "download_openmeteo_runtime_data.sh").read_text(encoding="utf-8")
+    gfs = (ROOT / "scripts" / "download_openmeteo_gfs_data.sh").read_text(encoding="utf-8")
     singapore_env = (ROOT / "config" / "singapore.example.env").read_text(encoding="utf-8")
 
     assert "WEATHER_GFS_FILTER" not in singapore_env
@@ -208,12 +389,12 @@ def test_runtime_data_download_defaults_to_raw_local_om_generation():
     assert "WEATHER_CAMS_CDS" not in singapore_env
     assert "DATA_RUN_DIRECTORY=/app/data/data_run/" in singapore_env
     assert "CACHE_SIZE=10GB" in singapore_env
-    assert "download-gfs gfs013" in script
-    assert "download-gfs gfs025" in script
+    assert "download-gfs gfs013" in gfs
+    assert "download-gfs gfs025" in gfs
 
 
 def test_runtime_data_download_uses_cams_ftp_ecpds_only():
-    script = (ROOT / "scripts" / "download_openmeteo_runtime_data.sh").read_text(encoding="utf-8")
+    script = (ROOT / "scripts" / "download_openmeteo_cams_data.sh").read_text(encoding="utf-8")
     common = (ROOT / "scripts" / "openmeteo_runtime_common.sh").read_text(encoding="utf-8")
 
     assert "CAMS_FTP_USER=" in script
@@ -262,11 +443,14 @@ def test_singapore_config_keeps_cams_credentials_empty_for_private_override():
 
 
 def test_runtime_data_download_filters_empty_env_values_before_docker_run():
-    script = (ROOT / "scripts" / "download_openmeteo_runtime_data.sh").read_text(encoding="utf-8")
+    script = (ROOT / "scripts" / "openmeteo_runtime_common.sh").read_text(encoding="utf-8")
+    gfs = (ROOT / "scripts" / "download_openmeteo_gfs_data.sh").read_text(encoding="utf-8")
 
     assert "SANITIZED_ENV_FILE" in script
     assert "mktemp" in script
-    assert "cleanup_sanitized_env" in script
+    assert "cleanup_sensitive_artifacts" in gfs
+    assert "trap cleanup_sensitive_artifacts EXIT" in gfs
+    assert "trap cleanup_download_artifacts EXIT" not in gfs
     assert "--env-file \"$SANITIZED_ENV_FILE\"" in script
     assert "--env-file \"$ENV_FILE\"" not in script
     assert "env | sort | awk -F=" in script
@@ -277,7 +461,7 @@ def test_runtime_data_download_filters_empty_env_values_before_docker_run():
 
 
 def test_runtime_data_download_requires_dem_source_for_openmeteo_parity():
-    script = (ROOT / "scripts" / "download_openmeteo_runtime_data.sh").read_text(encoding="utf-8")
+    script = (ROOT / "scripts" / "openmeteo_runtime_common.sh").read_text(encoding="utf-8")
 
     assert "preseed_dem_region_static_files" in script
     assert "WEATHER_DEM_PRESEED_ENABLED" in script
@@ -293,16 +477,16 @@ def test_runtime_data_download_requires_dem_source_for_openmeteo_parity():
 
 
 def test_runtime_data_download_preserves_explicit_environment_over_config_file():
-    script = (ROOT / "scripts" / "download_openmeteo_runtime_data.sh").read_text(encoding="utf-8")
+    script = (ROOT / "scripts" / "openmeteo_runtime_common.sh").read_text(encoding="utf-8")
 
     assert "capture_weather_env_overrides" in script
     assert "restore_weather_env_overrides" in script
     assert "WEATHER_ENV_OVERRIDES" in script
-    capture_call = script.index("\ncapture_weather_env_overrides\n")
-    source_call = script.index('source_env_file "$ENV_FILE"')
-    restore_call = script.index("\nrestore_weather_env_overrides\n")
+    load_weather_env = script.split("load_weather_env() {", 1)[1].split("\n}", 1)[0]
+    capture_call = load_weather_env.index("capture_weather_env_overrides")
+    source_call = load_weather_env.index('source_env_file "$ENV_FILE"')
+    restore_call = load_weather_env.index("restore_weather_env_overrides")
     assert capture_call < source_call < restore_call
-    assert restore_call < script.index("GFS_MAX_FORECAST_HOUR=")
 
 
 def test_openmeteo_downloader_only_changes_transport_and_region_grid():
@@ -367,11 +551,16 @@ def test_layer_scripts_are_documented_as_openmeteo_engine_backed():
     build_script = (ROOT / "scripts" / "build_openmeteo_layers.py").read_text(encoding="utf-8")
     validate_script = (ROOT / "scripts" / "validate_openmeteo_layers.py").read_text(encoding="utf-8")
     configure = (ROOT / "vendor" / "open-meteo" / "Sources" / "App" / "configure.swift").read_text(encoding="utf-8")
+    export_command = (
+        ROOT / "vendor" / "open-meteo" / "Sources" / "App" / "Commands" / "LayerGridExportCommand.swift"
+    ).read_text(encoding="utf-8")
 
     assert "scripts/build_openmeteo_layers.py" in readme
     assert "scripts/build_openmeteo_point_package.py" not in readme
     assert "scripts/render_gfs_layers_from_point_package.py" not in readme
-    assert "scripts/build_server_openmeteo_layers.sh" in readme
+    assert "scripts/build_server_openmeteo_layers.sh" not in readme
+    assert "scripts/build_openmeteo_gfs_layers.sh" in readme
+    assert "scripts/build_openmeteo_cams_layers.sh" in readme
     assert "scripts/validate_openmeteo_layers.py" in readme
     assert "Open-Meteo engine" in readme
     assert "import requests" not in build_script
@@ -384,48 +573,91 @@ def test_layer_scripts_are_documented_as_openmeteo_engine_backed():
     assert "gfs_raw_download_core" not in validate_script
     assert "satellite" not in build_script.lower()
     assert "satellite" not in validate_script.lower()
+    assert "Dem90.read(lat: lat, lon: lon" in export_command
+    assert "elevation: .nan" not in export_command
 
 
-def test_server_layer_flow_builds_gfs_and_cams_products():
-    script_path = ROOT / "scripts" / "build_server_openmeteo_layers.sh"
-    assert script_path.exists()
+def test_gfs_weather_code_uses_current_openmeteo_thunderstorm_inputs():
+    weather_code = (ROOT / "vendor" / "open-meteo" / "Sources" / "App" / "Helper" / "WeatherCode.swift").read_text(
+        encoding="utf-8"
+    )
+    gfs_controller = (ROOT / "vendor" / "open-meteo" / "Sources" / "App" / "Gfs" / "GfsController.swift").read_text(
+        encoding="utf-8"
+    )
+    derived_mapping = (
+        ROOT / "vendor" / "open-meteo" / "Sources" / "App" / "Helper" / "Reader" / "DerivedMapping.swift"
+    ).read_text(encoding="utf-8")
 
-    script = script_path.read_text(encoding="utf-8")
+    assert "calculateThunderstormProbability" in weather_code
+    assert "convectiveInhibition: Float?" in weather_code
+    assert "pblHeight: Float?" in weather_code
+    assert "latitude: Float" in weather_code
+    assert "thunderstroms > 50" in weather_code
+    assert "return .thunderstormSlightOrModerate" in weather_code
 
-    assert "scripts/build_openmeteo_gfs_layers.sh" in script
-    assert "scripts/build_openmeteo_cams_layers.sh" in script
-    assert "data/public" in script
-    assert "point_package" not in script
-    assert "pressure_profile_package" not in script
-    assert "openmeteo_points" not in script
-    assert "WEATHER_OPENMETEO_GFS_API_URL" not in script
-    assert "WEATHER_OPENMETEO_CAMS_API_URL" not in script
-    assert "date -u -d" not in script
-    assert "http://127.0.0.1:18080" not in script
-    assert "/v1/forecast" not in script
-    assert "/v1/air-quality" not in script
-    assert "http://127.0.0.1:18084" not in script
-    assert "scripts/build_openmeteo_point_package.py" not in script
-    assert "scripts/build_openmeteo_pressure_profile_package.py" not in script
-    assert "scripts/render_gfs_layers_from_point_package.py" not in script
+    weather_prefetch = gfs_controller.split("case .weather_code, .weathercode:", 1)[1].split(
+        "case .is_day:", 1
+    )[0]
+    weather_get = gfs_controller.split("case .weather_code, .weathercode:", 2)[2].split(
+        "case .is_day:", 1
+    )[0]
+    assert "raw: .surface(.convective_inhibition)" in weather_prefetch
+    assert "raw: .surface(.boundary_layer_height)" in weather_prefetch
+    assert "let convective_inhibition = try await get(raw: .surface(.convective_inhibition)" in weather_get
+    assert "let boundary_layer_height = try await get(raw: .surface(.boundary_layer_height)" in weather_get
+    assert "convectiveInhibition: convective_inhibition" in weather_get
+    assert "pblHeight: boundary_layer_height" in weather_get
+    assert "latitude: reader.modelLat" in weather_get
+
+    assert "convectiveInhibition: Variable?" in derived_mapping
+    assert "boundaryLayerHeight: Variable?" in derived_mapping
+    assert "pblHeight: try await get(variable: boundaryLayerHeight" in derived_mapping
+    assert "latitude: reader.modelLat" in derived_mapping
 
 
-def test_production_cycle_downloads_runtime_before_layer_build():
-    script_path = ROOT / "scripts" / "run_openmeteo_production_cycle.sh"
-    assert script_path.exists()
+def test_layer_builders_are_split_by_source_product():
+    gfs = (ROOT / "scripts" / "build_openmeteo_gfs_layers.sh").read_text(encoding="utf-8")
+    cams = (ROOT / "scripts" / "build_openmeteo_cams_layers.sh").read_text(encoding="utf-8")
 
-    script = script_path.read_text(encoding="utf-8")
+    assert "data/public" in gfs
+    assert "data/public" in cams
+    for script in (gfs, cams):
+        assert "point_package" not in script
+        assert "pressure_profile_package" not in script
+        assert "openmeteo_points" not in script
+        assert "WEATHER_OPENMETEO_GFS_API_URL" not in script
+        assert "WEATHER_OPENMETEO_CAMS_API_URL" not in script
+        assert "date -u -d" not in script
+        assert "http://127.0.0.1:18080" not in script
+        assert "/v1/forecast" not in script
+        assert "/v1/air-quality" not in script
+        assert "http://127.0.0.1:18084" not in script
+        assert "scripts/build_openmeteo_point_package.py" not in script
+        assert "scripts/build_openmeteo_pressure_profile_package.py" not in script
+        assert "scripts/render_gfs_layers_from_point_package.py" not in script
 
-    assert "scripts/download_openmeteo_runtime_data.sh" in script
-    assert "scripts/build_server_openmeteo_layers.sh" in script
-    assert "scripts/deploy_singapore_candidate.sh" not in script
-    assert "restart local Open-Meteo API" not in script
-    assert script.index("scripts/download_openmeteo_runtime_data.sh") < script.index("scripts/build_server_openmeteo_layers.sh")
-    assert "download runtime data start=" in script
-    assert "download runtime data end=" in script
-    assert "build layer products start=" in script
-    assert "build layer products end=" in script
-    assert "flock -n" in script
+
+def test_combined_production_cycle_is_removed_in_favor_of_split_source_cycles():
+    assert not (ROOT / "scripts" / "run_openmeteo_production_cycle.sh").exists()
+    assert not (ROOT / "scripts" / "download_openmeteo_runtime_data.sh").exists()
+    assert not (ROOT / "scripts" / "build_server_openmeteo_layers.sh").exists()
+    assert not (ROOT / "scripts" / "run_cams_production_cycle.sh").exists()
+    assert not (ROOT / "scripts" / "run_cams_scheduled_cycle.sh").exists()
+
+    split_scripts = (
+        ROOT / "scripts" / "run_gfs_production_cycle.sh",
+        ROOT / "scripts" / "run_cams_ftp_production_cycle.sh",
+        ROOT / "scripts" / "run_cams_ads_production_cycle.sh",
+    )
+    for path in split_scripts:
+        script = path.read_text(encoding="utf-8")
+        assert "scripts/download_openmeteo_runtime_data.sh" not in script
+        assert "scripts/build_server_openmeteo_layers.sh" not in script
+        assert "scripts/deploy_singapore_candidate.sh" not in script
+        assert "restart local Open-Meteo API" not in script
+        assert "download runtime data run=$RUN start=" in script
+        assert "download runtime data run=$RUN end=" in script
+        assert "flock -n" in script
 
 
 def test_gfs_probe_cycle_uses_official_indices_before_gfs_only_production():
@@ -434,10 +666,12 @@ def test_gfs_probe_cycle_uses_official_indices_before_gfs_only_production():
     production = (ROOT / "scripts" / "run_gfs_production_cycle.sh").read_text(encoding="utf-8")
     download = (ROOT / "scripts" / "download_openmeteo_gfs_data.sh").read_text(encoding="utf-8")
 
-    assert "nomads.ncep.noaa.gov/pub/data/nccf/com/gfs/prod" in probe
+    assert "noaa-gfs-bdp-pds.s3.amazonaws.com" in probe
+    assert "nomads.ncep.noaa.gov" not in probe
     assert "sfluxgrbf{fff}.grib2.idx" in probe
     assert "pgrb2.0p25.f{fff}.idx" in probe
     assert "pgrb2b.0p25.f{fff}.idx" in probe
+    assert "--download-from-aws" in download
     assert "datetime.now(UTC)" in probe
     assert "scripts/probe_gfs_official_run.py" in cycle
     assert "CYCLE_LOCK_FILE" in cycle
@@ -460,21 +694,44 @@ def test_gfs_probe_cycle_uses_official_indices_before_gfs_only_production():
     assert "CST" not in cycle
 
 
-def test_cams_scheduled_cycle_uses_utc_twice_daily_target_logic():
-    scheduled = (ROOT / "scripts" / "run_cams_scheduled_cycle.sh").read_text(encoding="utf-8")
+def test_gfs_production_publishes_only_after_bound_domains_and_layers_succeed():
+    production = (ROOT / "scripts" / "run_gfs_production_cycle.sh").read_text(encoding="utf-8")
+
+    assert "backup_gfs_latest_refs()" in production
+    assert "restore_gfs_latest_refs()" in production
+    assert "cleanup_gfs_latest_backup()" in production
+    assert "gfs_publish_ok=false" in production
+    assert "gfs_publish_ok=true" in production
+    assert 'for domain in ncep_gfs013 ncep_gfs025; do' in production
+    assert "cams_global" not in production
+    assert "scripts/download_openmeteo_gfs_data.sh" in production
+    assert "scripts/build_openmeteo_gfs_layers.sh" in production
+    assert "--domains ncep_gfs013,ncep_gfs025" in production
+    assert production.index("bash scripts/download_openmeteo_gfs_data.sh") < production.index(
+        "--domains ncep_gfs013,ncep_gfs025"
+    )
+    assert production.index("--domains ncep_gfs013,ncep_gfs025") < production.index(
+        "bash scripts/build_openmeteo_gfs_layers.sh"
+    )
+    assert production.index("bash scripts/build_openmeteo_gfs_layers.sh") < production.index("gfs_publish_ok=true")
+
+
+def test_cams_ftp_scheduled_cycle_probes_remote_batches_like_gfs():
+    scheduled = (ROOT / "scripts" / "run_cams_ftp_scheduled_cycle.sh").read_text(encoding="utf-8")
     probe = (ROOT / "scripts" / "probe_cams_ftp_run.py").read_text(encoding="utf-8")
-    production = (ROOT / "scripts" / "run_cams_production_cycle.sh").read_text(encoding="utf-8")
+    production = (ROOT / "scripts" / "run_cams_ftp_production_cycle.sh").read_text(encoding="utf-8")
     download = (ROOT / "scripts" / "download_openmeteo_cams_data.sh").read_text(encoding="utf-8")
 
     assert "scripts/probe_cams_ftp_run.py" in scheduled
     assert "WEATHER_CAMS_SOURCE" not in scheduled
     assert "ftp|ecpds|ftp_ecpds)" not in scheduled
     assert "ads|cds|ads_cds)" not in scheduled
-    assert "CAMS production cycle already running, skip probe." in scheduled
-    assert "datetime.now(timezone.utc)" in scheduled
-    assert "now.hour >= 22" in scheduled
-    assert "now.hour >= 10" in scheduled
-    assert "scripts/run_cams_production_cycle.sh" in scheduled
+    assert "CAMS FTP/ECPDS production cycle already running, skip probe." in scheduled
+    assert "datetime.now(timezone.utc)" not in scheduled
+    assert "now.hour >= 22" not in scheduled
+    assert "now.hour >= 10" not in scheduled
+    assert "scripts/run_cams_ftp_production_cycle.sh" in scheduled
+    assert "scripts/probe_cams_ftp_run.py --data-dir" in scheduled
     assert "aux.ecmwf.int/ecpds/data/file/{directory}" in probe
     assert "CAMS_GLOBAL_ADDITIONAL" in probe
     assert "z_cams_c_ecmf_" in probe
@@ -487,6 +744,8 @@ def test_cams_scheduled_cycle_uses_utc_twice_daily_target_logic():
     assert "scripts/build_openmeteo_cams_layers.sh" in production
     assert "run_to_utc_layer_start" in production
     assert "WEATHER_CAMS_SOURCE" not in production
+    assert "run_cams_production_cycle.sh" not in scheduled
+    assert "run_cams_scheduled_cycle.sh" not in scheduled
     assert "download_openmeteo_cams_ads_data.sh" not in scheduled
     assert "download_openmeteo_cams_ads_data.sh" not in production
     assert 'export WEATHER_OPENMETEO_LAYER_FRAME_COUNT="121"' in production
@@ -500,6 +759,24 @@ def test_cams_scheduled_cycle_uses_utc_twice_daily_target_logic():
     assert "download-gfs" not in download
     assert "date -u" in scheduled
     assert "CST" not in scheduled
+
+
+def test_cams_ads_scheduled_cycle_keeps_fixed_utc_target_logic():
+    scheduled = (ROOT / "scripts" / "run_cams_ads_scheduled_cycle.sh").read_text(encoding="utf-8")
+    production = (ROOT / "scripts" / "run_cams_ads_production_cycle.sh").read_text(encoding="utf-8")
+    download = (ROOT / "scripts" / "download_openmeteo_cams_ads_data.sh").read_text(encoding="utf-8")
+
+    assert "datetime.now(timezone.utc)" in scheduled
+    assert "now.hour >= 22" in scheduled
+    assert "now.hour >= 10" in scheduled
+    assert "scripts/probe_cams_ftp_run.py" not in scheduled
+    assert "scripts/run_cams_ads_production_cycle.sh" in scheduled
+    assert "scripts/run_cams_ftp_production_cycle.sh" not in scheduled
+    assert "CAMS ADS/CDS production cycle already running, skip." in scheduled
+    assert "scripts/download_openmeteo_cams_ads_data.sh" in production
+    assert "scripts/download_openmeteo_cams_data.sh" not in production
+    assert "download-cams-ads cams_global" in download
+    assert "download-cams cams_global" not in download
 
 
 def test_split_layer_builders_publish_only_their_product():
