@@ -200,7 +200,7 @@ def test_gfs_surface_download_uses_explicit_minimal_allowlists():
         "temperature_2m,cloud_cover,cloud_cover_low,cloud_cover_mid,cloud_cover_high,"
         "pressure_msl,relative_humidity_2m,precipitation,wind_v_component_10m,"
         "wind_u_component_10m,snow_depth,showers,frozen_precipitation_percent,"
-        "uv_index,boundary_layer_height"
+        "uv_index,boundary_layer_height,shortwave_radiation"
     )
     gfs025_default = (
         "pressure_msl,categorical_freezing_rain,wind_gusts_10m,cape,lifted_index,"
@@ -241,7 +241,6 @@ def test_gfs_surface_download_uses_explicit_minimal_allowlists():
         "sensible_heat_flux",
         "latent_heat_flux",
         "freezing_level_height",
-        "shortwave_radiation",
         "diffuse_radiation",
         "uv_index_clear_sky",
         "total_column_integrated_water_vapour",
