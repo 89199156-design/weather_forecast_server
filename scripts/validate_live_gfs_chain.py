@@ -29,7 +29,7 @@ from validate_openmeteo_layers import transform_api_value, values_match  # noqa:
 
 DEFAULT_LAYER_BASE_URL = "http://81.69.253.110/data/gfs013_surface"
 DEFAULT_POINT_API_URL = "http://81.69.253.110/api/weather/points"
-DEFAULT_REFERENCE_API_URL = "http://127.0.0.1:18080/v1/forecast"
+DEFAULT_REFERENCE_API_URL = "https://single-runs-api.open-meteo.com/v1/forecast"
 
 
 POINT_FIELD_CHECKS: tuple[

@@ -17,7 +17,7 @@ def load_module():
 def test_validation_gate_commands_stop_after_first_failed_gate():
     runner = load_module()
     commands = runner.build_gate_commands(
-        api_base_url="http://127.0.0.1:18080",
+        api_base_url="https://local-validation.example.invalid",
         reference_base_url="https://api.open-meteo.com",
         output_dir=Path("reports"),
         scopes=["gfs", "cams"],
@@ -61,7 +61,7 @@ def test_validation_gate_commands_can_pin_single_run_reference():
     runner = load_module()
 
     commands = runner.build_gate_commands(
-        api_base_url="http://127.0.0.1:18080",
+        api_base_url="https://local-validation.example.invalid",
         reference_base_url="https://single-runs-api.open-meteo.com",
         output_dir=Path("reports"),
         scopes=["gfs"],

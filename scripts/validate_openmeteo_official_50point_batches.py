@@ -626,7 +626,7 @@ def write_json(path: Path, payload: dict[str, Any]) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Validate local .om outputs against official Open-Meteo APIs.")
-    parser.add_argument("--api-base-url", default="http://127.0.0.1:18080")
+    parser.add_argument("--api-base-url", required=True)
     parser.add_argument("--gfs-reference-base-url", default="https://single-runs-api.open-meteo.com")
     parser.add_argument("--cams-reference-base-url", default="https://air-quality-api.open-meteo.com")
     parser.add_argument("--reference-ssh-host")
