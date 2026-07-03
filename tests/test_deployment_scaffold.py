@@ -576,7 +576,7 @@ def test_layer_scripts_are_documented_as_openmeteo_engine_backed():
     assert "elevation: .nan" not in export_command
 
 
-def test_gfs_weather_code_uses_current_openmeteo_thunderstorm_inputs():
+def test_gfs_weather_code_keeps_upstream_thunderstorm_logic():
     weather_code = (ROOT / "vendor" / "open-meteo" / "Sources" / "App" / "Helper" / "WeatherCode.swift").read_text(
         encoding="utf-8"
     )
@@ -587,11 +587,12 @@ def test_gfs_weather_code_uses_current_openmeteo_thunderstorm_inputs():
         ROOT / "vendor" / "open-meteo" / "Sources" / "App" / "Helper" / "Reader" / "DerivedMapping.swift"
     ).read_text(encoding="utf-8")
 
-    assert "calculateThunderstormProbability" in weather_code
-    assert "convectiveInhibition: Float?" in weather_code
-    assert "pblHeight: Float?" in weather_code
-    assert "latitude: Float" in weather_code
-    assert "thunderstroms > 50" in weather_code
+    assert "calculateThunderstormProbability" not in weather_code
+    assert "convectiveInhibition: Float?" not in weather_code
+    assert "pblHeight: Float?" not in weather_code
+    assert "latitude: Float" not in weather_code
+    assert "cape >= 3000" in weather_code
+    assert "liftedIndex <= -5" in weather_code
     assert "return .thunderstormSlightOrModerate" in weather_code
 
     weather_prefetch = gfs_controller.split("case .weather_code, .weathercode:", 1)[1].split(
@@ -600,18 +601,18 @@ def test_gfs_weather_code_uses_current_openmeteo_thunderstorm_inputs():
     weather_get = gfs_controller.split("case .weather_code, .weathercode:", 2)[2].split(
         "case .is_day:", 1
     )[0]
-    assert "raw: .surface(.convective_inhibition)" in weather_prefetch
-    assert "raw: .surface(.boundary_layer_height)" in weather_prefetch
-    assert "let convective_inhibition = try await get(raw: .surface(.convective_inhibition)" in weather_get
-    assert "let boundary_layer_height = try await get(raw: .surface(.boundary_layer_height)" in weather_get
-    assert "convectiveInhibition: convective_inhibition" in weather_get
-    assert "pblHeight: boundary_layer_height" in weather_get
-    assert "latitude: reader.modelLat" in weather_get
+    assert "raw: .surface(.convective_inhibition)" not in weather_prefetch
+    assert "raw: .surface(.boundary_layer_height)" not in weather_prefetch
+    assert "let convective_inhibition = try await get(raw: .surface(.convective_inhibition)" not in weather_get
+    assert "let boundary_layer_height = try await get(raw: .surface(.boundary_layer_height)" not in weather_get
+    assert "convectiveInhibition: convective_inhibition" not in weather_get
+    assert "pblHeight: boundary_layer_height" not in weather_get
+    assert "latitude: reader.modelLat" not in weather_get
 
-    assert "convectiveInhibition: Variable?" in derived_mapping
-    assert "boundaryLayerHeight: Variable?" in derived_mapping
-    assert "pblHeight: try await get(variable: boundaryLayerHeight" in derived_mapping
-    assert "latitude: reader.modelLat" in derived_mapping
+    assert "convectiveInhibition: Variable?" not in derived_mapping
+    assert "boundaryLayerHeight: Variable?" not in derived_mapping
+    assert "pblHeight: try await get(variable: boundaryLayerHeight" not in derived_mapping
+    assert "latitude: reader.modelLat" not in derived_mapping
 
 
 def test_layer_builders_are_split_by_source_product():

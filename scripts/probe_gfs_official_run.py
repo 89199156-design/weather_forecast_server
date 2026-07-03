@@ -62,7 +62,7 @@ def candidate_runs(now: datetime, local_latest: datetime | None, lookback_hours:
 def gfs_urls(run: datetime, max_forecast_hour: int) -> list[str]:
     ymd = run.strftime("%Y%m%d")
     hh = run.strftime("%H")
-    base = f"https://nomads.ncep.noaa.gov/pub/data/nccf/com/gfs/prod/gfs.{ymd}/{hh}/atmos"
+    base = f"https://noaa-gfs-bdp-pds.s3.amazonaws.com/gfs.{ymd}/{hh}/atmos"
     urls: list[str] = []
     for forecast_hour in range(max_forecast_hour + 1):
         fff = f"{forecast_hour:03d}"

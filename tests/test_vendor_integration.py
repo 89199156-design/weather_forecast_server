@@ -67,7 +67,7 @@ def test_vendored_openmeteo_only_patches_download_transport_and_region_grid():
 
 
 def test_openmeteo_raw_download_is_the_default_runtime_data_mode():
-    script = (ROOT / "scripts" / "download_openmeteo_runtime_data.sh").read_text(encoding="utf-8")
+    script = (ROOT / "scripts" / "download_openmeteo_gfs_data.sh").read_text(encoding="utf-8")
     singapore_env = (ROOT / "config" / "singapore.example.env").read_text(encoding="utf-8")
 
     assert "CACHE_SIZE=10GB" in singapore_env

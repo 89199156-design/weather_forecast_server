@@ -16,9 +16,10 @@ updated whenever upstream code is imported, rebased, or patched.
   `98a3e0f00bf13633c5511a6c7788462088bfe752`, which changed JSON/CSV float
   formatting. The current public `single-runs-api.open-meteo.com` API still
   serializes GFS `temperature_2m` like the pre-`98a3e0f0` writer, while the
-  flatbuffers raw values match. This baseline also predates the later
-  thunderstorm weather-code parameterisation commits that did not match the
-  current public API during validation.
+  flatbuffers raw values match. GFS weather-code thunderstorm inputs are patched
+  forward to the current upstream source path after validation showed the public
+  API uses `convective_inhibition`, `boundary_layer_height`, and latitude in the
+  thunderstorm probability calculation.
 
 ## Open-Meteo Air-Quality/CAMS Engine
 
@@ -33,7 +34,7 @@ updated whenever upstream code is imported, rebased, or patched.
   2026-06-30 did not expose a build commit. Current local file-level audit shows
   `Package.swift`, API writers, and `GenericVariableHandle.swift` match upstream
   `036c1d94`. CAMS source differences are limited to the configured regional
-  grid and project-authorized ADS/CDS area download path.
+  grid and the project-authorized FTP/ECPDS and ADS/CDS download commands.
 - Historical candidate:
   `acfb7eb13ffdca9d3772c57716c240d3a7d73da5` was previously recorded as an
   air-quality writer candidate. Treat it as historical evidence only until a
@@ -72,7 +73,7 @@ stay outside the engine:
 Local changes must stay outside the vendored engine:
 
 - external mirror/sync configuration;
-- generated point-package and layer export;
+- generated client layer export;
 - validation tools;
 - deployment scripts and task definitions.
 
@@ -86,11 +87,12 @@ Current intentional differences from upstream `036c1d94`:
 
 - `CamsDomain.swift`: `cams_global` uses the configured China/surrounding-region
   grid slice.
-- `CamsDownload.swift`: `cams_global` prefers ECMWF CAMS FTP/ECPDS credentials
-  and keeps the project-authorized ADS/CDS area request as an explicit
-  `WEATHER_CAMS_SOURCE=ads` backup path. FTP/ECPDS NetCDF fields are cropped to
-  the same configured China/surrounding-region grid slice before Open-Meteo
-  writes `.om` files.
+- `CamsDownload.swift`: `cams_global` uses ECMWF CAMS FTP/ECPDS credentials.
+  FTP/ECPDS NetCDF fields are cropped to the configured China/surrounding-region
+  grid slice before Open-Meteo writes `.om` files.
+- `CamsDownloadAds.swift`: the project-authorized ADS/CDS area request is kept
+  as a separate backup command. It is not selected by the FTP/ECPDS production
+  path and has no shared source-switch branch.
 - GFS domain/download files also contain the configured China/surrounding-region
   source and production area adaptations.
 

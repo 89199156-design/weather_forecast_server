@@ -60,7 +60,8 @@ Old repository file scope:
 ## Architecture
 
 The new repository is an Open-Meteo-derived server with local integration
-layers, not a Python clone of Open-Meteo logic.
+layers, not a Python clone of Open-Meteo logic or a separate point-bin product
+pipeline.
 
 ```mermaid
 flowchart LR
@@ -68,7 +69,7 @@ flowchart LR
   B --> C["Regional China+surroundings domain slice"]
   C --> D["Open-Meteo point/API semantics"]
   C --> E["Layer export adapter"]
-  D --> F["Point package/API validation"]
+  D --> F["Point/API validation"]
   E --> G["WebP/manifest layer products"]
   F --> H["50/100/500 x 50-frame validation gates"]
   G --> H
@@ -86,7 +87,7 @@ Local code remains responsible for:
 
 - China and surrounding-region boundaries;
 - lightweight raw download source selection and slicing;
-- client point-package export;
+- client point/API access through Open-Meteo `.om` data;
 - layer manifest/WebP export;
 - Singapore task orchestration;
 - parity validation reports.
@@ -146,7 +147,7 @@ It must not remain the weather-rule authority.
 Required layer checks:
 
 - layer fields use the same run/batch as point fields;
-- point-grid sampled layer values match point package values;
+- point-grid sampled layer values match Open-Meteo point/API values;
 - 50, then 100, then 500 points x 50 forecast frames pass after point parity
   is complete.
 

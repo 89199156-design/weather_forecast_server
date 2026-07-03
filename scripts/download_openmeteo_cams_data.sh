@@ -4,12 +4,18 @@ set -euo pipefail
 source "$(dirname "$0")/openmeteo_runtime_common.sh"
 
 load_weather_env
+WEATHER_OPENMETEO_HTTP_CACHE_DIR="/app/data/http_cache/cams_ftp"
+export WEATHER_OPENMETEO_HTTP_CACHE_DIR
+HTTP_CACHE="/app/data/http_cache/cams_ftp"
+export HTTP_CACHE
 openmeteo_set_runtime_defaults
 write_sanitized_env_file
-cleanup_sanitized_env() {
-  rm -f "$SANITIZED_ENV_FILE"
+cleanup_sensitive_artifacts() {
+  rm -f "${SANITIZED_ENV_FILE:-}"
 }
-trap cleanup_sanitized_env EXIT
+trap cleanup_sensitive_artifacts EXIT
+
+cleanup_openmeteo_http_cache
 
 CAMS_CONCURRENT="${WEATHER_CAMS_DOWNLOAD_CONCURRENT:-1}"
 CAMS_FTP_USER="${WEATHER_CAMS_FTP_USER:-}"

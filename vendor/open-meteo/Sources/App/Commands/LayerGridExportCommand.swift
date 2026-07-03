@@ -142,10 +142,11 @@ struct LayerGridExportCommand: AsyncCommand {
                 let x = flatIndex - y * request.width
                 let lat = request.latitudes[y]
                 let lon = request.longitudes[x]
+                let elevation = try await Dem90.read(lat: lat, lon: lon, logger: logger, httpClient: options.httpClient)
                 let readers = try await domain.getReader(
                     lat: lat,
                     lon: lon,
-                    elevation: .nan,
+                    elevation: elevation,
                     mode: .land,
                     options: options,
                     include15Min: false

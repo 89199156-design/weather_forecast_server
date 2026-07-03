@@ -74,10 +74,21 @@ def parse_variables(value: str) -> list[str]:
     return variables
 
 
-def cams_urls(run: datetime, variables: list[str], max_forecast_hour: int) -> list[str]:
+def probe_forecast_hours(value: str | None, max_forecast_hour: int) -> list[int]:
+    if value:
+        hours = [int(item.strip()) for item in value.split(",") if item.strip()]
+    else:
+        hours = [0, 1, max_forecast_hour]
+    bounded = [hour for hour in hours if 0 <= hour <= max_forecast_hour]
+    if not bounded:
+        raise SystemExit("CAMS FTP probe forecast hours must include at least one hour in range")
+    return sorted(set(bounded))
+
+
+def cams_urls(run: datetime, variables: list[str], forecast_hours: list[int]) -> list[str]:
     date_run = run.strftime("%Y%m%d%H")
     urls: list[str] = []
-    for forecast_hour in range(max_forecast_hour + 1):
+    for forecast_hour in forecast_hours:
         for variable in variables:
             gribname, is_multi_level = CAMS_GLOBAL_META[variable]
             level_type = "ml137" if is_multi_level else "sfc"
@@ -115,12 +126,12 @@ def check_url(url: str, authorization: str, timeout_seconds: float) -> ProbeResu
 def run_complete(
     run: datetime,
     variables: list[str],
-    max_forecast_hour: int,
+    forecast_hours: list[int],
     timeout_seconds: float,
     workers: int,
     authorization: str,
 ) -> tuple[bool, list[ProbeResult]]:
-    urls = cams_urls(run, variables, max_forecast_hour)
+    urls = cams_urls(run, variables, forecast_hours)
     failures: list[ProbeResult] = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
         futures = [executor.submit(check_url, url, authorization, timeout_seconds) for url in urls]
@@ -138,6 +149,7 @@ def main() -> int:
     parser.add_argument("--data-dir", default="./data/openmeteo")
     parser.add_argument("--variables", default=os.environ.get("WEATHER_CAMS_VARIABLES", "pm2_5,pm10,aerosol_optical_depth,dust,carbon_monoxide,nitrogen_dioxide,ozone,sulphur_dioxide"))
     parser.add_argument("--max-forecast-hour", type=int, default=120)
+    parser.add_argument("--probe-forecast-hours", default=os.environ.get("WEATHER_CAMS_PROBE_FORECAST_HOURS"))
     parser.add_argument("--lookback-hours", type=int, default=72)
     parser.add_argument("--timeout-seconds", type=float, default=8.0)
     parser.add_argument("--workers", type=int, default=8)
@@ -150,6 +162,7 @@ def main() -> int:
         return 1
 
     variables = parse_variables(args.variables)
+    forecast_hours = probe_forecast_hours(args.probe_forecast_hours, args.max_forecast_hour)
     local_latest = read_local_latest(Path(args.data_dir))
     authorization = auth_header(args.user, args.password)
     now = datetime.now(UTC)
@@ -158,7 +171,7 @@ def main() -> int:
         complete, failures = run_complete(
             run=run,
             variables=variables,
-            max_forecast_hour=args.max_forecast_hour,
+            forecast_hours=forecast_hours,
             timeout_seconds=args.timeout_seconds,
             workers=args.workers,
             authorization=authorization,
