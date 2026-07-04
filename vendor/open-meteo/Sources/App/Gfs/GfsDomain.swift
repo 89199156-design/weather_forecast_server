@@ -422,7 +422,7 @@ enum GfsDomain: String, GenericDomain, CaseIterable {
                 dx: Double(base.dx),
                 dy: Double(base.dy),
                 region: WeatherForecastServerSourceConfig.region,
-                haloCells: 1
+                haloCells: 2
             )
             return RegionalRegularGrid(base: base, x0: slice.x0, y0: slice.y0, nx: slice.nx, ny: slice.ny)
         case .gfs025_ens, .gfs025, .gfswave025, .gfswave025_ens, .gefs025_ensemble_mean, .gefswave025_ensemble_mean:
@@ -436,7 +436,7 @@ enum GfsDomain: String, GenericDomain, CaseIterable {
                     dx: Double(base.dx),
                     dy: Double(base.dy),
                     region: WeatherForecastServerSourceConfig.region,
-                    haloCells: 1
+                    haloCells: 2
                 )
                 return RegionalRegularGrid(base: base, x0: slice.x0, y0: slice.y0, nx: slice.nx, ny: slice.ny)
             }

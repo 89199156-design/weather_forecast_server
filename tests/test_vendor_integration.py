@@ -125,8 +125,8 @@ def test_vendored_openmeteo_only_patches_download_transport_and_region_grid():
     assert "return base.getCoordinates(gridpoint: (y + y0) * base.nx + x + x0)" in domain
     assert domain.count("return RegionalRegularGrid(base: base, x0: slice.x0, y0: slice.y0, nx: slice.nx, ny: slice.ny)") == 2
     assert "let base = RegularGrid(nx: 1440, ny: 721, latMin: -90, lonMin: -180, dx: 0.25, dy: 0.25)" in domain
-    assert domain.count("haloCells: 1") == 2
-    assert download.count("haloCells: 1") == 2
+    assert domain.count("haloCells: 2") == 2
+    assert download.count("haloCells: 2") == 2
     assert "let dy = Float(0.11714935)" in download
     assert "downloadCamsGlobalArea" not in cams_download
     assert "cams-global-atmospheric-composition-forecasts" not in cams_download

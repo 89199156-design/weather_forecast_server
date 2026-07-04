@@ -535,7 +535,7 @@ private enum GfsRegionalDownload {
                 dx: Double(dx),
                 dy: Double(dy),
                 region: WeatherForecastServerSourceConfig.region,
-                haloCells: 1
+                haloCells: 2
             )
             return Slice(fullNx: 3072, fullNy: 1536, x0: slice.x0, y0: slice.y0, nx: slice.nx, ny: slice.ny)
         case .gfs025:
@@ -547,7 +547,7 @@ private enum GfsRegionalDownload {
                 dx: 0.25,
                 dy: 0.25,
                 region: WeatherForecastServerSourceConfig.region,
-                haloCells: 1
+                haloCells: 2
             )
             return Slice(fullNx: 1440, fullNy: 721, x0: slice.x0, y0: slice.y0, nx: slice.nx, ny: slice.ny)
         default:
