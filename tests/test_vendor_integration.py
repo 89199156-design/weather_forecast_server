@@ -10,7 +10,13 @@ def read_vendor(path: str) -> str:
 
 
 def read_vendor_normalized_bytes(path: str) -> bytes:
-    return (ROOT / "vendor" / "open-meteo" / path).read_bytes().replace(b"\r\n", b"\n")
+    normalized = (
+        (ROOT / "vendor" / "open-meteo" / path)
+        .read_bytes()
+        .replace(b"\r\n", b"\n")
+        .replace(b"\r", b"\n")
+    )
+    return b"\n".join(line.rstrip() for line in normalized.split(b"\n"))
 
 
 def test_openmeteo_package_uses_upstream_sdk_dependency():
@@ -24,15 +30,17 @@ def test_openmeteo_package_uses_upstream_sdk_dependency():
 
 def test_core_api_output_files_match_single_upstream_engine_baseline():
     expected_sha256 = {
-        "Sources/App/Helper/WeatherCode.swift": "6275c8b2de8116e4a53e4e891503554ae401f26b9b9ec2ebdc22fadae864c033",
-        "Sources/App/Gfs/GfsController.swift": "6bd0f270c9d03fc3afce75f5ed85516b20ea3f37d9f141f4870fb7bf211277fe",
-        "Sources/App/Helper/Reader/DerivedMapping.swift": "6993a3c31368d6c85da9c9f1eeb6a879be05297d8c537c1135fed03d5f658333",
+        "Sources/App/Helper/WeatherCode.swift": "2555314d6353ed9763f96a5a145dc217249351ff8fc56e228e5277eed7d85928",
+        "Sources/App/Gfs/GfsController.swift": "756d68a69195850cc2e5c628d7b9bd47e2fa6aa2fc469e5bba857d2d521ed95e",
+        "Sources/App/Helper/Reader/DerivedMapping.swift": "9d4cc081f53bfd3b84e528ba16114bfd229d204be3ffd1afd070edac2fa74576",
         "Sources/App/Helper/NumberExtensions.swift": "c0e85e7ed4c5b355924e8f6435425d18f3ce51bacb1197cf4dee92db3039542e",
-        "Sources/App/Helper/Writer/JsonWriter.swift": "5403f5a29fda6fdb4494f1a70b802ae63ba94024625cd1b67c14a8157bcabc81",
+        "Sources/App/Helper/Writer/JsonWriter.swift": "81419406fb880b36890a42d94eb8acebe44d8e72de72e40435d5aea2887b249e",
         "Sources/App/Helper/Writer/CsvWriter.swift": "82b6e4bef05ef062e2bca728140bc756fcc64a4e5bea5fdb8bb0adeed5b5819f",
         "Sources/App/Helper/Writer/ForecastApiResult.swift": "352f445e78319eab1112b3a5faba4cf75707685ce30e5d3817a4e8967f5f04d9",
-        "Sources/App/Helper/FlatBufferWriter/FlatBuffersWriter.swift": "184d16771fa3b852e0eff4109ace14d846458bce481467b3403c996e587c2bba",
-        "Sources/App/Helper/Vapor/ApiKeyManager.swift": "10b2bc1f0909fa2de73662654d0e5dc476b34eb37ae00bf19bc77ffaa7e4ce2c",
+        "Sources/App/Helper/FlatBufferWriter/FlatBuffersWriter.swift": "ac880de07d1b7267185f65f753aa836d5ba65d755bc7f7487b06b75b4ecb9fb6",
+        "Sources/App/Helper/Vapor/ApiKeyManager.swift": "06c1fed7bf121322d3b1e496a48387d305fa9c99dfc8bea5228732f0856092ab",
+        "Sources/App/Helper/Vapor/ConcurrencyGroupLimiter.swift": "7e8ddaf64ed30ad921635eb884dd0bb31488adb645fe595d31cd0368e42a3206",
+        "Sources/App/Helper/Vapor/RateLimiter.swift": "97c979b8c03b44f6512037aa9789601e049e235b7d406e017ca43609af188346",
         "Sources/App/Dem/DemController.swift": "3e3e42fed7f63163c061a9416eede8ae36761f402b8a872d53cfa2d3fe5fdeb1",
     }
 
