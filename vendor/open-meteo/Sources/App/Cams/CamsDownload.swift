@@ -78,7 +78,7 @@ struct DownloadCamsCommand: AsyncCommand {
 
         let nx = domain.grid.nx
         let ny = domain.grid.ny
-        let regionalSlice = CamsRegionalDownload.slice(domain: domain)
+        let regionalSlice = domain.regionalDownloadSlice
         let sourceNx = regionalSlice?.fullNx ?? nx
         let sourceNy = regionalSlice?.fullNy ?? ny
 
@@ -136,45 +136,6 @@ struct DownloadCamsCommand: AsyncCommand {
         return handles
     }
 
-}
-
-private struct CamsRegionalDownload {
-    struct Slice {
-        let fullNx: Int
-        let fullNy: Int
-        let x0: Int
-        let y0: Int
-        let nx: Int
-        let ny: Int
-    }
-
-    static func slice(domain: CamsDomain) -> Slice? {
-        guard domain == .cams_global else {
-            return nil
-        }
-        let slice = WeatherForecastServerSourceConfig.regularGridSlice(
-            fullNx: 900,
-            fullNy: 451,
-            latMin: -90,
-            lonMin: -180,
-            dx: 0.4,
-            dy: 0.4,
-            region: WeatherForecastServerSourceConfig.region
-        )
-        return Slice(fullNx: 900, fullNy: 451, x0: slice.x0, y0: slice.y0, nx: slice.nx, ny: slice.ny)
-    }
-}
-
-private extension Array where Element == Float {
-    func sliceGrid(x0: Int, y0: Int, nx: Int, ny: Int, sourceNx: Int) -> [Float] {
-        var output = [Float](repeating: .nan, count: nx * ny)
-        for y in 0..<ny {
-            let sourceStart = (y0 + y) * sourceNx + x0
-            let targetStart = y * nx
-            output.replaceSubrange(targetStart..<(targetStart + nx), with: self[sourceStart..<(sourceStart + nx)])
-        }
-        return output
-    }
 }
 
 fileprivate extension Variable {

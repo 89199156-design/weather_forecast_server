@@ -119,7 +119,17 @@ enum CamsDomain: String, GenericDomain, CaseIterable {
             )
             return RegionalRegularGrid(base: base, x0: slice.x0, y0: slice.y0, nx: slice.nx, ny: slice.ny)
         case .cams_global_greenhouse_gases:
-            return RegularGrid(nx: 3600, ny: 1801, latMin: -90, lonMin: -180, dx: 0.1, dy: 0.1)
+            let base = RegularGrid(nx: 3600, ny: 1801, latMin: -90, lonMin: -180, dx: 0.1, dy: 0.1)
+            let slice = WeatherForecastServerSourceConfig.regularGridSlice(
+                fullNx: 3600,
+                fullNy: 1801,
+                latMin: Double(base.latMin),
+                lonMin: Double(base.lonMin),
+                dx: 0.1,
+                dy: 0.1,
+                region: WeatherForecastServerSourceConfig.region
+            )
+            return RegionalRegularGrid(base: base, x0: slice.x0, y0: slice.y0, nx: slice.nx, ny: slice.ny)
         case .cams_europe:
             // IMPORTANT: GRID is flipped! Therefore dy negative!
             return RegularGrid(nx: 700, ny: 420, latMin: /*30.05*/ 71.95, lonMin: -24.95, dx: 0.1, dy: -0.1)

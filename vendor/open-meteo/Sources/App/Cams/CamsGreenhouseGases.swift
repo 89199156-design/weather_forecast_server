@@ -29,6 +29,9 @@ extension DownloadCamsAdsCommand {
         let forecastHours = domain.forecastHours
         let logger = application.logger
         let curl = Curl(logger: logger, client: application.dedicatedHttpClient, deadLineHours: 24)
+        let regionalSlice = domain.regionalDownloadSlice
+        let sourceNx = regionalSlice?.fullNx ?? domain.grid.nx
+        let sourceNy = regionalSlice?.fullNy ?? domain.grid.ny
         let query = CamsEuropeQuery(
             model: nil,
             date: "\(date)/\(date)",
@@ -59,13 +62,17 @@ extension DownloadCamsAdsCommand {
 
                 logger.info("Converting variable \(variable) \(timestamp.format_YYYYMMddHH) \(message.get(attribute: "name")!)")
 
-                var grib2d = GribArray2D(nx: domain.grid.nx, ny: domain.grid.ny)
+                var grib2d = GribArray2D(nx: sourceNx, ny: sourceNy)
                 try grib2d.load(message: message)
                 if let scaling = variable.getCamsGlobalGreenhouseGasesMeta()?.scalefactor {
                     grib2d.array.data.multiplyAdd(multiply: scaling, add: 0)
                 }
                 grib2d.array.shift180LongitudeAndFlipLatitude()
-                try await writer.write(time: timestamp, member: 0, variable: variable, data: grib2d.array.data)
+                var data = grib2d.array.data
+                if let regionalSlice = regionalSlice {
+                    data = data.sliceGrid(x0: regionalSlice.x0, y0: regionalSlice.y0, nx: regionalSlice.nx, ny: regionalSlice.ny, sourceNx: sourceNx)
+                }
+                try await writer.write(time: timestamp, member: 0, variable: variable, data: data)
             }
             return try await writer.finalise(completed: true, validTimes: nil, uploadS3Bucket: uploadS3Bucket)
         }

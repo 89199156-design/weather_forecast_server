@@ -130,6 +130,110 @@ def test_gfs_validation_can_use_latest_reference_window(monkeypatch):
     assert "forecast_hours" not in seen_params[1]
 
 
+def test_cams_validation_uses_date_window_for_air_quality_api(monkeypatch):
+    validator = load_module()
+
+    seen_params = []
+
+    def fake_fetch_hourlies(**kwargs):
+        seen_params.append(kwargs["params"])
+        first = 99.0 if kwargs["base_url"] == "local" else 12.0
+        return [
+            {
+                "time": ["2026-07-04T00:00", "2026-07-04T01:00", "2026-07-04T02:00"],
+                "pm10": [first, 13.0, 14.0],
+            }
+        ]
+
+    monkeypatch.setattr(validator, "fetch_hourlies", fake_fetch_hourlies)
+
+    report = validator.validate_scope_batch(
+        scope="cams",
+        batch_index=1,
+        points=[{"latitude": 10.0, "longitude": 100.0}],
+        variables=["pm10"],
+        api_base_url="local",
+        reference_base_url="official",
+        reference_ssh_host=None,
+        gfs_run="2026-06-29T06:00",
+        start_hour="2026-07-04T01:00",
+        end_hour="2026-07-04T02:00",
+        frames=2,
+        chunk_size=10,
+        tolerance=0.001,
+        timeout=1,
+        retries=0,
+        retry_delay=0,
+        request_pause=0,
+        gfs_model="gfs013",
+    )
+
+    assert report["passed"] is True
+    assert len(seen_params) == 2
+    for params in seen_params:
+        assert params["domains"] == "cams_global"
+        assert params["start_date"] == "2026-07-04"
+        assert params["end_date"] == "2026-07-04"
+        assert "start_hour" not in params
+        assert "end_hour" not in params
+
+
+def test_cams_multilevel_intermediate_hours_are_diagnostic_not_strict_failures(monkeypatch):
+    validator = load_module()
+
+    def fake_fetch_hourlies(**kwargs):
+        values = [10.0, 20.0, 30.0] if kwargs["base_url"] == "local" else [10.0, 99.0, 88.0]
+        return [
+            {
+                "time": ["2026-07-04T00:00", "2026-07-04T01:00", "2026-07-04T02:00"],
+                "nitrogen_dioxide": values,
+            }
+        ]
+
+    monkeypatch.setattr(validator, "fetch_hourlies", fake_fetch_hourlies)
+
+    report = validator.validate_scope_batch(
+        scope="cams",
+        batch_index=1,
+        points=[{"latitude": 10.0, "longitude": 100.0}],
+        variables=["nitrogen_dioxide"],
+        api_base_url="local",
+        reference_base_url="official",
+        reference_ssh_host=None,
+        gfs_run="2026-06-29T06:00",
+        start_hour="2026-07-04T00:00",
+        end_hour="2026-07-04T02:00",
+        frames=3,
+        chunk_size=10,
+        tolerance=0.001,
+        timeout=1,
+        retries=0,
+        retry_delay=0,
+        request_pause=0,
+        gfs_model="gfs013",
+    )
+
+    assert report["passed"] is True
+    assert report["failures"] == []
+    assert report["checked_values"] == 1
+    assert report["diagnostic_values"] == 2
+    assert report["diagnostic_differences"] == [
+        {
+            "reason": "cams_interpolated_frame_difference",
+            "batch": 1,
+            "scope": "cams",
+            "point_index": 0,
+            "point": {"latitude": 10.0, "longitude": 100.0},
+            "variable": "nitrogen_dioxide",
+            "mismatch_count": 2,
+            "first_mismatches": [
+                {"frame": 1, "local": 20.0, "reference": 99.0, "reason": "value_mismatch"},
+                {"frame": 2, "local": 30.0, "reference": 88.0, "reason": "value_mismatch"},
+            ],
+        }
+    ]
+
+
 def test_failed_point_count_deduplicates_multiple_variable_failures():
     validator = load_module()
 

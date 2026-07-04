@@ -145,8 +145,10 @@ def test_split_downloaders_clean_only_their_temporary_workdirs_before_rebuild():
         assert path in gfs
     assert '"$DATA_DIR/download-cams_global"' not in gfs
 
+    assert 'cleanup_download_work_dirs "$DATA_DIR/download-cams_global"' in ftp
+    assert '"$DATA_DIR/download-cams_global"' in ads
+    assert '"$DATA_DIR/download-cams_global_greenhouse_gases"' in ads
     for script in (ftp, ads):
-        assert 'cleanup_download_work_dirs "$DATA_DIR/download-cams_global"' in script
         assert '"$DATA_DIR/download-ncep_gfs013"' not in script
         assert '"$DATA_DIR/download-ncep_gfs025"' not in script
 
@@ -352,10 +354,16 @@ def test_downloaders_clean_source_cache_only_at_start_and_after_success():
     assert gfs.index("cleanup_download_work_dirs \\") < gfs.index("run_openmeteo download-gfs gfs013")
     assert gfs.rindex("run_openmeteo download-gfs gfs025") < gfs.rindex("cleanup_download_work_dirs \\")
 
-    for script in (scripts["cams_ftp"], scripts["cams_ads"]):
-        assert script.count('cleanup_download_work_dirs "$DATA_DIR/download-cams_global"') == 2
-        assert script.index('cleanup_download_work_dirs "$DATA_DIR/download-cams_global"') < script.index("run_openmeteo")
-        assert script.rindex("run_openmeteo") < script.rindex('cleanup_download_work_dirs "$DATA_DIR/download-cams_global"')
+    cams_ftp = scripts["cams_ftp"]
+    assert cams_ftp.count('cleanup_download_work_dirs "$DATA_DIR/download-cams_global"') == 2
+    assert cams_ftp.index('cleanup_download_work_dirs "$DATA_DIR/download-cams_global"') < cams_ftp.index("run_openmeteo")
+    assert cams_ftp.rindex("run_openmeteo") < cams_ftp.rindex('cleanup_download_work_dirs "$DATA_DIR/download-cams_global"')
+
+    cams_ads = scripts["cams_ads"]
+    assert cams_ads.count('"$DATA_DIR/download-cams_global"') == 2
+    assert cams_ads.count('"$DATA_DIR/download-cams_global_greenhouse_gases"') == 2
+    assert cams_ads.index("cleanup_download_work_dirs \\") < cams_ads.index("run_openmeteo download-cams-ads cams_global")
+    assert cams_ads.rindex("run_openmeteo download-cams-ads cams_global_greenhouse_gases") < cams_ads.rindex("cleanup_download_work_dirs \\")
 
 
 def test_production_cycles_clean_only_their_own_generated_om_products_before_download():
@@ -452,11 +460,17 @@ def test_optional_cams_ads_cds_download_is_separate_from_ftp_ecpds():
     ftp_script = (ROOT / "scripts" / "download_openmeteo_cams_data.sh").read_text(encoding="utf-8")
 
     assert "download-cams-ads cams_global" in script
+    assert "download-cams-ads cams_global_greenhouse_gases" in script
+    assert "WEATHER_CAMS_GREENHOUSE_VARIABLES" in script
+    assert "CAMS_GREENHOUSE_RUN=" in script
+    assert 'append_run_arg "$CAMS_GREENHOUSE_RUN"' in script
+    assert "carbon_monoxide" in script
     assert "--cdskey \"$CAMS_ADS_KEY\"" in script
     assert "read_cdsapi_key" in script
     assert "WEATHER_CAMS_FTP" not in script
     assert "CAMS_FTP" not in script
     assert "download-cams-ads" not in ftp_script
+    assert "cams_global_greenhouse_gases" not in ftp_script
     assert "--cdskey" not in ftp_script
     assert "WEATHER_CAMS_ADS" not in ftp_script
     assert "WEATHER_CAMS_CDS" not in ftp_script
@@ -544,7 +558,7 @@ def test_openmeteo_downloader_only_changes_transport_and_region_grid():
     assert "let base = RegularGrid(nx: 900, ny: 451, latMin: -90, lonMin: -180, dx: 0.4, dy: 0.4)" in cams_domain
     assert "return RegionalRegularGrid(base: base, x0: slice.x0, y0: slice.y0, nx: slice.nx, ny: slice.ny)" in cams_domain
     assert "downloadCamsGlobal(application:" in cams_download
-    assert "CamsRegionalDownload" in cams_download
+    assert "domain.regionalDownloadSlice" in cams_download
     assert "data = data.sliceGrid(" in cams_download
     assert "filter_gfs_0p25.pl" not in source
     assert "filter_gfs_0p25b.pl" not in source

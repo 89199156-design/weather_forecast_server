@@ -55,7 +55,7 @@ def test_vendored_openmeteo_only_patches_download_transport_and_region_grid():
     assert "cams-global-atmospheric-composition-forecasts" not in cams_download
     assert "getCamsGlobalAreaApiName" not in cams_domain
     assert "downloadCamsGlobal(application:" in cams_download
-    assert "CamsRegionalDownload" in cams_download
+    assert "domain.regionalDownloadSlice" in cams_download
     assert "data.shift180LongitudeAndFlipLatitude(nt: 1, ny: sourceNy, nx: sourceNx)" in cams_download
     assert "data = data.sliceGrid(" in cams_download
     grid_source = cams_domain.split("var grid: any Gridable", 1)[1]
@@ -107,6 +107,28 @@ def test_cams_greenhouse_gases_helper_belongs_to_ads_command_after_split():
 
     assert "extension DownloadCamsAdsCommand" in greenhouse
     assert "extension DownloadCamsCommand" not in greenhouse
+
+
+def test_cams_greenhouse_gases_are_region_sliced_like_other_global_domains():
+    domain = read_vendor("Sources/App/Cams/CamsDomain.swift")
+    region = read_vendor("Sources/App/Cams/CamsRegionalDownload.swift")
+    greenhouse = read_vendor("Sources/App/Cams/CamsGreenhouseGases.swift")
+
+    grid_source = domain.split("var grid: any Gridable", 1)[1]
+    greenhouse_grid = grid_source.split("case .cams_global_greenhouse_gases:", 1)[1].split("case .cams_europe:", 1)[0]
+    assert "WeatherForecastServerSourceConfig.regularGridSlice" in greenhouse_grid
+    assert "let base = RegularGrid(nx: 3600, ny: 1801, latMin: -90, lonMin: -180, dx: 0.1, dy: 0.1)" in greenhouse_grid
+    assert "RegionalRegularGrid(base: base" in greenhouse_grid
+
+    assert "case .cams_global_greenhouse_gases:" in region
+    assert "fullNx: 3600" in region
+    assert "fullNy: 1801" in region
+    assert "dx: 0.1" in region
+    assert "dy: 0.1" in region
+
+    assert "let regionalSlice = domain.regionalDownloadSlice" in greenhouse
+    assert "sourceNx = regionalSlice?.fullNx" in greenhouse
+    assert "data = data.sliceGrid(" in greenhouse
 
 
 def test_cams_global_uses_ftp_ecpds_credentials_only():

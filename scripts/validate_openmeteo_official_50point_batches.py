@@ -46,6 +46,14 @@ DEFAULT_OFFICIAL_GFS_PRESSURE_COMPARE_LEVELS_HPA: tuple[int, ...] = (
     200,
 )
 
+CAMS_THREE_HOUR_SOURCE_VARIABLES: set[str] = {
+    "carbon_monoxide",
+    "dust",
+    "nitrogen_dioxide",
+    "ozone",
+    "sulphur_dioxide",
+}
+
 
 def chunked(items: list[str], size: int) -> list[list[str]]:
     return [items[index : index + size] for index in range(0, len(items), size)]
@@ -206,6 +214,13 @@ def gfs_latest_window(requested_start_hour: str, requested_frames: int) -> dict[
     }
 
 
+def date_window_params(start_hour: str, end_hour: str) -> dict[str, str]:
+    return {
+        "start_date": parse_utc_hour(start_hour).date().isoformat(),
+        "end_date": parse_utc_hour(end_hour).date().isoformat(),
+    }
+
+
 def local_params(
     scope: str,
     points: list[dict[str, float]],
@@ -234,8 +249,7 @@ def local_params(
             params["end_hour"] = end_hour
     elif scope == "cams":
         params["domains"] = "cams_global"
-        params["start_hour"] = start_hour
-        params["end_hour"] = end_hour
+        params.update(date_window_params(start_hour, end_hour))
     else:
         raise ValueError(f"unknown scope: {scope}")
     return params
@@ -272,8 +286,7 @@ def reference_params(
             raise ValueError(f"unknown GFS reference mode: {gfs_reference_mode}")
     elif scope == "cams":
         params["domains"] = "cams_global"
-        params["start_hour"] = start_hour
-        params["end_hour"] = end_hour
+        params.update(date_window_params(start_hour, end_hour))
     else:
         raise ValueError(f"unknown scope: {scope}")
     return params
@@ -324,6 +337,33 @@ def fetch_hourlies(
         )
     )
     return extract_hourlies(payload)
+
+
+def trim_hourly_to_window(hourly: dict[str, Any], *, start_hour: str, frames: int) -> dict[str, Any]:
+    times = list(hourly.get("time") or [])
+    if start_hour not in times:
+        return hourly
+    start = times.index(start_hour)
+    end = start + frames
+    trimmed: dict[str, Any] = {}
+    for key, value in hourly.items():
+        if isinstance(value, list) and len(value) == len(times):
+            trimmed[key] = value[start:end]
+        else:
+            trimmed[key] = value
+    return trimmed
+
+
+def trim_hourlies_to_scope_window(
+    scope: str,
+    hourlies: list[dict[str, Any]],
+    *,
+    start_hour: str,
+    frames: int,
+) -> list[dict[str, Any]]:
+    if scope != "cams":
+        return hourlies
+    return [trim_hourly_to_window(hourly, start_hour=start_hour, frames=frames) for hourly in hourlies]
 
 
 def split_pressure_name(name: str) -> tuple[str, str] | None:
@@ -524,6 +564,7 @@ def detect_available_variables(
             retry_delay=retry_delay,
             request_pause=0.0,
         )
+        hourlies = trim_hourlies_to_scope_window(scope, hourlies, start_hour=start_hour, frames=frames)
         for variable in variable_chunk:
             if has_information(hourlies, variable, frames):
                 available.append(variable)
@@ -541,6 +582,45 @@ def close_number(local: Any, reference: Any, tolerance: float) -> bool:
     if math.isnan(local_f) or math.isnan(reference_f):
         return math.isnan(local_f) and math.isnan(reference_f)
     return abs(local_f - reference_f) <= tolerance
+
+
+def is_cams_interpolated_diagnostic_frame(scope: str, variable: str, time_value: str | None) -> bool:
+    if scope != "cams" or variable not in CAMS_THREE_HOUR_SOURCE_VARIABLES or not time_value:
+        return False
+    return parse_utc_hour(time_value).hour % 3 != 0
+
+
+def split_strict_and_diagnostic_mismatches(
+    *,
+    scope: str,
+    variable: str,
+    times: list[str],
+    mismatches: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    strict: list[dict[str, Any]] = []
+    diagnostic: list[dict[str, Any]] = []
+    for mismatch in mismatches:
+        frame = int(mismatch.get("frame", -1))
+        time_value = times[frame] if 0 <= frame < len(times) else None
+        if is_cams_interpolated_diagnostic_frame(scope, variable, time_value):
+            diagnostic.append(mismatch)
+        else:
+            strict.append(mismatch)
+    return strict, diagnostic
+
+
+def strict_frame_count(scope: str, variable: str, times: list[str], frames: int) -> int:
+    if scope != "cams" or variable not in CAMS_THREE_HOUR_SOURCE_VARIABLES:
+        return frames
+    return sum(
+        1
+        for frame in range(frames)
+        if not is_cams_interpolated_diagnostic_frame(
+            scope,
+            variable,
+            times[frame] if frame < len(times) else None,
+        )
+    )
 
 
 def compare_metadata(
@@ -595,7 +675,9 @@ def validate_scope_batch(
     gfs_model: str = "gfs_global",
 ) -> dict[str, Any]:
     failures: list[dict[str, Any]] = []
+    diagnostic_differences: list[dict[str, Any]] = []
     checked_values = 0
+    diagnostic_values = 0
     official_requests = 0
     started = time.time()
     for variable_chunk in chunked(variables, chunk_size):
@@ -617,6 +699,7 @@ def validate_scope_batch(
             retry_delay=retry_delay,
             request_pause=0.0,
         )
+        local_hourlies = trim_hourlies_to_scope_window(scope, local_hourlies, start_hour=start_hour, frames=frames)
         reference_hourlies = fetch_hourlies(
             base_url=reference_base_url,
             scope=scope,
@@ -636,6 +719,12 @@ def validate_scope_batch(
             retry_delay=retry_delay,
             request_pause=request_pause,
             ssh_host=reference_ssh_host,
+        )
+        reference_hourlies = trim_hourlies_to_scope_window(
+            scope,
+            reference_hourlies,
+            start_hour=start_hour,
+            frames=frames,
         )
         official_requests += 1
         if len(local_hourlies) != len(points) or len(reference_hourlies) != len(points):
@@ -681,14 +770,34 @@ def validate_scope_batch(
                 )
             )
             for variable in variable_chunk:
-                checked_values += frames
+                checked_values += strict_frame_count(scope, variable, local_times, frames)
+                diagnostic_values += frames - strict_frame_count(scope, variable, local_times, frames)
                 mismatches = compare_series(
                     local_hourly.get(variable) or [],
                     reference_hourly.get(variable) or [],
                     frames=frames,
                     tolerance=tolerance,
                 )
-                if mismatches:
+                strict_mismatches, diagnostic_mismatches = split_strict_and_diagnostic_mismatches(
+                    scope=scope,
+                    variable=variable,
+                    times=local_times,
+                    mismatches=mismatches,
+                )
+                if diagnostic_mismatches:
+                    diagnostic_differences.append(
+                        {
+                            "reason": "cams_interpolated_frame_difference",
+                            "batch": batch_index,
+                            "scope": scope,
+                            "point_index": (batch_index - 1) * len(points) + offset,
+                            "point": point,
+                            "variable": variable,
+                            "mismatch_count": len(diagnostic_mismatches),
+                            "first_mismatches": diagnostic_mismatches[:10],
+                        }
+                    )
+                if strict_mismatches:
                     failures.append(
                         {
                             "reason": "reference_mismatch",
@@ -697,8 +806,8 @@ def validate_scope_batch(
                             "point_index": (batch_index - 1) * len(points) + offset,
                             "point": point,
                             "variable": variable,
-                            "mismatch_count": len(mismatches),
-                            "first_mismatches": mismatches[:10],
+                            "mismatch_count": len(strict_mismatches),
+                            "first_mismatches": strict_mismatches[:10],
                         }
                     )
     return {
@@ -709,10 +818,12 @@ def validate_scope_batch(
         "variables": len(variables),
         "official_requests": official_requests,
         "checked_values": checked_values,
+        "diagnostic_values": diagnostic_values,
         "elapsed_seconds": round(time.time() - started, 3),
         "failed_points": failed_point_count(failures),
         "passed": not failures,
         "failures": failures,
+        "diagnostic_differences": diagnostic_differences,
     }
 
 
