@@ -38,6 +38,28 @@ def test_singapore_internal_http_deploy_script_is_removed():
     assert not (ROOT / "scripts" / "deploy_singapore_candidate.sh").exists()
 
 
+def test_openmeteo_json_writer_uses_current_upstream_numeric_formatting():
+    number_extensions = (
+        ROOT / "vendor" / "open-meteo" / "Sources" / "App" / "Helper" / "NumberExtensions.swift"
+    ).read_text(encoding="utf-8")
+    json_writer = (
+        ROOT / "vendor" / "open-meteo" / "Sources" / "App" / "Helper" / "Writer" / "JsonWriter.swift"
+    ).read_text(encoding="utf-8")
+    csv_writer = (
+        ROOT / "vendor" / "open-meteo" / "Sources" / "App" / "Helper" / "Writer" / "CsvWriter.swift"
+    ).read_text(encoding="utf-8")
+    forecast_result = (
+        ROOT / "vendor" / "open-meteo" / "Sources" / "App" / "Helper" / "Writer" / "ForecastApiResult.swift"
+    ).read_text(encoding="utf-8")
+
+    assert "func formatted(decimals: Int) -> String" in number_extensions
+    assert ".formatted(decimals: e.unit.significantDigits)" in json_writer
+    assert ".formatted(decimals: e.unit.significantDigits)" in csv_writer
+    assert ".formatted(decimals: 2)" in forecast_result
+    assert "String(format: format" not in json_writer
+    assert "String(format: \"%." not in csv_writer
+
+
 def test_legacy_combined_and_bin_product_builders_are_removed():
     removed_paths = [
         ROOT / "scripts" / "build_openmeteo_point_package.py",

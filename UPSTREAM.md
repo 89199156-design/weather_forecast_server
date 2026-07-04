@@ -12,11 +12,18 @@ updated whenever upstream code is imported, rebased, or patched.
 - Commit subject:
   `feat: option to generate data_run for IFS after only a certain amount of forecast hours (#1886)`
 - Reason for this baseline:
-  It is the upstream Open-Meteo commit immediately before
-  `98a3e0f00bf13633c5511a6c7788462088bfe752`, which changed JSON/CSV float
-  formatting. The current public `single-runs-api.open-meteo.com` API still
-  serializes GFS `temperature_2m` like the pre-`98a3e0f0` writer, while the
-  flatbuffers raw values match.
+  It is the last broad shared-engine baseline before the current focused
+  public-API parity patches were applied locally.
+- GFS JSON/CSV writer behavior baseline:
+  `98a3e0f00bf13633c5511a6c7788462088bfe752`
+- Writer commit subject:
+  `fix: Lock contention in ConcurrencyGroupLimiter (#1896)`
+- Writer reason:
+  The public `single-runs-api.open-meteo.com` JSON output rounds half-step
+  values like the post-`98a3e0f0` `Float.formatted(decimals:)` writer. Local
+  flatbuffers and official flatbuffers matched for sampled GFS values, while
+  local JSON differed by `0.1`, `0.01`, or `1` at formatting boundaries when it
+  still used the older `String(format:)` path.
 - GFS weather-code API behavior baseline:
   `4efb9c49fb4a3718ed385fb22580d2e0fc56bdb2`
 - Weather-code commit subject:
@@ -120,6 +127,10 @@ Current intentional differences from upstream `036c1d94`:
 - `WeatherCode.swift`, GFS reader/controller weather-code wiring, and shared
   weather-code call sites match the upstream `4efb9c49` weather-code behavior
   used by the current public `single-runs-api.open-meteo.com` API.
+- `NumberExtensions.swift`, `JsonWriter.swift`, `CsvWriter.swift`, and
+  `ForecastApiResult.swift` include the numeric formatting behavior from
+  upstream `98a3e0f0`, because the current public API serializes JSON/CSV using
+  that writer behavior.
 
 Any other vendored difference requires a root-cause note and validation record
 before it can be treated as intentional.
