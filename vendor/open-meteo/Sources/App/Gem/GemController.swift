@@ -307,12 +307,9 @@ struct GemReader: GenericReaderDerivedSimple, GenericReaderProtocol {
                     gusts: gusts,
                     cape: cape,
                     liftedIndex: nil,
-                    convectiveInhibition: nil,
-                    pblHeight: nil,
                     visibilityMeters: nil,
                     categoricalFreezingRain: nil,
-                    modelDtSeconds: time.dtSeconds,
-                    latitude: reader.modelLat), .wmoCode
+                    modelDtSeconds: time.dtSeconds), .wmoCode
                 )
             case .is_day:
                 return DataAndUnit(Zensun.calculateIsDay(timeRange: time.time, lat: reader.modelLat, lon: reader.modelLon), .dimensionlessInteger)

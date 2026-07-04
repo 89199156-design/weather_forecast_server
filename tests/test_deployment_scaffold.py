@@ -598,21 +598,16 @@ def test_gfs_weather_code_keeps_upstream_thunderstorm_logic():
         ROOT / "vendor" / "open-meteo" / "Sources" / "App" / "Helper" / "Reader" / "DerivedMapping.swift"
     ).read_text(encoding="utf-8")
 
-    assert "calculateThunderstormProbability" in weather_code
-    assert "convectiveInhibition: Float?" in weather_code
-    assert "pblHeight: Float?" in weather_code
-    assert "latitude: Float" in weather_code
-    assert "latitudeFactor" in weather_code
-    assert "cinWeight" in weather_code
-    assert "pblWeight" in weather_code
-    assert "if thunderstroms > 90" in weather_code
-    assert "return .thunderstormHeavy" in weather_code
-    assert "if thunderstroms > 70" in weather_code
-    assert "return .thunderstormStrong" in weather_code
-    assert "if thunderstroms > 50" in weather_code
+    assert "calculateThunderstormProbability" not in weather_code
+    assert "convectiveInhibition: Float?" not in weather_code
+    assert "pblHeight: Float?" not in weather_code
+    assert "latitude: Float" not in weather_code
+    assert "latitudeFactor" not in weather_code
+    assert "cinWeight" not in weather_code
+    assert "pblWeight" not in weather_code
+    assert "if let cape, cape >= 3000" in weather_code
+    assert "if liftedIndex <= -5" in weather_code
     assert "return .thunderstormSlightOrModerate" in weather_code
-    assert "if thunderstroms > 85" not in weather_code
-    assert "if thunderstroms > 60" not in weather_code
 
     weather_prefetch = gfs_controller.split("case .weather_code, .weathercode:", 1)[1].split(
         "case .is_day:", 1
@@ -620,18 +615,18 @@ def test_gfs_weather_code_keeps_upstream_thunderstorm_logic():
     weather_get = gfs_controller.split("case .weather_code, .weathercode:", 2)[2].split(
         "case .is_day:", 1
     )[0]
-    assert "raw: .surface(.convective_inhibition)" in weather_prefetch
-    assert "raw: .surface(.boundary_layer_height)" in weather_prefetch
-    assert "let convective_inhibition = try await get(raw: .surface(.convective_inhibition)" in weather_get
-    assert "let boundary_layer_height = try await get(raw: .surface(.boundary_layer_height)" in weather_get
-    assert "convectiveInhibition: convective_inhibition" in weather_get
-    assert "pblHeight: boundary_layer_height" in weather_get
-    assert "latitude: reader.modelLat" in weather_get
-    assert "convectiveInhibition: Variable?" in derived_mapping
-    assert "boundaryLayerHeight: Variable?" in derived_mapping
-    assert "latitude: reader.modelLat" in derived_mapping
+    assert "raw: .surface(.convective_inhibition)" not in weather_prefetch
+    assert "raw: .surface(.boundary_layer_height)" not in weather_prefetch
+    assert "let convective_inhibition = try await get(raw: .surface(.convective_inhibition)" not in weather_get
+    assert "let boundary_layer_height = try await get(raw: .surface(.boundary_layer_height)" not in weather_get
+    assert "convectiveInhibition: convective_inhibition" not in weather_get
+    assert "pblHeight: boundary_layer_height" not in weather_get
+    assert "latitude: reader.modelLat" not in weather_get
+    assert "convectiveInhibition: Variable?" not in derived_mapping
+    assert "boundaryLayerHeight: Variable?" not in derived_mapping
+    assert "latitude: reader.modelLat" not in derived_mapping
 
-    assert "pblHeight: try await get(variable: boundaryLayerHeight" in derived_mapping
+    assert "pblHeight: try await get(variable: boundaryLayerHeight" not in derived_mapping
 
 
 def test_all_weather_code_call_sites_use_current_api_signature():
@@ -663,9 +658,9 @@ def test_all_weather_code_call_sites_use_current_api_signature():
             if call == "WeatherCode.calculate()":
                 start = index + len("WeatherCode.calculate(")
                 continue
-            assert "convectiveInhibition:" in call, f"{path} has an old WeatherCode.calculate call"
-            assert "pblHeight:" in call, f"{path} has an old WeatherCode.calculate call"
-            assert "latitude:" in call, f"{path} has an old WeatherCode.calculate call"
+            assert "convectiveInhibition:" not in call, f"{path} has non-upstream WeatherCode.calculate inputs"
+            assert "pblHeight:" not in call, f"{path} has non-upstream WeatherCode.calculate inputs"
+            assert "latitude:" not in call, f"{path} has non-upstream WeatherCode.calculate inputs"
             start = index + len("WeatherCode.calculate(")
 
 

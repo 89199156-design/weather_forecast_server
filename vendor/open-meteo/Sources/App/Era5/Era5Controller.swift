@@ -359,12 +359,9 @@ struct Era5Reader<Reader: GenericReaderProtocol>: GenericReaderDerivedSimple, Ge
                 gusts: nil,
                 cape: nil,
                 liftedIndex: nil,
-                convectiveInhibition: nil,
-                pblHeight: nil,
                 visibilityMeters: nil,
                 categoricalFreezingRain: nil,
-                modelDtSeconds: time.dtSeconds,
-                latitude: reader.modelLat), .wmoCode
+                modelDtSeconds: time.dtSeconds), .wmoCode
             )
         case .soil_moisture_0_to_100cm:
             let sm0_7 = try await get(raw: .soil_moisture_0_to_7cm, time: time)
