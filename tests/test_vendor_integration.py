@@ -32,8 +32,10 @@ def test_core_api_output_files_match_single_upstream_engine_baseline():
     expected_sha256 = {
         "Sources/App/Helper/WeatherCode.swift": "2555314d6353ed9763f96a5a145dc217249351ff8fc56e228e5277eed7d85928",
         "Sources/App/Gfs/GfsController.swift": "756d68a69195850cc2e5c628d7b9bd47e2fa6aa2fc469e5bba857d2d521ed95e",
+        "Sources/App/Controllers/ForecastapiController.swift": "cdd4e64b0d7c7f6081cc57aafe7771d6408d5d5df791c9c49d58248b099e0361",
         "Sources/App/Controllers/VariableHourly.swift": "19c92be6728d8318e5ce4fdf0368c10baa4361bb42507ae9a65de05fc35458ec",
         "Sources/App/Helper/Reader/DerivedMapping.swift": "9d4cc081f53bfd3b84e528ba16114bfd229d204be3ffd1afd070edac2fa74576",
+        "Sources/App/Helper/DomainRegistry.swift": "50618e9805c0b39156de3e56eae82dc5ed655bda4c10dd3fa87ef3f62ad75436",
         "Sources/App/Helper/Meteorology.swift": "d0a5bfdde7009ad37deb934bcd74ea46eb92d27e2d22dd017a7b8b2281f164a4",
         "Sources/App/Helper/NumberExtensions.swift": "c0e85e7ed4c5b355924e8f6435425d18f3ce51bacb1197cf4dee92db3039542e",
         "Sources/App/Helper/Writer/JsonWriter.swift": "81419406fb880b36890a42d94eb8acebe44d8e72de72e40435d5aea2887b249e",
@@ -45,6 +47,9 @@ def test_core_api_output_files_match_single_upstream_engine_baseline():
         "Sources/App/Helper/Vapor/ConcurrencyGroupLimiter.swift": "7e8ddaf64ed30ad921635eb884dd0bb31488adb645fe595d31cd0368e42a3206",
         "Sources/App/Helper/Vapor/RateLimiter.swift": "97c979b8c03b44f6512037aa9789601e049e235b7d406e017ca43609af188346",
         "Sources/App/Dem/DemController.swift": "3e3e42fed7f63163c061a9416eede8ae36761f402b8a872d53cfa2d3fe5fdeb1",
+        "Sources/App/Chmi/ChmiDomain.swift": "3f9eb2a56934c1f7709dbbb319868fdd9f02825ea13be37d1464209e001805b6",
+        "Sources/App/Chmi/ChmiDownloader.swift": "536dbf2b224f39fed68428d354070e2e8abaa66907af35d8dc942dec7b504e42",
+        "Sources/App/Chmi/ChmiVariable.swift": "ce15cfc42896ebf0ee78e9e45853dbc8a65797d67e9c791a5f09bf763647fee3",
     }
 
     for path, expected in expected_sha256.items():
