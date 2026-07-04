@@ -62,4 +62,5 @@ run_openmeteo download-cams-ads cams_global \
   --only-variables "$CAMS_VARIABLES" \
   --concurrent "$CAMS_CONCURRENT"
 
+cleanup_download_work_dirs "$DATA_DIR/download-cams_global"
 cleanup_openmeteo_http_cache

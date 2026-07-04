@@ -200,11 +200,11 @@ def test_gfs_surface_download_uses_explicit_minimal_allowlists():
         "temperature_2m,cloud_cover,cloud_cover_low,cloud_cover_mid,cloud_cover_high,"
         "pressure_msl,relative_humidity_2m,precipitation,wind_v_component_10m,"
         "wind_u_component_10m,snow_depth,showers,frozen_precipitation_percent,"
-        "uv_index,boundary_layer_height,shortwave_radiation"
+        "uv_index,boundary_layer_height,shortwave_radiation,latent_heat_flux"
     )
     gfs025_default = (
         "pressure_msl,categorical_freezing_rain,wind_gusts_10m,cape,lifted_index,"
-        "convective_inhibition,visibility"
+        "convective_inhibition,visibility,latent_heat_flux"
     )
     assert gfs013_default in script
     assert gfs025_default in script
@@ -239,7 +239,6 @@ def test_gfs_surface_download_uses_explicit_minimal_allowlists():
         "soil_moisture_40_to_100cm",
         "soil_moisture_100_to_200cm",
         "sensible_heat_flux",
-        "latent_heat_flux",
         "freezing_level_height",
         "diffuse_radiation",
         "uv_index_clear_sky",
@@ -304,13 +303,13 @@ def test_singapore_config_enables_temporary_openmeteo_http_cache():
 
 
 def test_downloaders_clean_source_cache_only_at_start_and_after_success():
-    scripts = [
-        (ROOT / "scripts" / "download_openmeteo_gfs_data.sh").read_text(encoding="utf-8"),
-        (ROOT / "scripts" / "download_openmeteo_cams_data.sh").read_text(encoding="utf-8"),
-        (ROOT / "scripts" / "download_openmeteo_cams_ads_data.sh").read_text(encoding="utf-8"),
-    ]
+    scripts = {
+        "gfs": (ROOT / "scripts" / "download_openmeteo_gfs_data.sh").read_text(encoding="utf-8"),
+        "cams_ftp": (ROOT / "scripts" / "download_openmeteo_cams_data.sh").read_text(encoding="utf-8"),
+        "cams_ads": (ROOT / "scripts" / "download_openmeteo_cams_ads_data.sh").read_text(encoding="utf-8"),
+    }
 
-    for script in scripts:
+    for script in scripts.values():
         assert "trap cleanup_sensitive_artifacts EXIT" in script
         assert "trap cleanup_download_artifacts EXIT" not in script
         assert "cleanup_download_artifacts()" not in script
@@ -323,6 +322,18 @@ def test_downloaders_clean_source_cache_only_at_start_and_after_success():
         assert first_cleanup < first_run
         assert last_run < last_cleanup
         assert "cleanup_openmeteo_http_cache" not in script[first_run:last_run]
+
+    gfs = scripts["gfs"]
+    assert gfs.count("cleanup_download_work_dirs \\") == 2
+    assert gfs.count('"$DATA_DIR/download-ncep_gfs013"') == 2
+    assert gfs.count('"$DATA_DIR/download-ncep_gfs025"') == 2
+    assert gfs.index("cleanup_download_work_dirs \\") < gfs.index("run_openmeteo download-gfs gfs013")
+    assert gfs.rindex("run_openmeteo download-gfs gfs025") < gfs.rindex("cleanup_download_work_dirs \\")
+
+    for script in (scripts["cams_ftp"], scripts["cams_ads"]):
+        assert script.count('cleanup_download_work_dirs "$DATA_DIR/download-cams_global"') == 2
+        assert script.index('cleanup_download_work_dirs "$DATA_DIR/download-cams_global"') < script.index("run_openmeteo")
+        assert script.rindex("run_openmeteo") < script.rindex('cleanup_download_work_dirs "$DATA_DIR/download-cams_global"')
 
 
 def test_production_cycles_clean_only_their_own_generated_om_products_before_download():
@@ -587,13 +598,21 @@ def test_gfs_weather_code_keeps_upstream_thunderstorm_logic():
         ROOT / "vendor" / "open-meteo" / "Sources" / "App" / "Helper" / "Reader" / "DerivedMapping.swift"
     ).read_text(encoding="utf-8")
 
-    assert "calculateThunderstormProbability" not in weather_code
-    assert "convectiveInhibition: Float?" not in weather_code
-    assert "pblHeight: Float?" not in weather_code
-    assert "latitude: Float" not in weather_code
-    assert "cape >= 3000" in weather_code
-    assert "liftedIndex <= -5" in weather_code
+    assert "calculateThunderstormProbability" in weather_code
+    assert "convectiveInhibition: Float?" in weather_code
+    assert "pblHeight: Float?" in weather_code
+    assert "latitude: Float" in weather_code
+    assert "latitudeFactor" in weather_code
+    assert "cinWeight" in weather_code
+    assert "pblWeight" in weather_code
+    assert "if thunderstroms > 90" in weather_code
+    assert "return .thunderstormHeavy" in weather_code
+    assert "if thunderstroms > 70" in weather_code
+    assert "return .thunderstormStrong" in weather_code
+    assert "if thunderstroms > 50" in weather_code
     assert "return .thunderstormSlightOrModerate" in weather_code
+    assert "if thunderstroms > 85" not in weather_code
+    assert "if thunderstroms > 60" not in weather_code
 
     weather_prefetch = gfs_controller.split("case .weather_code, .weathercode:", 1)[1].split(
         "case .is_day:", 1
@@ -601,18 +620,18 @@ def test_gfs_weather_code_keeps_upstream_thunderstorm_logic():
     weather_get = gfs_controller.split("case .weather_code, .weathercode:", 2)[2].split(
         "case .is_day:", 1
     )[0]
-    assert "raw: .surface(.convective_inhibition)" not in weather_prefetch
-    assert "raw: .surface(.boundary_layer_height)" not in weather_prefetch
-    assert "let convective_inhibition = try await get(raw: .surface(.convective_inhibition)" not in weather_get
-    assert "let boundary_layer_height = try await get(raw: .surface(.boundary_layer_height)" not in weather_get
-    assert "convectiveInhibition: convective_inhibition" not in weather_get
-    assert "pblHeight: boundary_layer_height" not in weather_get
-    assert "latitude: reader.modelLat" not in weather_get
+    assert "raw: .surface(.convective_inhibition)" in weather_prefetch
+    assert "raw: .surface(.boundary_layer_height)" in weather_prefetch
+    assert "let convective_inhibition = try await get(raw: .surface(.convective_inhibition)" in weather_get
+    assert "let boundary_layer_height = try await get(raw: .surface(.boundary_layer_height)" in weather_get
+    assert "convectiveInhibition: convective_inhibition" in weather_get
+    assert "pblHeight: boundary_layer_height" in weather_get
+    assert "latitude: reader.modelLat" in weather_get
+    assert "convectiveInhibition: Variable?" in derived_mapping
+    assert "boundaryLayerHeight: Variable?" in derived_mapping
+    assert "latitude: reader.modelLat" in derived_mapping
 
-    assert "convectiveInhibition: Variable?" not in derived_mapping
-    assert "boundaryLayerHeight: Variable?" not in derived_mapping
-    assert "pblHeight: try await get(variable: boundaryLayerHeight" not in derived_mapping
-    assert "latitude: reader.modelLat" not in derived_mapping
+    assert "pblHeight: try await get(variable: boundaryLayerHeight" in derived_mapping
 
 
 def test_layer_builders_are_split_by_source_product():
