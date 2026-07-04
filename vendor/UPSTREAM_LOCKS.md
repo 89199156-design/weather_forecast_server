@@ -6,16 +6,16 @@ Do not update them without updating this file and `../UPSTREAM.md`.
 ## `vendor/open-meteo`
 
 - Upstream: `https://github.com/open-meteo/open-meteo`
-- Commit: `d91c52f00665bb8ddd348f688fece556c933ffbb`
-- Commit subject: `fix: missing pressure level in flatbuffers encoding (#1926)`
+- Commit: `4efb9c49fb4a3718ed385fb22580d2e0fc56bdb2`
+- Commit subject: `fix: weather codes slightly less thunderstorm lat scaling`
 - Imported for: Open-Meteo server engine, model readers, API semantics,
   interpolation, weather-code logic, and GFS download/processing source paths.
 
 ## `vendor/openmeteo-sdk`
 
 - Upstream: `https://github.com/open-meteo/sdk`
-- Commit: `e6274cf9e10240b98219b16cf63cf0fae73347d9`
-- Commit subject: `fix: bump release`
+- Commit: `a29c4b62dd8445128e6db30f0a6fb5509fa1259c`
+- Commit subject: `fix: use java version 17 for build (#262)`
 - Imported for: generated API schema, unit precision, and SDK serialization
   behavior used by Open-Meteo outputs.
 

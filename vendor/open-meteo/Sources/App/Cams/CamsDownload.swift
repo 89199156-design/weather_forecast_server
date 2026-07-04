@@ -63,7 +63,7 @@ struct DownloadCamsCommand: AsyncCommand {
             }
             logger.info("Using CAMS global FTP/ECPDS source")
             let handles = try await downloadCamsGlobal(application: context.application, domain: domain, run: run, variables: variables, user: ftpuser, password: ftppassword, uploadS3Bucket: signature.uploadS3Bucket)
-            try await GenericVariableHandle.convert(logger: logger, domain: domain, createNetcdf: signature.createNetcdf, run: run, handles: handles, concurrent: signature.concurrent ?? 1, writeUpdateJson: true, uploadS3Bucket: signature.uploadS3Bucket, uploadS3OnlyProbabilities: false)
+            try await GenericVariableHandle.convert(application: context.application, domain: domain, createNetcdf: signature.createNetcdf, run: run, handles: handles, concurrent: signature.concurrent ?? 1, writeUpdateJson: true, uploadS3Bucket: signature.uploadS3Bucket, uploadS3OnlyProbabilities: false)
             return
         default:
             fatalError("download-cams only supports cams_global from ECMWF FTP/ECPDS")
