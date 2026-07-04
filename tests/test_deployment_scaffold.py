@@ -634,6 +634,41 @@ def test_gfs_weather_code_keeps_upstream_thunderstorm_logic():
     assert "pblHeight: try await get(variable: boundaryLayerHeight" in derived_mapping
 
 
+def test_all_weather_code_call_sites_use_current_api_signature():
+    def read_balanced_call(source: str, index: int) -> str:
+        depth = 0
+        for pos in range(index, len(source)):
+            char = source[pos]
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+                if depth == 0:
+                    return source[index : pos + 1]
+        raise AssertionError("Unbalanced WeatherCode.calculate call")
+
+    for path in (ROOT / "vendor" / "open-meteo" / "Sources" / "App").rglob("*.swift"):
+        if path.name == "WeatherCode.swift":
+            continue
+        source = path.read_text(encoding="utf-8")
+        if "WeatherCode.calculate(" not in source:
+            continue
+
+        start = 0
+        while True:
+            index = source.find("WeatherCode.calculate(", start)
+            if index < 0:
+                break
+            call = read_balanced_call(source, index)
+            if call == "WeatherCode.calculate()":
+                start = index + len("WeatherCode.calculate(")
+                continue
+            assert "convectiveInhibition:" in call, f"{path} has an old WeatherCode.calculate call"
+            assert "pblHeight:" in call, f"{path} has an old WeatherCode.calculate call"
+            assert "latitude:" in call, f"{path} has an old WeatherCode.calculate call"
+            start = index + len("WeatherCode.calculate(")
+
+
 def test_layer_builders_are_split_by_source_product():
     gfs = (ROOT / "scripts" / "build_openmeteo_gfs_layers.sh").read_text(encoding="utf-8")
     cams = (ROOT / "scripts" / "build_openmeteo_cams_layers.sh").read_text(encoding="utf-8")

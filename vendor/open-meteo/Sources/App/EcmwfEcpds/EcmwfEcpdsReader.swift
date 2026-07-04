@@ -174,9 +174,12 @@ struct EcmwfEcpdsReader: GenericReaderDerived, GenericReaderProtocol {
                 gusts: nil,
                 cape: cape,
                 liftedIndex: nil,
+                convectiveInhibition: nil,
+                pblHeight: nil,
                 visibilityMeters: nil,
                 categoricalFreezingRain: nil,
-                modelDtSeconds: time.dtSeconds), .wmoCode
+                modelDtSeconds: time.dtSeconds,
+                latitude: reader.modelLat), .wmoCode
             )
         case .snowfall:
             let snow = try await get(raw: .snowfall_water_equivalent, time: time).data.map({ $0 * 0.7 })
