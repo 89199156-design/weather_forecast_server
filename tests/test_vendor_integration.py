@@ -1,4 +1,5 @@
 from pathlib import Path
+import hashlib
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -8,6 +9,10 @@ def read_vendor(path: str) -> str:
     return (ROOT / "vendor" / "open-meteo" / path).read_text(encoding="utf-8")
 
 
+def read_vendor_normalized_bytes(path: str) -> bytes:
+    return (ROOT / "vendor" / "open-meteo" / path).read_bytes().replace(b"\r\n", b"\n")
+
+
 def test_openmeteo_package_uses_upstream_sdk_dependency():
     package = read_vendor("Package.swift")
 
@@ -15,6 +20,36 @@ def test_openmeteo_package_uses_upstream_sdk_dependency():
     assert '.package(path: "../openmeteo-sdk")' not in package
     assert '.product(name: "OpenMeteoSdk", package: "sdk")' in package
     assert '.product(name: "OpenMeteoSdk", package: "openmeteo-sdk")' not in package
+
+
+def test_core_api_output_files_match_single_upstream_engine_baseline():
+    expected_sha256 = {
+        "Sources/App/Helper/WeatherCode.swift": "6275c8b2de8116e4a53e4e891503554ae401f26b9b9ec2ebdc22fadae864c033",
+        "Sources/App/Gfs/GfsController.swift": "6bd0f270c9d03fc3afce75f5ed85516b20ea3f37d9f141f4870fb7bf211277fe",
+        "Sources/App/Helper/Reader/DerivedMapping.swift": "6993a3c31368d6c85da9c9f1eeb6a879be05297d8c537c1135fed03d5f658333",
+        "Sources/App/Helper/NumberExtensions.swift": "c0e85e7ed4c5b355924e8f6435425d18f3ce51bacb1197cf4dee92db3039542e",
+        "Sources/App/Helper/Writer/JsonWriter.swift": "5403f5a29fda6fdb4494f1a70b802ae63ba94024625cd1b67c14a8157bcabc81",
+        "Sources/App/Helper/Writer/CsvWriter.swift": "82b6e4bef05ef062e2bca728140bc756fcc64a4e5bea5fdb8bb0adeed5b5819f",
+        "Sources/App/Helper/Writer/ForecastApiResult.swift": "352f445e78319eab1112b3a5faba4cf75707685ce30e5d3817a4e8967f5f04d9",
+        "Sources/App/Helper/FlatBufferWriter/FlatBuffersWriter.swift": "184d16771fa3b852e0eff4109ace14d846458bce481467b3403c996e587c2bba",
+        "Sources/App/Helper/Vapor/ApiKeyManager.swift": "10b2bc1f0909fa2de73662654d0e5dc476b34eb37ae00bf19bc77ffaa7e4ce2c",
+        "Sources/App/Dem/DemController.swift": "3e3e42fed7f63163c061a9416eede8ae36761f402b8a872d53cfa2d3fe5fdeb1",
+    }
+
+    for path, expected in expected_sha256.items():
+        actual = hashlib.sha256(read_vendor_normalized_bytes(path)).hexdigest()
+        assert actual == expected, f"{path} differs from Open-Meteo 4efb9c49"
+
+
+def test_upstream_record_uses_one_openmeteo_engine_baseline():
+    upstream = (ROOT / "UPSTREAM.md").read_text(encoding="utf-8")
+
+    assert "`4efb9c49fb4a3718ed385fb22580d2e0fc56bdb2`" in upstream
+    assert "GFS JSON/CSV writer behavior baseline" not in upstream
+    assert "GFS weather-code API behavior baseline" not in upstream
+    assert "Active local shared engine baseline" not in upstream
+    assert "`036c1d940f2dd5af48f899c2d8162d00d12d3c49`" not in upstream
+    assert "`98a3e0f00bf13633c5511a6c7788462088bfe752`" not in upstream
 
 
 def test_vendored_openmeteo_only_patches_download_transport_and_region_grid():
