@@ -369,14 +369,6 @@ enum ForecastSurfaceVariable: String, GenericVariableMixable {
     case us_aqi_ozone
     case us_aqi_sulphur_dioxide
     case us_aqi_carbon_monoxide
-
-    case ch_aqi
-    case ch_iaqi_pm2_5
-    case ch_iaqi_pm10
-    case ch_iaqi_so2
-    case ch_iaqi_no2
-    case ch_iaqi_o3
-    case ch_iaqi_co
     
     case wave_direction
     case wave_height
@@ -637,6 +629,8 @@ struct VariableHourlyDeriver<Reader: GenericReaderProtocol>: GenericDeriverProto
                 let c = rh.data.map({ Meteorology.relativeHumidityToCloudCover(relativeHumidity: $0, pressureHPa: Float(v.level)) })
                 return DataAndUnit(c, .percentage)
             }
+        case .relativehumidity:
+            return .direct(Reader.variableFromString("relative_humidity_\(v.level)hPa"))
         default:
             return nil
         }
@@ -702,6 +696,7 @@ struct VariableHourlyDeriver<Reader: GenericReaderProtocol>: GenericDeriverProto
             return
                 .windSpeed(u: Reader.variableFromString("wind_u_component_80m"), v: Reader.variableFromString("wind_v_component_80m")) ??
                 .windSpeed(speed: Reader.variableFromString("wind_speed_75m"), levelFrom: 75, levelTo: 80) ??
+                .windSpeed(speed: Reader.variableFromString("wind_speed_100m"), levelFrom: 100, levelTo: 80) ??
                 .windSpeed(u: Reader.variableFromString("wind_u_component_100m"), v: Reader.variableFromString("wind_v_component_100m"), levelFrom: 100, levelTo: 80)
         case .winddirection_80m:
             return getDeriverMap(variable: .wind_direction_80m)
@@ -709,6 +704,7 @@ struct VariableHourlyDeriver<Reader: GenericReaderProtocol>: GenericDeriverProto
             return
                 .windDirection(u: Reader.variableFromString("wind_u_component_80m"), v: Reader.variableFromString("wind_v_component_80m")) ??
                 .direct(Reader.variableFromString("wind_direction_75m")) ??
+                .direct(Reader.variableFromString("wind_direction_100m")) ??
                 .windDirection(u: Reader.variableFromString("wind_u_component_100m"), v: Reader.variableFromString("wind_v_component_100m"))
         case .windspeed_100m:
             return getDeriverMap(variable: .wind_speed_100m)
@@ -731,6 +727,7 @@ struct VariableHourlyDeriver<Reader: GenericReaderProtocol>: GenericDeriverProto
             return
                 .windSpeed(u: Reader.variableFromString("wind_u_component_120m"), v: Reader.variableFromString("wind_v_component_120m")) ??
                 .windSpeed(speed: Reader.variableFromString("wind_speed_125m"), levelFrom: 125, levelTo: 120) ??
+                .windSpeed(speed: Reader.variableFromString("wind_speed_100m"), levelFrom: 100, levelTo: 120) ??
                 .windSpeed(u: Reader.variableFromString("wind_u_component_100m"), v: Reader.variableFromString("wind_v_component_100m"), levelFrom: 100, levelTo: 120) ??
                 .windSpeed(u: Reader.variableFromString("wind_u_component_150m"), v: Reader.variableFromString("wind_v_component_150m"), levelFrom: 150, levelTo: 120)
         case .winddirection_120m:
@@ -739,6 +736,7 @@ struct VariableHourlyDeriver<Reader: GenericReaderProtocol>: GenericDeriverProto
             return
                 .windDirection(u: Reader.variableFromString("wind_u_component_120m"), v: Reader.variableFromString("wind_v_component_120m")) ??
                 .direct(Reader.variableFromString("wind_direction_125m")) ??
+                .direct(Reader.variableFromString("wind_direction_100m")) ??
                 .windDirection(u: Reader.variableFromString("wind_u_component_100m"), v: Reader.variableFromString("wind_v_component_100m")) ??
                 .windDirection(u: Reader.variableFromString("wind_u_component_150m"), v: Reader.variableFromString("wind_v_component_150m"))
         case .wind_speed_140m:
@@ -764,6 +762,7 @@ struct VariableHourlyDeriver<Reader: GenericReaderProtocol>: GenericDeriverProto
             return
                 .windSpeed(u: Reader.variableFromString("wind_u_component_180m"), v: Reader.variableFromString("wind_v_component_180m")) ??
                 .windSpeed(speed: Reader.variableFromString("wind_speed_175m"), levelFrom: 175, levelTo: 180) ??
+                .windSpeed(speed: Reader.variableFromString("wind_speed_200m"), levelFrom: 200, levelTo: 180) ??
                 .windSpeed(u: Reader.variableFromString("wind_u_component_200m"), v: Reader.variableFromString("wind_v_component_200m"), levelFrom: 200, levelTo: 180)
         case .winddirection_180m:
             return getDeriverMap(variable: .wind_direction_180m)
@@ -771,6 +770,7 @@ struct VariableHourlyDeriver<Reader: GenericReaderProtocol>: GenericDeriverProto
             return
                 .windDirection(u: Reader.variableFromString("wind_u_component_180m"), v: Reader.variableFromString("wind_v_component_180m")) ??
                 .direct(Reader.variableFromString("wind_direction_175m")) ??
+                .direct(Reader.variableFromString("wind_direction_200m")) ??
                 .windDirection(u: Reader.variableFromString("wind_u_component_200m"), v: Reader.variableFromString("wind_v_component_200m"))
         case .windspeed_200m:
             return getDeriverMap(variable: .wind_speed_200m)
@@ -786,6 +786,8 @@ struct VariableHourlyDeriver<Reader: GenericReaderProtocol>: GenericDeriverProto
                 .windDirection(u: Reader.variableFromString("wind_u_component_200m"), v: Reader.variableFromString("wind_v_component_200m")) ??
                 .windDirection(u: Reader.variableFromString("wind_u_component_170m"), v: Reader.variableFromString("wind_v_component_170m")) ??
                 .windDirection(u: Reader.variableFromString("wind_u_component_180m"), v: Reader.variableFromString("wind_v_component_180m"))
+        case .windgusts_10m:
+            return getDeriverMap(variable: .wind_gusts_10m)
         case .wind_speed_10m_spread:
             return .windSpeedSpread(u: Reader.variableFromString("wind_u_component_10m"), v: Reader.variableFromString("wind_v_component_10m"), uSpread: Reader.variableFromString("wind_u_component_10m_spread"), vSpread: Reader.variableFromString("wind_v_component_10m_spread"))
         case .wind_speed_40m_spread:
@@ -865,11 +867,11 @@ struct VariableHourlyDeriver<Reader: GenericReaderProtocol>: GenericDeriverProto
         case .vapour_pressure_deficit, .vapor_pressure_deficit:
             guard
                 let temperature = Reader.variableFromString("temperature_2m"),
-                let rh = self.getDeriverMap(variable: .relativehumidity_2m)
+                let dewpoint = self.getDeriverMap(variable: .dew_point_2m)
             else {
                 return nil
             }
-            return .two(.raw(temperature), .mapped(rh)) { temperature, dewpoint, _ in
+            return .two(.raw(temperature), .mapped(dewpoint)) { temperature, dewpoint, _ in
                 return DataAndUnit(zip(temperature.data, dewpoint.data).map(Meteorology.vaporPressureDeficit), .kilopascal)
             }
         case .evapotranspiration:
@@ -1023,7 +1025,23 @@ struct VariableHourlyDeriver<Reader: GenericReaderProtocol>: GenericDeriverProto
                 })
                 return DataAndUnit(rain, precip.unit)
             }
-        case .weather_code, .weathercode:
+        case .showers:
+            guard
+                let precip = Reader.variableFromString("precipitation"),
+                let rain = getDeriverMap(variable: .rain),
+                let snowwater = getDeriverMap(variable: .snowfall_water_equivalent)
+            else {
+                return nil
+            }
+            return .three(.raw(precip), .mapped(rain), .mapped(snowwater)) { precip, rain, snowwater, _ in
+                let showers = zip(zip(precip.data, rain.data), snowwater.data).map {
+                    max($0.0 - $0.1 - $1, 0)
+                }
+                return DataAndUnit(showers, precip.unit)
+            }
+        case .weathercode:
+            return getDeriverMap(variable: .weather_code)
+        case .weather_code:
             guard
                 let cloudCover = getDeriverMap(variable: .cloud_cover),
                 let snowfall = getDeriverMap(variable: .snowfall),
@@ -1095,6 +1113,10 @@ struct VariableHourlyDeriver<Reader: GenericReaderProtocol>: GenericDeriverProto
                 return DataAndUnit(zip(temperature.data, rh.data).map(Meteorology.wetBulbTemperature), temperature.unit)
 
             }
+        case .temperature_80m, .temperature_120m:
+            return .direct(Reader.variableFromString("temperature_100m"))
+        case .temperature_180m:
+            return .direct(Reader.variableFromString("temperature_200m"))
         case .global_tilted_irradiance:
             guard
                 let directRadiation = getDeriverMap(variable: .direct_radiation),
@@ -1118,6 +1140,8 @@ struct VariableHourlyDeriver<Reader: GenericReaderProtocol>: GenericDeriverProto
                 let gti = Zensun.calculateTiltedIrradiance(directRadiation: directRadiation.data, diffuseRadiation: diffuseRadiation.data, tilt: options.tilt, azimuth: options.azimuth, latitude: reader.modelLat, longitude: reader.modelLon, timerange: time.time, convertBackwardsToInstant: true)
                 return DataAndUnit(gti, .wattPerSquareMetre)
             }
+        case .surface_temperature:
+            return getDeriverMap(variable: .soil_temperature_0cm)
         case .freezinglevel_height:
             return getDeriverMap(variable: .freezing_level_height)
             

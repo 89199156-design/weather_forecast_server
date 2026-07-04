@@ -32,12 +32,15 @@ def test_core_api_output_files_match_single_upstream_engine_baseline():
     expected_sha256 = {
         "Sources/App/Helper/WeatherCode.swift": "2555314d6353ed9763f96a5a145dc217249351ff8fc56e228e5277eed7d85928",
         "Sources/App/Gfs/GfsController.swift": "756d68a69195850cc2e5c628d7b9bd47e2fa6aa2fc469e5bba857d2d521ed95e",
+        "Sources/App/Controllers/VariableHourly.swift": "7dffc153d7709fb037017c7598351076b8a34aa762ce1b724b195abc2fda526d",
         "Sources/App/Helper/Reader/DerivedMapping.swift": "9d4cc081f53bfd3b84e528ba16114bfd229d204be3ffd1afd070edac2fa74576",
+        "Sources/App/Helper/Meteorology.swift": "3943a328393bb2ab3d8d1a7ebc842fb712e3a50718c0650386a2711f0c8fd27d",
         "Sources/App/Helper/NumberExtensions.swift": "c0e85e7ed4c5b355924e8f6435425d18f3ce51bacb1197cf4dee92db3039542e",
         "Sources/App/Helper/Writer/JsonWriter.swift": "81419406fb880b36890a42d94eb8acebe44d8e72de72e40435d5aea2887b249e",
         "Sources/App/Helper/Writer/CsvWriter.swift": "82b6e4bef05ef062e2bca728140bc756fcc64a4e5bea5fdb8bb0adeed5b5819f",
         "Sources/App/Helper/Writer/ForecastApiResult.swift": "352f445e78319eab1112b3a5faba4cf75707685ce30e5d3817a4e8967f5f04d9",
         "Sources/App/Helper/FlatBufferWriter/FlatBuffersWriter.swift": "ac880de07d1b7267185f65f753aa836d5ba65d755bc7f7487b06b75b4ecb9fb6",
+        "Sources/App/Helper/FlatBufferWriter/FlatBuffers+WeatherApi.swift": "8b5508796c8f8b7d9fabc10ad2bd684cb328c2219867eea433e9b1cd3a5dce3e",
         "Sources/App/Helper/Vapor/ApiKeyManager.swift": "06c1fed7bf121322d3b1e496a48387d305fa9c99dfc8bea5228732f0856092ab",
         "Sources/App/Helper/Vapor/ConcurrencyGroupLimiter.swift": "7e8ddaf64ed30ad921635eb884dd0bb31488adb645fe595d31cd0368e42a3206",
         "Sources/App/Helper/Vapor/RateLimiter.swift": "97c979b8c03b44f6512037aa9789601e049e235b7d406e017ca43609af188346",
@@ -47,6 +50,30 @@ def test_core_api_output_files_match_single_upstream_engine_baseline():
     for path, expected in expected_sha256.items():
         actual = hashlib.sha256(read_vendor_normalized_bytes(path)).hexdigest()
         assert actual == expected, f"{path} differs from Open-Meteo 4efb9c49"
+
+
+def test_gfs_hourly_deriver_keeps_upstream_derived_surface_logic():
+    deriver = read_vendor("Sources/App/Controllers/VariableHourly.swift")
+    vpd_case = deriver.split("case .vapour_pressure_deficit, .vapor_pressure_deficit:", 1)[1].split("case .evapotranspiration:", 1)[0]
+
+    assert 'let dewpoint = self.getDeriverMap(variable: .dew_point_2m)' in vpd_case
+    assert 'let rh = self.getDeriverMap(variable: .relativehumidity_2m)' not in vpd_case
+    assert ".two(.raw(temperature), .mapped(dewpoint))" in vpd_case
+
+    upstream_required_snippets = (
+        'case .relativehumidity:\n            return .direct(Reader.variableFromString("relative_humidity_\\(v.level)hPa"))',
+        '.windSpeed(speed: Reader.variableFromString("wind_speed_100m"), levelFrom: 100, levelTo: 80)',
+        '.direct(Reader.variableFromString("wind_direction_100m"))',
+        '.windSpeed(speed: Reader.variableFromString("wind_speed_100m"), levelFrom: 100, levelTo: 120)',
+        '.windSpeed(speed: Reader.variableFromString("wind_speed_200m"), levelFrom: 200, levelTo: 180)',
+        'case .windgusts_10m:\n            return getDeriverMap(variable: .wind_gusts_10m)',
+        'case .showers:',
+        'case .weathercode:\n            return getDeriverMap(variable: .weather_code)\n        case .weather_code:',
+        'case .temperature_80m, .temperature_120m:\n            return .direct(Reader.variableFromString("temperature_100m"))',
+        'case .surface_temperature:\n            return getDeriverMap(variable: .soil_temperature_0cm)',
+    )
+    for snippet in upstream_required_snippets:
+        assert snippet in deriver
 
 
 def test_upstream_record_uses_one_openmeteo_engine_baseline():
