@@ -130,7 +130,7 @@ struct DownloadCamsCommand: AsyncCommand {
                 try await writer.write(member: 0, variable: variable, data: data)
             }
             let completed = i == timestamps.count - 1
-            return try await writer.finalise(completed: completed, validTimes: Array(timestamps[0...i]), uploadS3Bucket: uploadS3Bucket)
+            return try await writer.finalise(application: application, completed: completed, validTimes: Array(timestamps[0...i]), uploadS3Bucket: uploadS3Bucket)
         }
         await curl.printStatistics()
         return handles

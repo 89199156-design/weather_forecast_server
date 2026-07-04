@@ -74,7 +74,7 @@ extension DownloadCamsAdsCommand {
                 }
                 try await writer.write(time: timestamp, member: 0, variable: variable, data: data)
             }
-            return try await writer.finalise(completed: true, validTimes: nil, uploadS3Bucket: uploadS3Bucket)
+            return try await writer.finalise(application: application, completed: true, validTimes: nil, uploadS3Bucket: uploadS3Bucket)
         }
     }
 }

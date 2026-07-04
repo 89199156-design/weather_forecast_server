@@ -211,7 +211,7 @@ struct DownloadCamsAdsCommand: AsyncCommand {
                     try await writer.write(time: timestamp, member: 0, variable: variable, data: data)
                 }
             }
-            handles.append(contentsOf: try await writer.finalise(completed: true, validTimes: nil, uploadS3Bucket: uploadS3Bucket))
+            handles.append(contentsOf: try await writer.finalise(application: application, completed: true, validTimes: nil, uploadS3Bucket: uploadS3Bucket))
         } catch CdsApiError.restrictedAccessToValidData {
             logger.info("CAMS global ADS/CDS run \(run.iso8601_YYYY_MM_dd_HH_mm) seems to be unavailable. Skipping downloading now.")
         }
@@ -369,7 +369,7 @@ struct DownloadCamsAdsCommand: AsyncCommand {
                     }
                     try await writer.write(time: timestamp, member: 0, variable: variable, data: grib2d.array.data)
                 }
-                return try await writer.finalise(completed: true, validTimes: nil, uploadS3Bucket: uploadS3Bucket)
+                return try await writer.finalise(application: application, completed: true, validTimes: nil, uploadS3Bucket: uploadS3Bucket)
             }
             handles.append(contentsOf: h)
         } catch CdsApiError.restrictedAccessToValidData {
