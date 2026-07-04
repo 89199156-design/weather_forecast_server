@@ -16,9 +16,16 @@ updated whenever upstream code is imported, rebased, or patched.
   `98a3e0f00bf13633c5511a6c7788462088bfe752`, which changed JSON/CSV float
   formatting. The current public `single-runs-api.open-meteo.com` API still
   serializes GFS `temperature_2m` like the pre-`98a3e0f0` writer, while the
-  flatbuffers raw values match. GFS weather-code derivation is not locally
-  patched; `WeatherCode.swift` and the GFS controller path match this upstream
-  baseline.
+  flatbuffers raw values match.
+- GFS weather-code API behavior baseline:
+  `4efb9c49fb4a3718ed385fb22580d2e0fc56bdb2`
+- Weather-code commit subject:
+  `fix: weather codes slightly less thunderstorm lat scaling`
+- Weather-code reason:
+  The public `single-runs-api.open-meteo.com` weather-code output for pinned
+  GFS runs matches this upstream weather-code path. Earlier `2ccf980f` over-
+  triggers tropical thunderstorms, while later `3a64572c` blocks low-cloud-cover
+  thunderstorm cases that the current public API still returns as `95`.
 
 ## Open-Meteo Air-Quality/CAMS Engine
 
@@ -80,8 +87,8 @@ Local changes must stay outside the vendored engine:
 - deployment scripts and task definitions.
 
 Weather-code derivation, model reader behavior, interpolation, model fallback,
-unit precision, and JSON/API semantics must come from Open-Meteo source paths,
-not from a separately maintained Python clone.
+unit precision, and JSON/API semantics must come from recorded Open-Meteo source
+paths, not from a separately maintained Python clone or local formula.
 
 ## Local Patches In Vendored Open-Meteo
 
@@ -109,9 +116,10 @@ Current intentional differences from upstream `036c1d94`:
   Open-Meteo reader/mixing path used after API request parsing, avoiding the
   removed internal HTTP hop.
 - GFS domain/download files also contain the configured China/surrounding-region
-  source and production area adaptations. `getGribUrl`, `WeatherCode.swift`,
-  GFS reader/controller weather-code logic, interpolation, and scale factors are
-  not locally patched.
+  source and production area adaptations.
+- `WeatherCode.swift`, GFS reader/controller weather-code wiring, and shared
+  weather-code call sites match the upstream `4efb9c49` weather-code behavior
+  used by the current public `single-runs-api.open-meteo.com` API.
 
 Any other vendored difference requires a root-cause note and validation record
 before it can be treated as intentional.
