@@ -76,6 +76,13 @@ def test_gfs_hourly_deriver_keeps_upstream_derived_surface_logic():
         assert snippet in deriver
 
 
+def test_openmeteo_chmi_domain_registration_matches_selected_upstream_case():
+    registry = read_vendor("Sources/App/Helper/DomainRegistry.swift")
+
+    assert "case chmi_aladin_cz_1km" in registry
+    assert "case .chmi_aladin_cz_1km:\n            return ChmiDomain.aladin_cz_1km" in registry
+
+
 def test_upstream_record_uses_one_openmeteo_engine_baseline():
     upstream = (ROOT / "UPSTREAM.md").read_text(encoding="utf-8")
 
