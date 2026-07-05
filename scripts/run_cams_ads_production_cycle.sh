@@ -21,6 +21,16 @@ print(run.strftime("%Y-%m-%dT%H:00"))
 PY
 }
 
+run_to_greenhouse_run() {
+  python3 - "$1" <<'PY'
+from datetime import datetime, timezone
+import sys
+
+run = datetime.strptime(sys.argv[1], "%Y%m%d%H").replace(tzinfo=timezone.utc)
+print(run.replace(hour=0).strftime("%Y%m%d%H"))
+PY
+}
+
 mkdir -p "$LOG_DIR"
 
 {
@@ -41,11 +51,15 @@ mkdir -p "$LOG_DIR"
   export WEATHER_OPENMETEO_PUBLIC_DATA_DIR="${WEATHER_OPENMETEO_PUBLIC_DATA_DIR:-/opt/1panel/apps/weather/data}"
   export WEATHER_OPENMETEO_LAYER_ROOT_DIR="${WEATHER_OPENMETEO_LAYER_ROOT_DIR:-$APP_DIR/data/openmeteo_layers}"
   DATA_DIR="${WEATHER_OPENMETEO_DATA_DIR:-$APP_DIR/data/openmeteo}"
+  CAMS_GREENHOUSE_RUN="${WEATHER_CAMS_GREENHOUSE_RUN:-$(run_to_greenhouse_run "$RUN")}"
+  export WEATHER_CAMS_GREENHOUSE_RUN="$CAMS_GREENHOUSE_RUN"
 
   cleanup_cams_generated_products() {
     rm -rf \
       "$DATA_DIR/cams_global" \
-      "$DATA_DIR/data_run/cams_global"
+      "$DATA_DIR/data_run/cams_global" \
+      "$DATA_DIR/cams_global_greenhouse_gases" \
+      "$DATA_DIR/data_run/cams_global_greenhouse_gases"
   }
 
   cleanup_cams_generated_products
@@ -60,6 +74,11 @@ mkdir -p "$LOG_DIR"
     --run "$RUN" \
     --domains cams_global \
     --min-frames 121
+  python3 scripts/validate_openmeteo_latest_run.py \
+    --data-dir "${WEATHER_OPENMETEO_DATA_DIR:-$APP_DIR/data/openmeteo}" \
+    --run "$CAMS_GREENHOUSE_RUN" \
+    --domains cams_global_greenhouse_gases \
+    --min-frames 41
 
   layer_start="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
   echo "$layer_start [OPENMETEO_CAMS_ADS] build CAMS layer products start=$layer_start"

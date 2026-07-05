@@ -563,6 +563,10 @@ def test_production_cycles_keep_gfs_products_until_staging_publish():
         assert '"$DATA_DIR/data_run/cams_global"' in script
         assert "ncep_gfs013" not in script
         assert "ncep_gfs025" not in script
+    assert '"$DATA_DIR/cams_global_greenhouse_gases"' not in cams_ftp
+    assert '"$DATA_DIR/data_run/cams_global_greenhouse_gases"' not in cams_ftp
+    assert '"$DATA_DIR/cams_global_greenhouse_gases"' in cams_ads
+    assert '"$DATA_DIR/data_run/cams_global_greenhouse_gases"' in cams_ads
 
     assert gfs.index("prepare_gfs_staging_data_dir") < gfs.index("bash scripts/download_openmeteo_gfs_data.sh")
     assert gfs.index("bash scripts/build_openmeteo_gfs_layers.sh") < gfs.index("\n  publish_gfs_products\n")
@@ -1098,8 +1102,14 @@ def test_cams_ads_scheduled_cycle_keeps_fixed_utc_target_logic():
     assert "scripts/run_cams_ads_production_cycle.sh" in scheduled
     assert "scripts/run_cams_ftp_production_cycle.sh" not in scheduled
     assert "CAMS ADS/CDS production cycle already running, skip." in scheduled
+    assert "greenhouse_run=" in scheduled
+    assert "cams_global_greenhouse_gases --min-frames 41" in scheduled
     assert "scripts/download_openmeteo_cams_ads_data.sh" in production
     assert "scripts/download_openmeteo_cams_data.sh" not in production
+    assert "CAMS_GREENHOUSE_RUN=" in production
+    assert "cams_global_greenhouse_gases" in production
+    assert "run_to_greenhouse_run" in production
+    assert "cams_global_greenhouse_gases \\\n    --min-frames 41" in production
     assert "download-cams-ads cams_global" in download
     assert "download-cams cams_global" not in download
 

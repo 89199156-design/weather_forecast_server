@@ -36,9 +36,18 @@ else:
 print(target.strftime("%Y%m%d%H"))
 PY
 )"
+  greenhouse_run="$(python3 - "$run" <<'PY'
+from datetime import datetime, timezone
+import sys
+
+run = datetime.strptime(sys.argv[1], "%Y%m%d%H").replace(tzinfo=timezone.utc)
+print(run.replace(hour=0).strftime("%Y%m%d%H"))
+PY
+)"
 
   data_dir="${WEATHER_OPENMETEO_DATA_DIR:-$APP_DIR/data/openmeteo}"
-  if python3 scripts/validate_openmeteo_latest_run.py --data-dir "$data_dir" --run "$run" --domains cams_global --min-frames 121 >/dev/null 2>&1; then
+  if python3 scripts/validate_openmeteo_latest_run.py --data-dir "$data_dir" --run "$run" --domains cams_global --min-frames 121 >/dev/null 2>&1 && \
+     python3 scripts/validate_openmeteo_latest_run.py --data-dir "$data_dir" --run "$greenhouse_run" --domains cams_global_greenhouse_gases --min-frames 41 >/dev/null 2>&1; then
     echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_ADS_SCHEDULE] run=$run already current"
     exit 0
   fi
