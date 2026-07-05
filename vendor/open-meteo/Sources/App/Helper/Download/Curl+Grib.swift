@@ -12,10 +12,11 @@ extension Curl {
         // AWS does not allow multi http download ranges. Split download into multiple downloads
         let supportMultiRange = !url.contains("amazonaws.com")
         if !supportMultiRange, let parts = range?.split(separator: ","), parts.count > 1 {
-            let messages = try await parts.map(String.init).mapConcurrent(nConcurrent: max(1, nConcurrent)) { part in
-                try await downloadGrib(url: url, bzip2Decode: bzip2Decode, range: part, deadLineHours: deadLineHours, headers: headers)
+            var messages = [GribMessage]()
+            for part in parts {
+                messages.append(contentsOf: try await downloadGrib(url: url, bzip2Decode: bzip2Decode, range: String(part), headers: headers))
             }
-            return messages.flatMap { $0 }
+            return messages
         }
 
         while true {

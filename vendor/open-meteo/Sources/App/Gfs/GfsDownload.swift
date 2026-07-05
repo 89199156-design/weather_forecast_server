@@ -104,13 +104,14 @@ struct GfsDownload: AsyncCommand {
 
             variables = onlyVariables ?? (signature.upperLevel ? (signature.surfaceLevel ? surfaceVariables + pressureVariables : pressureVariables) : surfaceVariables)
 
+            let handles = try await downloadGfs(application: context.application, domain: domain, run: run, variables: variables, secondFlush: signature.secondFlush, maxForecastHour: signature.maxForecastHour, skipMissing: signature.skipMissing, downloadFromAws: signature.downloadFromAws, uploadS3Bucket: signature.uploadS3Bucket)
+
             let nConcurrent = signature.concurrent ?? 4
-            let handles = try await downloadGfs(application: context.application, domain: domain, run: run, variables: variables, secondFlush: signature.secondFlush, maxForecastHour: signature.maxForecastHour, skipMissing: signature.skipMissing, downloadFromAws: signature.downloadFromAws, uploadS3Bucket: signature.uploadS3Bucket, concurrent: nConcurrent)
             try await GenericVariableHandle.convert(application: context.application, domain: domain, createNetcdf: signature.createNetcdf, run: run, handles: handles, concurrent: nConcurrent, writeUpdateJson: true, uploadS3Bucket: signature.uploadS3Bucket, uploadS3OnlyProbabilities: signature.uploadS3OnlyProbabilities, generateFullRun: generateFullRun)
         case .gfswave025, .gfswave025_ens, .gfswave016:
             variables = GfsWaveVariable.allCases
+            let handles = try await downloadGfs(application: context.application, domain: domain, run: run, variables: variables, secondFlush: signature.secondFlush, maxForecastHour: signature.maxForecastHour, skipMissing: signature.skipMissing, downloadFromAws: signature.downloadFromAws, uploadS3Bucket: signature.uploadS3Bucket)
             let nConcurrent = signature.concurrent ?? 1
-            let handles = try await downloadGfs(application: context.application, domain: domain, run: run, variables: variables, secondFlush: signature.secondFlush, maxForecastHour: signature.maxForecastHour, skipMissing: signature.skipMissing, downloadFromAws: signature.downloadFromAws, uploadS3Bucket: signature.uploadS3Bucket, concurrent: nConcurrent)
             try await GenericVariableHandle.convert(application: context.application, domain: domain, createNetcdf: signature.createNetcdf, run: run, handles: handles, concurrent: nConcurrent, writeUpdateJson: true, uploadS3Bucket: signature.uploadS3Bucket, uploadS3OnlyProbabilities: signature.uploadS3OnlyProbabilities, generateFullRun: generateFullRun)
         case .gefs025_ensemble_mean, .gefs05_ensemble_mean, .gefswave025_ensemble_mean:
             fatalError("Ensemble mean domains cannot be downloaded directly")
@@ -181,7 +182,7 @@ struct GfsDownload: AsyncCommand {
     }
 
     /// download GFS025 and NAM CONUS
-    func downloadGfs(application: Application, domain: GfsDomain, run: Timestamp, variables: [any GfsVariableDownloadable], secondFlush: Bool, maxForecastHour: Int?, skipMissing: Bool, downloadFromAws: Bool, uploadS3Bucket: String?, concurrent: Int) async throws -> [GenericVariableHandle] {
+    func downloadGfs(application: Application, domain: GfsDomain, run: Timestamp, variables: [any GfsVariableDownloadable], secondFlush: Bool, maxForecastHour: Int?, skipMissing: Bool, downloadFromAws: Bool, uploadS3Bucket: String?) async throws -> [GenericVariableHandle] {
         let logger = application.logger
 
         // GFS025 ensemble does not have elevation information, use non-ensemble version
@@ -244,7 +245,7 @@ struct GfsDownload: AsyncCommand {
                 let writer = OmSpatialMultistepWriter(domain: domain, run: run, storeOnDisk: true, realm: nil, logger: logger)
 
                 let url = domain.getGribUrl(run: run, forecastHour: forecastHour, member: 0, useAws: downloadFromAws)
-                for (variable, message) in try await curl.downloadIndexedGrib(url: url, variables: variables, errorOnMissing: !skipMissing, concurrent: concurrent) {
+                for (variable, message) in try await curl.downloadIndexedGrib(url: url, variables: variables, errorOnMissing: !skipMissing) {
                     var grib2d = try message.to2D(nx: nx, ny: ny, shift180LongitudeAndFlipLatitudeIfRequired: false)
                     guard let timestep = variable.timestep else {
                         continue
@@ -327,7 +328,7 @@ struct GfsDownload: AsyncCommand {
                 /// Keep variables in memory. Precip + Frozen percent to calculate snowfall
                 let inMemory = VariablePerMemberStorage<GfsSurfaceVariable>()
                 
-                let gribMessages = try await curl.downloadIndexedGrib(url: url, variables: variables, errorOnMissing: !skipMissing, concurrent: concurrent)
+                let gribMessages = try await curl.downloadIndexedGrib(url: url, variables: variables, errorOnMissing: !skipMissing)
 
                 for (variable, message) in gribMessages {
                     if skipMissing {
