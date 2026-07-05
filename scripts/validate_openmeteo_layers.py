@@ -600,10 +600,7 @@ def verify_layers_against_export(
     point_export = export_metadata.get("points") is not None
     if point_export and len(export_metadata["points"]) != len(points):
         raise ValueError(f"Open-Meteo point export has {len(export_metadata['points'])} points, expected {len(points)}")
-
-    checked = 0
-    mismatches: list[dict[str, Any]] = []
-    started = time.time()
+    store_locations: list[int] = []
     for point_ordinal, case in enumerate(points):
         store_location = point_ordinal if point_export else int(case["flat"])
         if point_export:
@@ -612,15 +609,21 @@ def verify_layers_against_export(
                 raise ValueError(f"point export latitude mismatch at {point_ordinal}")
             if not math.isclose(float(exported_point["longitude"]), float(case["lon"]), abs_tol=1e-4):
                 raise ValueError(f"point export longitude mismatch at {point_ordinal}")
-        for time_index in selected_time_indices:
-            valid_time = times[time_index]
-            if valid_time not in export_time_index:
-                raise ValueError(f"Open-Meteo export missing time {valid_time}")
-            exported_index = export_time_index[valid_time]
-            stem = stem_by_time[valid_time]
-            for layer_name, layer in layers.items():
-                if layer.get("data_type") == "vector":
-                    api_variables = layer["api_variables"]
+        store_locations.append(store_location)
+
+    checked = 0
+    mismatches: list[dict[str, Any]] = []
+    started = time.time()
+    for time_index in selected_time_indices:
+        valid_time = times[time_index]
+        if valid_time not in export_time_index:
+            raise ValueError(f"Open-Meteo export missing time {valid_time}")
+        exported_index = export_time_index[valid_time]
+        stem = stem_by_time[valid_time]
+        for layer_name, layer in layers.items():
+            if layer.get("data_type") == "vector":
+                api_variables = layer["api_variables"]
+                for case, store_location in zip(points, store_locations):
                     expected_u = finite_or_none(stores[api_variables[0]][store_location, exported_index])
                     expected_v = finite_or_none(stores[api_variables[1]][store_location, exported_index])
                     actual_u, actual_v = decode_layer_value(
@@ -646,8 +649,9 @@ def verify_layers_against_export(
                                 "actual_v": actual_v,
                             }
                         )
-                else:
-                    api_variable = layer["api_variables"][0]
+            else:
+                api_variable = layer["api_variables"][0]
+                for case, store_location in zip(points, store_locations):
                     expected = transformed_export_scalar(layer, stores[api_variable][store_location, exported_index])
                     actual = decode_layer_value(
                         layer_dir,
@@ -670,8 +674,11 @@ def verify_layers_against_export(
                                 "scale": layer["scale"],
                             }
                         )
-        if checked and checked % 100000 == 0:
-            print(f"[openmeteo-layer-verify] checked_values={checked}", flush=True)
+        print(
+            f"[openmeteo-layer-verify] checked time {time_index + 1}/{len(times)} "
+            f"checked_values={checked}",
+            flush=True,
+        )
 
     return {
         "layer_dir": str(layer_dir),
