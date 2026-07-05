@@ -68,6 +68,26 @@ def values_match(expected: float | None, actual: float | None, *, scale: float) 
     return math.isclose(float(expected), float(actual), abs_tol=tolerance)
 
 
+def mismatch_stats(mismatches: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    by_layer: dict[str, int] = {}
+    max_abs_diff_by_layer: dict[str, float] = {}
+    max_abs_diff = 0.0
+    for mismatch in mismatches:
+        layer = str(mismatch.get("layer", "unknown"))
+        by_layer[layer] = by_layer.get(layer, 0) + 1
+        expected = mismatch.get("expected")
+        actual = mismatch.get("actual")
+        if isinstance(expected, (int, float)) and isinstance(actual, (int, float)):
+            diff = abs(float(actual) - float(expected))
+            max_abs_diff = max(max_abs_diff, diff)
+            max_abs_diff_by_layer[layer] = max(max_abs_diff_by_layer.get(layer, 0.0), diff)
+    return {
+        "mismatch_by_layer": by_layer,
+        "max_abs_diff": max_abs_diff,
+        "max_abs_diff_by_layer": max_abs_diff_by_layer,
+    }
+
+
 def grid_index(grid: dict[str, Any], *, lat: float, lon: float) -> tuple[int, int]:
     lat_values = grid.get("latitude_values") or []
     lon_values = grid.get("longitude_values") or []
@@ -522,6 +542,7 @@ def verify_layers(
                             )
         print(f"[openmeteo-layer-verify] checked chunks {min(chunk_start + chunk_size, len(points))}/{len(points)}", flush=True)
 
+    stats = mismatch_stats(mismatches)
     return {
         "layer_dir": str(layer_dir),
         "manifest": str(manifest_path),
@@ -538,6 +559,7 @@ def verify_layers(
         "layers": list(layers.keys()),
         "checked_values": checked,
         "mismatch_count": len(mismatches),
+        **stats,
         "mismatches": mismatches[:50],
         "elapsed_seconds": round(time.time() - started, 3),
     }
@@ -699,6 +721,7 @@ def verify_layers_against_export(
             flush=True,
         )
 
+    stats = mismatch_stats(mismatches)
     return {
         "layer_dir": str(layer_dir),
         "manifest": str(manifest_path),
@@ -716,6 +739,7 @@ def verify_layers_against_export(
         "layers": list(layers.keys()),
         "checked_values": checked,
         "mismatch_count": len(mismatches),
+        **stats,
         "mismatches": mismatches[:50],
         "elapsed_seconds": round(time.time() - started, 3),
     }
@@ -789,6 +813,9 @@ def write_report(report: dict[str, Any], report_path: Path) -> None:
         f"- layers: {', '.join(report['layers'])}",
         f"- checked_values: {report['checked_values']}",
         f"- mismatch_count: {report['mismatch_count']}",
+        f"- mismatch_by_layer: `{json.dumps(report.get('mismatch_by_layer') or {}, ensure_ascii=False, sort_keys=True)}`",
+        f"- max_abs_diff: {report.get('max_abs_diff', 0.0)}",
+        f"- max_abs_diff_by_layer: `{json.dumps(report.get('max_abs_diff_by_layer') or {}, ensure_ascii=False, sort_keys=True)}`",
         f"- elapsed_seconds: {report['elapsed_seconds']}",
         "",
     ]
