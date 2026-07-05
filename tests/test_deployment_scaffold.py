@@ -213,6 +213,17 @@ def test_runtime_data_download_packages_gfs025_upper_levels_as_one_variable_coll
     assert script.count("run_openmeteo download-gfs gfs025") == 2
 
 
+def test_gfs_upper_level_download_does_not_break_run_argument_splitting():
+    script = (ROOT / "scripts" / "download_openmeteo_gfs_data.sh").read_text(encoding="utf-8")
+    upper_function = script.split("download_gfs025_upper_level_variables()", 1)[1].split(
+        "require_dem_source", 1
+    )[0]
+
+    assert 'local IFS=","' not in upper_function
+    assert 'IFS="," read -ra variables <<< "$GFS_UPPER_LEVEL_VARIABLES"' in upper_function
+    assert '$(append_run_arg "$GFS_RUN")' in upper_function
+
+
 def test_gfs_surface_download_uses_explicit_minimal_allowlists():
     script = (ROOT / "scripts" / "download_openmeteo_gfs_data.sh").read_text(encoding="utf-8")
     config = (ROOT / "config" / "singapore.example.env").read_text(encoding="utf-8")

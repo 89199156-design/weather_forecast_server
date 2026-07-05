@@ -61,12 +61,11 @@ gfs025_upper_level_only_variables_for_family() {
 }
 
 download_gfs025_upper_level_variables() {
-  local IFS=","
   local variable
   local only_variables
   local variables=()
 
-  read -ra variables <<< "$GFS_UPPER_LEVEL_VARIABLES"
+  IFS="," read -ra variables <<< "$GFS_UPPER_LEVEL_VARIABLES"
   for variable in "${variables[@]}"; do
     only_variables="$(gfs025_upper_level_only_variables_for_family "$variable")"
     if [[ -z "$only_variables" ]]; then
