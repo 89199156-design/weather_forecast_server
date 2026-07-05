@@ -63,6 +63,7 @@ def test_value_comparison_uses_encoding_precision():
 
     assert validator.values_match(10.0, 10.004, scale=100.0)
     assert validator.values_match(22.98499870300293, 22.99, scale=100.0)
+    assert validator.values_match(23.684993743896484, 23.69, scale=100.0)
     assert validator.values_match(87541.49780273438, 87542.0, scale=1.0)
     assert not validator.values_match(10.0, 10.02, scale=100.0)
     assert validator.values_match(None, None, scale=100.0)

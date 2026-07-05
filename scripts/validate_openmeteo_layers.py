@@ -64,7 +64,10 @@ def values_match(expected: float | None, actual: float | None, *, scale: float) 
         abs(float(np.spacing(np.float32(actual)))),
         1e-6,
     )
-    tolerance = 0.5 / float(scale) + float32_spacing
+    # WebP stores fixed-point values. Layer-grid export and point export can
+    # differ by a few Float32 ulps at exact half-step boundaries, so the
+    # comparison allows one half encoded step plus a small numeric margin.
+    tolerance = 0.5 / float(scale) + max(float32_spacing * 8.0, 1e-5)
     return math.isclose(float(expected), float(actual), abs_tol=tolerance)
 
 
