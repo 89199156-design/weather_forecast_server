@@ -1,8 +1,10 @@
 import importlib.util
+import json
 import sys
 from pathlib import Path
 
 import numpy as np
+from PIL import Image
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -79,6 +81,29 @@ def test_grid_index_uses_manifest_lat_lon_values():
     assert validator.grid_center(grid, y=1, x=0) == (11.0, 100.0)
 
 
+def test_grid_helpers_support_lightweight_north_to_south_manifest():
+    validator = load_module()
+
+    grid = {
+        "width": 3,
+        "height": 2,
+        "row_order": "north_to_south",
+        "dx": 1.0,
+        "dy": 1.0,
+        "sample_bounds": {
+            "lat_min": 10.0,
+            "lat_max": 11.0,
+            "lon_min": 100.0,
+            "lon_max": 102.0,
+        },
+    }
+
+    assert validator.grid_center(grid, y=0, x=2) == (11.0, 102.0)
+    assert validator.grid_center(grid, y=1, x=0) == (10.0, 100.0)
+    assert validator.grid_index(grid, lat=11.0, lon=102.0) == (0, 2)
+    assert validator.grid_index(grid, lat=10.0, lon=100.0) == (1, 0)
+
+
 def test_manifest_path_prefers_gfs_then_cams(tmp_path):
     validator = load_module()
 
@@ -92,6 +117,74 @@ def test_manifest_path_prefers_gfs_then_cams(tmp_path):
     gfs.write_text("{}", encoding="utf-8")
     assert validator.manifest_path_for_layer_dir(layer_dir, None) == gfs
     assert validator.manifest_path_for_layer_dir(layer_dir, "cams_global_data.json") == cams
+
+
+def test_export_validation_supports_lightweight_manifest_without_http(tmp_path):
+    validator = load_module()
+    builder_spec = importlib.util.spec_from_file_location("build_openmeteo_layers", ROOT / "scripts" / "build_openmeteo_layers.py")
+    builder = importlib.util.module_from_spec(builder_spec)
+    assert builder_spec.loader is not None
+    sys.modules[builder_spec.name] = builder
+    builder_spec.loader.exec_module(builder)
+
+    layer_dir = tmp_path / "layers"
+    (layer_dir / "t2m").mkdir(parents=True)
+    manifest = {
+        "generated_at": 1000,
+        "source": "gfs",
+        "batch": 1000,
+        "frame_count": 1,
+        "frame_step_seconds": 3600,
+        "file_pattern": "{timestamp}_{batch}.webp",
+        "files": [1000],
+        "grid": {
+            "width": 1,
+            "height": 1,
+            "row_order": "north_to_south",
+            "dx": 1.0,
+            "dy": 1.0,
+            "sample_bounds": {
+                "lat_min": 10.0,
+                "lat_max": 10.0,
+                "lon_min": 100.0,
+                "lon_max": 100.0,
+            },
+        },
+    }
+    (layer_dir / "gfs013_surface_data.json").write_text(json.dumps(manifest), encoding="utf-8")
+    rgba = builder.encode_scalar_rgba(np.array([[12.34]], dtype=np.float32), vmin=-100.0, scale=100.0)
+    Image.fromarray(rgba, mode="RGBA").save(layer_dir / "t2m" / "1000_1000.webp", "WEBP", lossless=True, quality=100)
+
+    export_dir = tmp_path / "export"
+    export_dir.mkdir()
+    (export_dir / "metadata.json").write_text(
+        json.dumps(
+            {
+                "layout": "point_time",
+                "scope": "gfs",
+                "model": "gfs_global",
+                "run": None,
+                "width": 1,
+                "height": 1,
+                "times": [1000],
+                "variables": ["temperature_2m"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    np.asarray([[12.34]], dtype=np.float32).tofile(export_dir / "temperature_2m.float32")
+
+    report = validator.verify_layers_against_export(
+        layer_dir=layer_dir,
+        export_dir=export_dir,
+        max_points=1,
+        max_times=1,
+        layers_filter="t2m",
+    )
+
+    assert report["mode"] == "export"
+    assert report["checked_values"] == 1
+    assert report["mismatch_count"] == 0
 
 
 def test_decode_scalar_and_wind_pixels_match_builder_encoding():

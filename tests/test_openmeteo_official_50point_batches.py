@@ -4,6 +4,15 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "validate_openmeteo_official_50point_batches.py"
+LOCAL_API_VALIDATE_ARGS = {
+    "local_openmeteo_mode": "api",
+    "data_dir": ROOT,
+    "output_dir": ROOT,
+    "openmeteo_image": "image",
+    "openmeteo_tag": "tag",
+    "direct_ssh_host": None,
+    "direct_remote_root": None,
+}
 
 
 def load_module():
@@ -54,6 +63,7 @@ def test_gfs_validation_uses_static_window_locally_and_pinned_run_for_reference(
         points=[{"latitude": 10.0, "longitude": 100.0}],
         variables=["temperature_2m"],
         api_base_url="local",
+        **LOCAL_API_VALIDATE_ARGS,
         reference_base_url="official",
         reference_ssh_host=None,
         gfs_run="2026-06-29T06:00",
@@ -104,6 +114,7 @@ def test_gfs_validation_can_use_latest_reference_window(monkeypatch):
         points=[{"latitude": 10.0, "longitude": 100.0}],
         variables=["temperature_2m"],
         api_base_url="local",
+        **LOCAL_API_VALIDATE_ARGS,
         reference_base_url="official",
         reference_ssh_host=None,
         gfs_run="2026-06-29T06:00",
@@ -153,6 +164,7 @@ def test_cams_validation_uses_date_window_for_air_quality_api(monkeypatch):
         points=[{"latitude": 10.0, "longitude": 100.0}],
         variables=["pm10"],
         api_base_url="local",
+        **LOCAL_API_VALIDATE_ARGS,
         reference_base_url="official",
         reference_ssh_host=None,
         gfs_run="2026-06-29T06:00",
@@ -198,6 +210,7 @@ def test_cams_multilevel_intermediate_hours_are_diagnostic_not_strict_failures(m
         points=[{"latitude": 10.0, "longitude": 100.0}],
         variables=["nitrogen_dioxide"],
         api_base_url="local",
+        **LOCAL_API_VALIDATE_ARGS,
         reference_base_url="official",
         reference_ssh_host=None,
         gfs_run="2026-06-29T06:00",
