@@ -164,8 +164,7 @@ def test_export_validation_supports_lightweight_manifest_without_http(tmp_path):
                 "scope": "gfs",
                 "model": "gfs_global",
                 "run": None,
-                "width": 1,
-                "height": 1,
+                "points": [{"latitude": 10.0, "longitude": 100.0}],
                 "times": [1000],
                 "variables": ["temperature_2m"],
             }
@@ -185,6 +184,53 @@ def test_export_validation_supports_lightweight_manifest_without_http(tmp_path):
     assert report["mode"] == "export"
     assert report["checked_values"] == 1
     assert report["mismatch_count"] == 0
+
+
+def test_prepare_point_export_request_uses_lightweight_manifest_grid_and_layer_variables(tmp_path):
+    validator = load_module()
+
+    layer_dir = tmp_path / "layers"
+    layer_dir.mkdir()
+    manifest = {
+        "generated_at": 1000,
+        "source": "gfs",
+        "batch": 1000,
+        "frame_count": 1,
+        "frame_step_seconds": 3600,
+        "file_pattern": "{timestamp}_{batch}.webp",
+        "files": [1000],
+        "grid": {
+            "width": 2,
+            "height": 1,
+            "row_order": "north_to_south",
+            "dx": 1.0,
+            "dy": 1.0,
+            "sample_bounds": {
+                "lat_min": 10.0,
+                "lat_max": 10.0,
+                "lon_min": 100.0,
+                "lon_max": 101.0,
+            },
+        },
+    }
+    (layer_dir / "gfs013_surface_data.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    payload = validator.point_export_request_payload(
+        layer_dir=layer_dir,
+        manifest_name=None,
+        max_points=2,
+        layers_filter="t2m,wind",
+    )
+
+    assert payload["scope"] == "gfs"
+    assert payload["model"] == "gfs_global"
+    assert payload["start_hour"] == "1970-01-01T00:00"
+    assert payload["end_hour"] == "1970-01-01T00:00"
+    assert payload["points"] == [
+        {"latitude": 10.0, "longitude": 100.0},
+        {"latitude": 10.0, "longitude": 101.0},
+    ]
+    assert payload["variables"] == ["temperature_2m", "wind_u_component_10m", "wind_v_component_10m"]
 
 
 def test_decode_scalar_and_wind_pixels_match_builder_encoding():

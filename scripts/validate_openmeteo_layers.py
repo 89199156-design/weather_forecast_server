@@ -524,21 +524,23 @@ def verify_layers(
     }
 
 
-def load_exported_stores(export_dir: Path, variables: Sequence[str]) -> tuple[list[str], dict[str, np.memmap]]:
+def load_exported_stores(export_dir: Path, variables: Sequence[str]) -> tuple[list[str], dict[str, np.memmap], dict[str, Any]]:
     metadata_path = export_dir / "metadata.json"
     if not metadata_path.exists():
         raise FileNotFoundError(f"missing Open-Meteo export metadata: {metadata_path}")
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     if metadata.get("layout") != "point_time":
         raise ValueError(f"unsupported Open-Meteo export layout: {metadata.get('layout')!r}")
-    width = int(metadata["width"])
-    height = int(metadata["height"])
+    if metadata.get("points") is not None:
+        location_count = len(metadata["points"])
+    else:
+        location_count = int(metadata["width"]) * int(metadata["height"])
     timestamps = [int(value) for value in metadata.get("times") or []]
     if not timestamps:
         raise ValueError("Open-Meteo export has no time axis")
     times = [datetime.fromtimestamp(value, timezone.utc).strftime("%Y-%m-%dT%H:00") for value in timestamps]
-    shape = (width * height, len(times))
-    expected_bytes = width * height * len(times) * np.dtype(np.float32).itemsize
+    shape = (location_count, len(times))
+    expected_bytes = location_count * len(times) * np.dtype(np.float32).itemsize
     stores: dict[str, np.memmap] = {}
     for variable in variables:
         path = export_dir / f"{variable}.float32"
@@ -549,7 +551,7 @@ def load_exported_stores(export_dir: Path, variables: Sequence[str]) -> tuple[li
                 f"Open-Meteo export variable {variable} has {path.stat().st_size} bytes, expected {expected_bytes}"
             )
         stores[variable] = np.memmap(path, dtype=np.float32, mode="r", shape=shape)
-    return times, stores
+    return times, stores, metadata
 
 
 def finite_or_none(value: Any) -> float | None:
@@ -593,14 +595,23 @@ def verify_layers_against_export(
     times = manifest_times(manifest)
     selected_time_indices = time_indices(times, max_times)
     stem_by_time = stems_by_time(manifest)
-    export_times, stores = load_exported_stores(export_dir, variables)
+    export_times, stores, export_metadata = load_exported_stores(export_dir, variables)
     export_time_index = {value: index for index, value in enumerate(export_times)}
+    point_export = export_metadata.get("points") is not None
+    if point_export and len(export_metadata["points"]) != len(points):
+        raise ValueError(f"Open-Meteo point export has {len(export_metadata['points'])} points, expected {len(points)}")
 
     checked = 0
     mismatches: list[dict[str, Any]] = []
     started = time.time()
-    for case in points:
-        flat = int(case["flat"])
+    for point_ordinal, case in enumerate(points):
+        store_location = point_ordinal if point_export else int(case["flat"])
+        if point_export:
+            exported_point = export_metadata["points"][point_ordinal]
+            if not math.isclose(float(exported_point["latitude"]), float(case["lat"]), abs_tol=1e-5):
+                raise ValueError(f"point export latitude mismatch at {point_ordinal}")
+            if not math.isclose(float(exported_point["longitude"]), float(case["lon"]), abs_tol=1e-5):
+                raise ValueError(f"point export longitude mismatch at {point_ordinal}")
         for time_index in selected_time_indices:
             valid_time = times[time_index]
             if valid_time not in export_time_index:
@@ -610,8 +621,8 @@ def verify_layers_against_export(
             for layer_name, layer in layers.items():
                 if layer.get("data_type") == "vector":
                     api_variables = layer["api_variables"]
-                    expected_u = finite_or_none(stores[api_variables[0]][flat, exported_index])
-                    expected_v = finite_or_none(stores[api_variables[1]][flat, exported_index])
+                    expected_u = finite_or_none(stores[api_variables[0]][store_location, exported_index])
+                    expected_v = finite_or_none(stores[api_variables[1]][store_location, exported_index])
                     actual_u, actual_v = decode_layer_value(
                         layer_dir,
                         layer_name,
@@ -637,7 +648,7 @@ def verify_layers_against_export(
                         )
                 else:
                     api_variable = layer["api_variables"][0]
-                    expected = transformed_export_scalar(layer, stores[api_variable][flat, exported_index])
+                    expected = transformed_export_scalar(layer, stores[api_variable][store_location, exported_index])
                     actual = decode_layer_value(
                         layer_dir,
                         layer_name,
@@ -684,6 +695,54 @@ def verify_layers_against_export(
     }
 
 
+def point_export_request_payload(
+    *,
+    layer_dir: Path,
+    manifest_name: str | None,
+    max_points: int,
+    layers_filter: str | None,
+) -> dict[str, Any]:
+    manifest_path = manifest_path_for_layer_dir(layer_dir, manifest_name)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    scope = scope_from_manifest(manifest)
+    layers = layers_for_manifest(manifest, layers_filter)
+    variables = variables_from_manifest(layers)
+    points = point_cases(manifest["grid"], max_points)
+    if scope == "gfs":
+        model = str(manifest.get("model") or layer_builder.DEFAULT_LAYER_MODEL)
+    elif scope == "cams":
+        model = str(manifest.get("domain") or layer_builder.DEFAULT_CAMS_DOMAIN)
+    else:
+        raise ValueError(f"unknown layer scope: {scope}")
+    return {
+        "scope": scope,
+        "model": model,
+        "run": manifest.get("run"),
+        "start_hour": manifest_start_hour(manifest),
+        "end_hour": manifest_end_hour(manifest),
+        "points": [{"latitude": case["lat"], "longitude": case["lon"]} for case in points],
+        "variables": variables,
+    }
+
+
+def write_point_export_request(
+    *,
+    layer_dir: Path,
+    manifest_name: str | None,
+    max_points: int,
+    layers_filter: str | None,
+    output_path: Path,
+) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = point_export_request_payload(
+        layer_dir=layer_dir,
+        manifest_name=manifest_name,
+        max_points=max_points,
+        layers_filter=layers_filter,
+    )
+    output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 def write_report(report: dict[str, Any], report_path: Path) -> None:
     lines = [
         "# Open-Meteo Layer Validation",
@@ -722,6 +781,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Validate Open-Meteo WebP layers against API or direct OM export.")
     parser.add_argument("--layer-dir", default=DEFAULT_LAYER_DIR)
     parser.add_argument("--manifest-name")
+    parser.add_argument("--prepare-point-export-request", help="Write export-point-forecast request JSON and exit.")
     parser.add_argument("--export-dir", help="Directory from export-layer-grid; when set, compare WebP directly to OM export.")
     parser.add_argument("--api-base-url", default=DEFAULT_API_BASE_URL)
     parser.add_argument("--api-host-header")
@@ -740,6 +800,15 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    if args.prepare_point_export_request:
+        write_point_export_request(
+            layer_dir=Path(args.layer_dir),
+            manifest_name=args.manifest_name,
+            max_points=args.max_points,
+            layers_filter=args.layers,
+            output_path=Path(args.prepare_point_export_request),
+        )
+        return
     if args.export_dir:
         report = verify_layers_against_export(
             layer_dir=Path(args.layer_dir),
