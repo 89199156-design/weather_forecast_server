@@ -23,17 +23,36 @@ def read_latest(data_dir: Path, domain: str) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def parse_csv(value: str | None) -> list[str]:
+    if not value:
+        return []
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def gfs_pressure_variable_dirs(variables: list[str], levels: list[str]) -> list[str]:
+    return [f"{variable}_{level}hPa" for variable in variables for level in levels]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Validate latest Open-Meteo data_run metadata for a target run.")
     parser.add_argument("--data-dir", required=True)
     parser.add_argument("--run", required=True, help="Run in YYYYMMDDHH")
     parser.add_argument("--domains", required=True, help="Comma-separated data_run domains")
     parser.add_argument("--min-frames", type=int, default=121)
+    parser.add_argument("--required-gfs-pressure-domain", default=None)
+    parser.add_argument("--required-gfs-pressure-levels", default=None)
+    parser.add_argument("--required-gfs-pressure-variables", default=None)
     args = parser.parse_args()
 
     expected_reference = compact_to_iso(args.run)
     data_dir = Path(args.data_dir)
     failures: list[str] = []
+    required_dirs_by_domain: dict[str, list[str]] = {}
+    if args.required_gfs_pressure_domain:
+        required_dirs_by_domain[args.required_gfs_pressure_domain] = gfs_pressure_variable_dirs(
+            parse_csv(args.required_gfs_pressure_variables),
+            parse_csv(args.required_gfs_pressure_levels),
+        )
 
     for domain in [item.strip() for item in args.domains.split(",") if item.strip()]:
         try:
@@ -47,6 +66,9 @@ def main() -> int:
             failures.append(f"{domain}: reference_time={reference}, expected={expected_reference}")
         if len(valid_times) < args.min_frames:
             failures.append(f"{domain}: frames={len(valid_times)}, expected_at_least={args.min_frames}")
+        for variable_dir in required_dirs_by_domain.get(domain, []):
+            if not (data_dir / domain / variable_dir).is_dir():
+                failures.append(f"{domain}: missing required variable directory {variable_dir}")
 
     if failures:
         for failure in failures:
@@ -59,4 +81,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

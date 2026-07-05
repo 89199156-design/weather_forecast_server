@@ -40,6 +40,8 @@ mkdir -p "$LOG_DIR"
   export WEATHER_OPENMETEO_LAYER_START_HOUR="$layer_start_hour"
   export WEATHER_OPENMETEO_LAYER_FRAME_COUNT="121"
   unset WEATHER_OPENMETEO_LAYER_END_HOUR
+  GFS_UPPER_LEVELS="${WEATHER_GFS_UPPER_LEVELS:-1000,975,950,925,900,850,800,750,700,650,600,550,500,400,300,200}"
+  GFS_UPPER_LEVEL_VARIABLES="${WEATHER_GFS_UPPER_LEVEL_VARIABLES:-temperature,wind_u_component,wind_v_component,geopotential_height,cloud_cover,relative_humidity,vertical_velocity}"
   ACTIVE_DATA_DIR="${WEATHER_OPENMETEO_DATA_DIR:-$APP_DIR/data/openmeteo}"
   ACTIVE_PUBLIC_DATA_DIR="${WEATHER_OPENMETEO_PUBLIC_DATA_DIR:-/opt/1panel/apps/weather/data}"
   ACTIVE_LAYER_ROOT_DIR="${WEATHER_OPENMETEO_LAYER_ROOT_DIR:-$APP_DIR/data/openmeteo_layers}"
@@ -168,7 +170,10 @@ mkdir -p "$LOG_DIR"
     --data-dir "$GFS_STAGING_DATA_DIR" \
     --run "$RUN" \
     --domains ncep_gfs013,ncep_gfs025 \
-    --min-frames "$(( ${WEATHER_GFS_MAX_FORECAST_HOUR:-120} + 1 ))"
+    --min-frames "$(( ${WEATHER_GFS_MAX_FORECAST_HOUR:-120} + 1 ))" \
+    --required-gfs-pressure-domain ncep_gfs025 \
+    --required-gfs-pressure-levels "$GFS_UPPER_LEVELS" \
+    --required-gfs-pressure-variables "$GFS_UPPER_LEVEL_VARIABLES"
 
   layer_start="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
   echo "$layer_start [OPENMETEO_GFS] build GFS layer products start=$layer_start"

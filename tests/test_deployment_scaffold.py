@@ -1,4 +1,6 @@
 from pathlib import Path
+import subprocess
+import sys
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -285,6 +287,54 @@ def test_singapore_config_uses_bounded_pressure_level_product_contract():
     assert "WEATHER_GFS_UPPER_LEVEL_PGRB2_LEVELS" not in config
     assert "WEATHER_GFS_UPPER_LEVEL_CHUNK_SIZE" not in config
     assert "specific_humidity" not in config
+
+
+def test_gfs_production_validates_pressure_level_directories_before_publish():
+    script = (ROOT / "scripts" / "run_gfs_production_cycle.sh").read_text(encoding="utf-8")
+
+    assert "GFS_UPPER_LEVELS=" in script
+    assert "GFS_UPPER_LEVEL_VARIABLES=" in script
+    assert "--required-gfs-pressure-domain ncep_gfs025" in script
+    assert '--required-gfs-pressure-levels "$GFS_UPPER_LEVELS"' in script
+    assert '--required-gfs-pressure-variables "$GFS_UPPER_LEVEL_VARIABLES"' in script
+    assert script.index("--required-gfs-pressure-domain ncep_gfs025") < script.index("bash scripts/build_openmeteo_gfs_layers.sh")
+
+
+def test_latest_run_validation_requires_configured_pressure_dirs(tmp_path):
+    data_dir = tmp_path / "openmeteo"
+    latest_dir = data_dir / "data_run" / "ncep_gfs025"
+    latest_dir.mkdir(parents=True)
+    (latest_dir / "latest.json").write_text(
+        '{"reference_time":"2026-07-03T18:00:00Z","valid_times":["x","y"]}',
+        encoding="utf-8",
+    )
+
+    cmd = [
+        sys.executable,
+        str(ROOT / "scripts" / "validate_openmeteo_latest_run.py"),
+        "--data-dir",
+        str(data_dir),
+        "--run",
+        "2026070318",
+        "--domains",
+        "ncep_gfs025",
+        "--min-frames",
+        "2",
+        "--required-gfs-pressure-domain",
+        "ncep_gfs025",
+        "--required-gfs-pressure-levels",
+        "1000",
+        "--required-gfs-pressure-variables",
+        "temperature",
+    ]
+    missing = subprocess.run(cmd, text=True, capture_output=True, check=False)
+    assert missing.returncode == 1
+    assert "missing required variable directory temperature_1000hPa" in missing.stderr
+
+    (data_dir / "ncep_gfs025" / "temperature_1000hPa").mkdir(parents=True)
+    present = subprocess.run(cmd, text=True, capture_output=True, check=False)
+    assert present.returncode == 0
+    assert "OK 2026-07-03T18:00:00Z ncep_gfs025" in present.stdout
 
 
 def test_singapore_config_enables_temporary_openmeteo_http_cache():
