@@ -121,7 +121,7 @@ extension Curl {
 
     /// Download an indexed grib file, but selects only required grib messages
     /// Data is downloaded directly into memory and GRIB decoded while iterating
-    func downloadIndexedGrib<Variable: CurlIndexedVariable>(url: [String], variables: [Variable], extension: String = ".idx", errorOnMissing: Bool = true) async throws -> [(variable: Variable, message: GribMessage)] {
+    func downloadIndexedGrib<Variable: CurlIndexedVariable>(url: [String], variables: [Variable], extension: String = ".idx", errorOnMissing: Bool = true, concurrent: Int = 1) async throws -> [(variable: Variable, message: GribMessage)] {
         let urlIndex = url.map({ "\($0)\(`extension`)" })
         let inventories = try await downloadIndexAndDecode(url: urlIndex, variables: variables, errorOnMissing: errorOnMissing)
         guard !inventories.isEmpty else {
@@ -138,7 +138,7 @@ extension Curl {
                     if inventory.matches.isEmpty {
                         continue
                     }
-                    let messages = try await downloadGrib(url: url, bzip2Decode: false, range: inventory.range, minSize: inventory.minSize)
+                    let messages = try await downloadGrib(url: url, bzip2Decode: false, range: inventory.range, minSize: inventory.minSize, nConcurrent: max(1, concurrent))
 
                     if messages.count != inventory.matches.count {
                         logger.error("Grib reader did not get all matched variables. Matches count \(inventory.matches.count). Grib count \(messages.count)")
