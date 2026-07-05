@@ -252,7 +252,8 @@ def test_layer_catalog_preserves_encoder_vmin_for_decoding():
     assert manifests["wind"]["vmin"] == -100.0
     assert manifests["wind"]["encoding"] == "uv"
     assert manifests["prmsl"]["vmin"] == 50000.0
-    assert manifests["sp"]["vmin"] == 50000.0
+    assert manifests["sp"]["vmin"] == 30000.0
+    assert manifests["sp"]["scale"] == 0.5
     assert manifests["cape"]["unit"] == "J/kg"
     assert manifests["uv_index"]["unit"] == "index"
     assert "weather_code" not in manifests
