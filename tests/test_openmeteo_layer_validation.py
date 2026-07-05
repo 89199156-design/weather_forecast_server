@@ -104,6 +104,26 @@ def test_grid_helpers_support_lightweight_north_to_south_manifest():
     assert validator.grid_index(grid, lat=10.0, lon=100.0) == (1, 0)
 
 
+def test_grid_helpers_reconstruct_points_from_bounds_instead_of_rounded_dx():
+    validator = load_module()
+
+    grid = {
+        "width": 597,
+        "height": 1,
+        "row_order": "north_to_south",
+        "dx": 0.117188,
+        "dy": 1.0,
+        "sample_bounds": {
+            "lat_min": 10.0,
+            "lat_max": 10.0,
+            "lon_min": 70.078125,
+            "lon_max": 139.921875,
+        },
+    }
+
+    assert validator.grid_center(grid, y=0, x=591) == (10.0, 139.3359375)
+
+
 def test_manifest_path_prefers_gfs_then_cams(tmp_path):
     validator = load_module()
 

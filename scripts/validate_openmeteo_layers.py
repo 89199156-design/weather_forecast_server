@@ -165,10 +165,24 @@ def grid_height(grid: dict[str, Any]) -> int:
 
 
 def grid_dx(grid: dict[str, Any]) -> float:
+    lon_values = grid.get("longitude_values") or []
+    if len(lon_values) >= 2:
+        return (float(lon_values[-1]) - float(lon_values[0])) / float(len(lon_values) - 1)
+    bounds = grid.get("sample_bounds") or {}
+    width = grid_width(grid)
+    if width > 1 and "lon_min" in bounds and "lon_max" in bounds:
+        return (float(bounds["lon_max"]) - float(bounds["lon_min"])) / float(width - 1)
     return float(grid.get("center_dx", grid.get("longitude_step", grid.get("dx"))))
 
 
 def grid_dy(grid: dict[str, Any]) -> float:
+    lat_values = grid.get("latitude_values") or []
+    if len(lat_values) >= 2:
+        return abs(float(lat_values[-1]) - float(lat_values[0])) / float(len(lat_values) - 1)
+    bounds = grid.get("sample_bounds") or {}
+    height = grid_height(grid)
+    if height > 1 and "lat_min" in bounds and "lat_max" in bounds:
+        return (float(bounds["lat_max"]) - float(bounds["lat_min"])) / float(height - 1)
     return float(grid.get("center_dy", grid.get("latitude_step", grid.get("dy"))))
 
 
