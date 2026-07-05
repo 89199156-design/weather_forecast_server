@@ -366,16 +366,19 @@ def test_downloaders_clean_source_cache_only_at_start_and_after_success():
     assert cams_ads.rindex("run_openmeteo download-cams-ads cams_global_greenhouse_gases") < cams_ads.rindex("cleanup_download_work_dirs \\")
 
 
-def test_production_cycles_clean_only_their_own_generated_om_products_before_download():
+def test_production_cycles_keep_gfs_products_until_staging_publish():
     gfs = (ROOT / "scripts" / "run_gfs_production_cycle.sh").read_text(encoding="utf-8")
     cams_ftp = (ROOT / "scripts" / "run_cams_ftp_production_cycle.sh").read_text(encoding="utf-8")
     cams_ads = (ROOT / "scripts" / "run_cams_ads_production_cycle.sh").read_text(encoding="utf-8")
 
-    assert "cleanup_gfs_generated_products" in gfs
-    assert '"$DATA_DIR/ncep_gfs013"' in gfs
-    assert '"$DATA_DIR/ncep_gfs025"' in gfs
-    assert '"$DATA_DIR/data_run/ncep_gfs013"' in gfs
-    assert '"$DATA_DIR/data_run/ncep_gfs025"' in gfs
+    assert "cleanup_gfs_generated_products" not in gfs
+    assert "prepare_gfs_staging_data_dir" in gfs
+    assert 'export WEATHER_OPENMETEO_DATA_DIR="$GFS_STAGING_DATA_DIR"' in gfs
+    assert "for domain in ncep_gfs013 ncep_gfs025; do" in gfs
+    assert '"$ACTIVE_DATA_DIR/$domain"' in gfs
+    assert '"$ACTIVE_DATA_DIR/data_run/$domain"' in gfs
+    assert '"$GFS_STAGING_DATA_DIR/$domain"' in gfs
+    assert '"$GFS_STAGING_DATA_DIR/data_run/$domain"' in gfs
     assert '"$DATA_DIR/cams_global"' not in gfs
     assert "cleanup_gfs_generated_products" not in cams_ftp
     assert "cleanup_gfs_generated_products" not in cams_ads
@@ -387,7 +390,8 @@ def test_production_cycles_clean_only_their_own_generated_om_products_before_dow
         assert "ncep_gfs013" not in script
         assert "ncep_gfs025" not in script
 
-    assert gfs.index("cleanup_gfs_generated_products") < gfs.index("bash scripts/download_openmeteo_gfs_data.sh")
+    assert gfs.index("prepare_gfs_staging_data_dir") < gfs.index("bash scripts/download_openmeteo_gfs_data.sh")
+    assert gfs.index("bash scripts/build_openmeteo_gfs_layers.sh") < gfs.index("\n  publish_gfs_products\n")
     assert cams_ftp.index("cleanup_cams_generated_products") < cams_ftp.index("bash scripts/download_openmeteo_cams_data.sh")
     assert cams_ads.index("cleanup_cams_generated_products") < cams_ads.index("bash scripts/download_openmeteo_cams_ads_data.sh")
 
@@ -792,9 +796,9 @@ def test_gfs_probe_cycle_uses_official_indices_before_gfs_only_production():
 def test_gfs_production_publishes_only_after_bound_domains_and_layers_succeed():
     production = (ROOT / "scripts" / "run_gfs_production_cycle.sh").read_text(encoding="utf-8")
 
-    assert "backup_gfs_latest_refs()" in production
-    assert "restore_gfs_latest_refs()" in production
-    assert "cleanup_gfs_latest_backup()" in production
+    assert "prepare_gfs_staging_data_dir()" in production
+    assert "restore_gfs_publish_backup()" in production
+    assert "publish_gfs_products()" in production
     assert "gfs_publish_ok=false" in production
     assert "gfs_publish_ok=true" in production
     assert 'for domain in ncep_gfs013 ncep_gfs025; do' in production
@@ -808,7 +812,9 @@ def test_gfs_production_publishes_only_after_bound_domains_and_layers_succeed():
     assert production.index("--domains ncep_gfs013,ncep_gfs025") < production.index(
         "bash scripts/build_openmeteo_gfs_layers.sh"
     )
-    assert production.index("bash scripts/build_openmeteo_gfs_layers.sh") < production.index("gfs_publish_ok=true")
+    publish_call = production.index("\n  publish_gfs_products\n")
+    assert production.index("bash scripts/build_openmeteo_gfs_layers.sh") < publish_call
+    assert publish_call < production.index("gfs_publish_ok=true")
 
 
 def test_cams_ftp_scheduled_cycle_probes_remote_batches_like_gfs():

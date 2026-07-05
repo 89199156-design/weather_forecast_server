@@ -40,67 +40,123 @@ mkdir -p "$LOG_DIR"
   export WEATHER_OPENMETEO_LAYER_START_HOUR="$layer_start_hour"
   export WEATHER_OPENMETEO_LAYER_FRAME_COUNT="121"
   unset WEATHER_OPENMETEO_LAYER_END_HOUR
-  DATA_DIR="${WEATHER_OPENMETEO_DATA_DIR:-$APP_DIR/data/openmeteo}"
-  GFS_LATEST_BACKUP_DIR="$DATA_DIR/gfs_latest_backup_$$"
+  ACTIVE_DATA_DIR="${WEATHER_OPENMETEO_DATA_DIR:-$APP_DIR/data/openmeteo}"
+  ACTIVE_PUBLIC_DATA_DIR="${WEATHER_OPENMETEO_PUBLIC_DATA_DIR:-/opt/1panel/apps/weather/data}"
+  ACTIVE_LAYER_ROOT_DIR="${WEATHER_OPENMETEO_LAYER_ROOT_DIR:-$APP_DIR/data/openmeteo_layers}"
+  GFS_OUTPUT_DIR="${WEATHER_OPENMETEO_LAYER_DIR:-$ACTIVE_LAYER_ROOT_DIR/gfs013_surface}"
+  GFS_STAGING_DATA_DIR="$ACTIVE_DATA_DIR/gfs_staging_${RUN}_$$"
+  GFS_STAGING_LAYER_DIR="$ACTIVE_LAYER_ROOT_DIR/gfs013_surface_staging_${RUN}_$$"
+  GFS_STAGING_PUBLIC_DIR="$ACTIVE_DATA_DIR/gfs_public_staging_${RUN}_$$"
+  GFS_PUBLISH_BACKUP_DIR="$ACTIVE_DATA_DIR/gfs_publish_backup_${RUN}_$$"
   gfs_publish_ok=false
-  export WEATHER_OPENMETEO_PUBLIC_DATA_DIR="${WEATHER_OPENMETEO_PUBLIC_DATA_DIR:-/opt/1panel/apps/weather/data}"
-  export WEATHER_OPENMETEO_LAYER_ROOT_DIR="${WEATHER_OPENMETEO_LAYER_ROOT_DIR:-$APP_DIR/data/openmeteo_layers}"
+  gfs_publish_started=false
 
-  cleanup_gfs_generated_products() {
+  cleanup_prior_gfs_staging() {
     rm -rf \
-      "$DATA_DIR/ncep_gfs013" \
-      "$DATA_DIR/ncep_gfs025" \
-      "$DATA_DIR/data_run/ncep_gfs013" \
-      "$DATA_DIR/data_run/ncep_gfs025"
+      "$ACTIVE_DATA_DIR"/gfs_staging_* \
+      "$ACTIVE_DATA_DIR"/gfs_public_staging_* \
+      "$ACTIVE_DATA_DIR"/gfs_publish_backup_* \
+      "$ACTIVE_LAYER_ROOT_DIR"/gfs013_surface_staging_*
   }
 
-  backup_gfs_latest_refs() {
-    local domain
-    local src
-    mkdir -p "$GFS_LATEST_BACKUP_DIR"
-    for domain in ncep_gfs013 ncep_gfs025; do
-      src="$DATA_DIR/data_run/$domain/latest.json"
-      if [[ -f "$src" ]]; then
-        cp -f "$src" "$GFS_LATEST_BACKUP_DIR/$domain.latest.json"
-      else
-        touch "$GFS_LATEST_BACKUP_DIR/$domain.missing"
-      fi
-    done
+  prepare_gfs_staging_data_dir() {
+    rm -rf "$GFS_STAGING_DATA_DIR" "$GFS_STAGING_LAYER_DIR" "$GFS_STAGING_PUBLIC_DIR"
+    mkdir -p "$GFS_STAGING_DATA_DIR" "$GFS_STAGING_LAYER_DIR" "$GFS_STAGING_PUBLIC_DIR"
+    if [[ -d "$ACTIVE_DATA_DIR/copernicus_dem90" ]]; then
+      cp -al "$ACTIVE_DATA_DIR/copernicus_dem90" "$GFS_STAGING_DATA_DIR/"
+    fi
   }
 
-  restore_gfs_latest_refs() {
+  publish_public_link() {
+    local target="$1"
+    local link="$2"
+    local tmp_link="${link}.tmp.$$"
+    rm -f "$tmp_link"
+    ln -s "$target" "$tmp_link"
+    if [[ -e "$link" && ! -L "$link" ]]; then
+      printf 'Refusing to replace non-symlink public path: %s\n' "$link" >&2
+      rm -f "$tmp_link"
+      exit 3
+    fi
+    mv -Tf "$tmp_link" "$link"
+  }
+
+  backup_active_path() {
+    local source="$1"
+    local target="$2"
+    if [[ -e "$source" ]]; then
+      mkdir -p "$(dirname "$target")"
+      mv "$source" "$target"
+    fi
+  }
+
+  restore_gfs_publish_backup() {
     local domain
-    local dst
-    if [[ ! -d "$GFS_LATEST_BACKUP_DIR" ]]; then
+    if [[ "$gfs_publish_started" != "true" || ! -d "$GFS_PUBLISH_BACKUP_DIR" ]]; then
       return
     fi
     for domain in ncep_gfs013 ncep_gfs025; do
-      dst="$DATA_DIR/data_run/$domain/latest.json"
-      if [[ -f "$GFS_LATEST_BACKUP_DIR/$domain.latest.json" ]]; then
-        mkdir -p "$(dirname "$dst")"
-        cp -f "$GFS_LATEST_BACKUP_DIR/$domain.latest.json" "$dst"
-      elif [[ -f "$GFS_LATEST_BACKUP_DIR/$domain.missing" ]]; then
-        rm -f "$dst"
+      rm -rf "$ACTIVE_DATA_DIR/$domain" "$ACTIVE_DATA_DIR/data_run/$domain"
+      if [[ -e "$GFS_PUBLISH_BACKUP_DIR/$domain" ]]; then
+        mv "$GFS_PUBLISH_BACKUP_DIR/$domain" "$ACTIVE_DATA_DIR/$domain"
+      fi
+      if [[ -e "$GFS_PUBLISH_BACKUP_DIR/data_run/$domain" ]]; then
+        mkdir -p "$ACTIVE_DATA_DIR/data_run"
+        mv "$GFS_PUBLISH_BACKUP_DIR/data_run/$domain" "$ACTIVE_DATA_DIR/data_run/$domain"
       fi
     done
+    rm -rf "$GFS_OUTPUT_DIR"
+    if [[ -e "$GFS_PUBLISH_BACKUP_DIR/gfs013_surface" ]]; then
+      mv "$GFS_PUBLISH_BACKUP_DIR/gfs013_surface" "$GFS_OUTPUT_DIR"
+    fi
   }
 
-  cleanup_gfs_latest_backup() {
-    rm -rf "$GFS_LATEST_BACKUP_DIR"
+  publish_gfs_products() {
+    local domain
+    for domain in ncep_gfs013 ncep_gfs025; do
+      [[ -d "$GFS_STAGING_DATA_DIR/$domain" ]]
+      [[ -d "$GFS_STAGING_DATA_DIR/data_run/$domain" ]]
+    done
+    [[ -d "$GFS_STAGING_LAYER_DIR" ]]
+
+    gfs_publish_started=true
+    rm -rf "$GFS_PUBLISH_BACKUP_DIR"
+    mkdir -p "$GFS_PUBLISH_BACKUP_DIR/data_run"
+    for domain in ncep_gfs013 ncep_gfs025; do
+      backup_active_path "$ACTIVE_DATA_DIR/$domain" "$GFS_PUBLISH_BACKUP_DIR/$domain"
+      backup_active_path "$ACTIVE_DATA_DIR/data_run/$domain" "$GFS_PUBLISH_BACKUP_DIR/data_run/$domain"
+    done
+    backup_active_path "$GFS_OUTPUT_DIR" "$GFS_PUBLISH_BACKUP_DIR/gfs013_surface"
+
+    mkdir -p "$ACTIVE_DATA_DIR/data_run" "$ACTIVE_LAYER_ROOT_DIR" "$ACTIVE_PUBLIC_DATA_DIR/openmeteo_layers"
+    for domain in ncep_gfs013 ncep_gfs025; do
+      mv "$GFS_STAGING_DATA_DIR/$domain" "$ACTIVE_DATA_DIR/$domain"
+      mv "$GFS_STAGING_DATA_DIR/data_run/$domain" "$ACTIVE_DATA_DIR/data_run/$domain"
+    done
+    mv "$GFS_STAGING_LAYER_DIR" "$GFS_OUTPUT_DIR"
+    cp -f "$APP_DIR/config/weather_layer_catalog.json" "$ACTIVE_PUBLIC_DATA_DIR/openmeteo_layers/weather_layer_catalog.json"
+    publish_public_link "$GFS_OUTPUT_DIR" "$ACTIVE_PUBLIC_DATA_DIR/openmeteo_layers/gfs013_surface"
+    rm -rf "$GFS_PUBLISH_BACKUP_DIR"
+    gfs_publish_started=false
   }
 
   on_gfs_production_exit() {
     local status="$?"
-    if [[ "$gfs_publish_ok" != "true" ]]; then
-      restore_gfs_latest_refs
+    if [[ "$status" -ne 0 ]]; then
+      restore_gfs_publish_backup
+    else
+      rm -rf "$GFS_STAGING_DATA_DIR" "$GFS_STAGING_LAYER_DIR" "$GFS_STAGING_PUBLIC_DIR"
     fi
-    cleanup_gfs_latest_backup
     exit "$status"
   }
   trap on_gfs_production_exit EXIT
 
-  backup_gfs_latest_refs
-  cleanup_gfs_generated_products
+  cleanup_prior_gfs_staging
+  prepare_gfs_staging_data_dir
+  export WEATHER_OPENMETEO_DATA_DIR="$GFS_STAGING_DATA_DIR"
+  export WEATHER_OPENMETEO_LAYER_DIR="$GFS_STAGING_LAYER_DIR"
+  export WEATHER_OPENMETEO_PUBLIC_DATA_DIR="$GFS_STAGING_PUBLIC_DIR"
+  export WEATHER_OPENMETEO_LAYER_ROOT_DIR="$ACTIVE_LAYER_ROOT_DIR"
 
   download_start="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
   echo "$download_start [OPENMETEO_GFS] download runtime data run=$RUN start=$download_start"
@@ -109,7 +165,7 @@ mkdir -p "$LOG_DIR"
   echo "$download_end [OPENMETEO_GFS] download runtime data run=$RUN end=$download_end"
 
   python3 scripts/validate_openmeteo_latest_run.py \
-    --data-dir "$DATA_DIR" \
+    --data-dir "$GFS_STAGING_DATA_DIR" \
     --run "$RUN" \
     --domains ncep_gfs013,ncep_gfs025 \
     --min-frames "$(( ${WEATHER_GFS_MAX_FORECAST_HOUR:-120} + 1 ))"
@@ -120,6 +176,7 @@ mkdir -p "$LOG_DIR"
   layer_end="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
   echo "$layer_end [OPENMETEO_GFS] build GFS layer products end=$layer_end"
 
+  publish_gfs_products
   gfs_publish_ok=true
   echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_GFS] completed run=$RUN"
 } 9>"$LOCK_FILE" >> "$LOG_DIR/openmeteo_gfs_cycle.log" 2>&1
