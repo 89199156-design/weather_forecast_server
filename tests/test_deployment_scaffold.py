@@ -202,12 +202,14 @@ def test_runtime_data_download_packages_gfs025_upper_levels_as_one_variable_coll
     assert "while IFS= read -r only_variables" not in script
     assert "download_gfs025_upper_level_variables" in script
     assert "download_gfs025_upper_level_variable()" not in script
+    assert 'for variable in "${variables[@]}"' not in upper_function
     assert "WEATHER_SKIP_GFS013_DOWNLOAD" not in script
     assert "WEATHER_SKIP_GFS025_SURFACE_DOWNLOAD" not in script
     assert "WEATHER_SKIP_GFS025_UPPER_LEVEL_DOWNLOAD" not in script
     assert "WEATHER_SKIP_CAMS_DOWNLOAD" not in script
     assert "is_truthy" in common
-    assert '--only-variables "$only_variables"' in upper_function
+    assert 'GFS025_UPPER_LEVEL_ONLY_VARIABLES="$(gfs025_upper_level_only_variables)"' in upper_function
+    assert '--only-variables "$GFS025_UPPER_LEVEL_ONLY_VARIABLES"' in upper_function
     assert '--concurrent "$GFS_UPPER_LEVEL_CONCURRENT"' in upper_function
     assert '--concurrent "$GFS_CONCURRENT"' not in upper_function
     assert script.count("run_openmeteo download-gfs gfs025") == 2
@@ -220,7 +222,7 @@ def test_gfs_upper_level_download_does_not_break_run_argument_splitting():
     )[0]
 
     assert 'local IFS=","' not in upper_function
-    assert 'IFS="," read -ra variables <<< "$GFS_UPPER_LEVEL_VARIABLES"' in upper_function
+    assert 'read -ra variables <<< "$GFS_UPPER_LEVEL_VARIABLES"' in script
     assert '$(append_run_arg "$GFS_RUN")' in upper_function
 
 
