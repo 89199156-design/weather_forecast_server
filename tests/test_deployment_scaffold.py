@@ -540,7 +540,7 @@ def test_downloaders_clean_source_cache_only_at_start_and_after_success():
     assert cams_ads.rindex("run_openmeteo download-cams-ads cams_global_greenhouse_gases") < cams_ads.rindex("cleanup_download_work_dirs \\")
 
 
-def test_production_cycles_keep_gfs_products_until_staging_publish():
+def test_production_cycles_keep_runtime_products_until_safe_publish():
     gfs = (ROOT / "scripts" / "run_gfs_production_cycle.sh").read_text(encoding="utf-8")
     cams_ftp = (ROOT / "scripts" / "run_cams_ftp_production_cycle.sh").read_text(encoding="utf-8")
     cams_ads = (ROOT / "scripts" / "run_cams_ads_production_cycle.sh").read_text(encoding="utf-8")
@@ -558,20 +558,22 @@ def test_production_cycles_keep_gfs_products_until_staging_publish():
     assert "cleanup_gfs_generated_products" not in cams_ads
 
     for script in (cams_ftp, cams_ads):
-        assert "cleanup_cams_generated_products" in script
-        assert '"$DATA_DIR/cams_global"' in script
-        assert '"$DATA_DIR/data_run/cams_global"' in script
+        assert "cleanup_cams_generated_products" not in script
+        assert 'rm -rf "$DATA_DIR/cams_global"' not in script
+        assert 'rm -rf "$DATA_DIR/data_run/cams_global"' not in script
+        assert '"$DATA_DIR/cams_global"' not in script
+        assert '"$DATA_DIR/data_run/cams_global"' not in script
         assert "ncep_gfs013" not in script
         assert "ncep_gfs025" not in script
     assert '"$DATA_DIR/cams_global_greenhouse_gases"' not in cams_ftp
     assert '"$DATA_DIR/data_run/cams_global_greenhouse_gases"' not in cams_ftp
-    assert '"$DATA_DIR/cams_global_greenhouse_gases"' in cams_ads
-    assert '"$DATA_DIR/data_run/cams_global_greenhouse_gases"' in cams_ads
+    assert 'rm -rf "$DATA_DIR/cams_global_greenhouse_gases"' not in cams_ads
+    assert 'rm -rf "$DATA_DIR/data_run/cams_global_greenhouse_gases"' not in cams_ads
+    assert '"$DATA_DIR/cams_global_greenhouse_gases"' not in cams_ads
+    assert '"$DATA_DIR/data_run/cams_global_greenhouse_gases"' not in cams_ads
 
     assert gfs.index("prepare_gfs_staging_data_dir") < gfs.index("bash scripts/download_openmeteo_gfs_data.sh")
     assert gfs.index("bash scripts/build_openmeteo_gfs_layers.sh") < gfs.index("\n  publish_gfs_products\n")
-    assert cams_ftp.index("cleanup_cams_generated_products") < cams_ftp.index("bash scripts/download_openmeteo_cams_data.sh")
-    assert cams_ads.index("cleanup_cams_generated_products") < cams_ads.index("bash scripts/download_openmeteo_cams_ads_data.sh")
 
 
 def test_runtime_data_download_can_pin_source_runs_without_engine_fork():

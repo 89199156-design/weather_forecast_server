@@ -50,19 +50,9 @@ mkdir -p "$LOG_DIR"
   unset WEATHER_OPENMETEO_LAYER_END_HOUR
   export WEATHER_OPENMETEO_PUBLIC_DATA_DIR="${WEATHER_OPENMETEO_PUBLIC_DATA_DIR:-/opt/1panel/apps/weather/data}"
   export WEATHER_OPENMETEO_LAYER_ROOT_DIR="${WEATHER_OPENMETEO_LAYER_ROOT_DIR:-$APP_DIR/data/openmeteo_layers}"
-  DATA_DIR="${WEATHER_OPENMETEO_DATA_DIR:-$APP_DIR/data/openmeteo}"
   CAMS_GREENHOUSE_RUN="${WEATHER_CAMS_GREENHOUSE_RUN:-$(run_to_greenhouse_run "$RUN")}"
   export WEATHER_CAMS_GREENHOUSE_RUN="$CAMS_GREENHOUSE_RUN"
 
-  cleanup_cams_generated_products() {
-    rm -rf \
-      "$DATA_DIR/cams_global" \
-      "$DATA_DIR/data_run/cams_global" \
-      "$DATA_DIR/cams_global_greenhouse_gases" \
-      "$DATA_DIR/data_run/cams_global_greenhouse_gases"
-  }
-
-  cleanup_cams_generated_products
   download_start="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
   echo "$download_start [OPENMETEO_CAMS_ADS] download runtime data run=$RUN start=$download_start"
   bash scripts/download_openmeteo_cams_ads_data.sh
