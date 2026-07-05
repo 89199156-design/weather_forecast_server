@@ -32,53 +32,57 @@ join_by_comma() {
   printf '%s\n' "$*"
 }
 
-gfs025_upper_level_only_variables() {
+gfs025_upper_level_only_variables_for_family() {
+  local family="$1"
   local IFS=","
-  local variable
   local level
-  local variables=()
   local levels=()
   local only_variables=()
 
-  read -ra variables <<< "$GFS_UPPER_LEVEL_VARIABLES"
   read -ra levels <<< "$GFS_UPPER_LEVELS"
 
-  for variable in "${variables[@]}"; do
-    variable="${variable//[[:space:]]/}"
-    if [[ -z "$variable" ]]; then
+  family="${family//[[:space:]]/}"
+  if [[ -z "$family" ]]; then
+    return
+  fi
+  for level in "${levels[@]}"; do
+    level="${level//[[:space:]]/}"
+    if [[ -z "$level" ]]; then
       continue
     fi
-    for level in "${levels[@]}"; do
-      level="${level//[[:space:]]/}"
-      if [[ -z "$level" ]]; then
-        continue
-      fi
-      if [[ "$variable" == "cloud_cover" && ( "$level" -lt 50 || "$level" == "70" ) ]]; then
-        continue
-      fi
+    if [[ "$family" == "cloud_cover" && ( "$level" -lt 50 || "$level" == "70" ) ]]; then
+      continue
+    fi
 
-      only_variables+=("${variable}_${level}hPa")
-    done
+    only_variables+=("${family}_${level}hPa")
   done
 
   join_by_comma "${only_variables[@]}"
 }
 
 download_gfs025_upper_level_variables() {
+  local IFS=","
+  local variable
   local only_variables
+  local variables=()
 
-  only_variables="$(gfs025_upper_level_only_variables)"
-  if [[ -z "$only_variables" ]]; then
-    printf '%s\n' "No GFS025 upper-level variables configured." >&2
-    exit 2
-  fi
+  read -ra variables <<< "$GFS_UPPER_LEVEL_VARIABLES"
+  for variable in "${variables[@]}"; do
+    only_variables="$(gfs025_upper_level_only_variables_for_family "$variable")"
+    if [[ -z "$only_variables" ]]; then
+      continue
+    fi
 
-  run_openmeteo download-gfs gfs025 \
-    "${GFS_DOWNLOAD_SOURCE_ARGS[@]}" \
-    --only-variables "$only_variables" \
-    $(append_run_arg "$GFS_RUN") \
-    --max-forecast-hour "$GFS_MAX_FORECAST_HOUR" \
-    --concurrent "$GFS_UPPER_LEVEL_CONCURRENT"
+    run_openmeteo download-gfs gfs025 \
+      "${GFS_DOWNLOAD_SOURCE_ARGS[@]}" \
+      --only-variables "$only_variables" \
+      $(append_run_arg "$GFS_RUN") \
+      --max-forecast-hour "$GFS_MAX_FORECAST_HOUR" \
+      --concurrent "$GFS_UPPER_LEVEL_CONCURRENT"
+
+    cleanup_download_work_dirs "$DATA_DIR/download-ncep_gfs025"
+    cleanup_openmeteo_http_cache
+  done
 }
 
 require_dem_source
@@ -92,6 +96,8 @@ run_openmeteo download-gfs gfs013 \
   $(append_run_arg "$GFS_RUN") \
   --max-forecast-hour "$GFS_MAX_FORECAST_HOUR" \
   --concurrent "$GFS_CONCURRENT"
+cleanup_download_work_dirs "$DATA_DIR/download-ncep_gfs013"
+cleanup_openmeteo_http_cache
 
 run_openmeteo download-gfs gfs025 \
   "${GFS_DOWNLOAD_SOURCE_ARGS[@]}" \
@@ -99,6 +105,8 @@ run_openmeteo download-gfs gfs025 \
   $(append_run_arg "$GFS_RUN") \
   --max-forecast-hour "$GFS_MAX_FORECAST_HOUR" \
   --concurrent "$GFS_CONCURRENT"
+cleanup_download_work_dirs "$DATA_DIR/download-ncep_gfs025"
+cleanup_openmeteo_http_cache
 
 download_gfs025_upper_level_variables
 

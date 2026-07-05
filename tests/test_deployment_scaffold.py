@@ -333,26 +333,32 @@ def test_downloaders_clean_source_cache_only_at_start_and_after_success():
         "cams_ads": (ROOT / "scripts" / "download_openmeteo_cams_ads_data.sh").read_text(encoding="utf-8"),
     }
 
-    for script in scripts.values():
+    for name, script in scripts.items():
         assert "trap cleanup_sensitive_artifacts EXIT" in script
         assert "trap cleanup_download_artifacts EXIT" not in script
         assert "cleanup_download_artifacts()" not in script
         cleanup_calls = [line for line in script.splitlines() if line.strip() == "cleanup_openmeteo_http_cache"]
-        assert len(cleanup_calls) == 2
+        if name == "gfs":
+            assert len(cleanup_calls) >= 4
+        else:
+            assert len(cleanup_calls) == 2
         first_run = script.index("run_openmeteo")
         last_run = script.rindex("run_openmeteo")
         first_cleanup = script.index("\ncleanup_openmeteo_http_cache\n")
         last_cleanup = script.rindex("\ncleanup_openmeteo_http_cache\n")
         assert first_cleanup < first_run
         assert last_run < last_cleanup
-        assert "cleanup_openmeteo_http_cache" not in script[first_run:last_run]
+        if name != "gfs":
+            assert "cleanup_openmeteo_http_cache" not in script[first_run:last_run]
 
     gfs = scripts["gfs"]
     assert gfs.count("cleanup_download_work_dirs \\") == 2
-    assert gfs.count('"$DATA_DIR/download-ncep_gfs013"') == 2
-    assert gfs.count('"$DATA_DIR/download-ncep_gfs025"') == 2
+    assert gfs.count('"$DATA_DIR/download-ncep_gfs013"') == 3
+    assert gfs.count('"$DATA_DIR/download-ncep_gfs025"') >= 4
     assert gfs.index("cleanup_download_work_dirs \\") < gfs.index("run_openmeteo download-gfs gfs013")
     assert gfs.rindex("run_openmeteo download-gfs gfs025") < gfs.rindex("cleanup_download_work_dirs \\")
+    assert gfs.index("run_openmeteo download-gfs gfs013") < gfs.index('cleanup_download_work_dirs "$DATA_DIR/download-ncep_gfs013"')
+    assert gfs.index("run_openmeteo download-gfs gfs025") < gfs.index('cleanup_download_work_dirs "$DATA_DIR/download-ncep_gfs025"')
 
     cams_ftp = scripts["cams_ftp"]
     assert cams_ftp.count('cleanup_download_work_dirs "$DATA_DIR/download-cams_global"') == 2
