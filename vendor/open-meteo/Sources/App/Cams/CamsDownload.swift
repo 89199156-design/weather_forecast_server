@@ -62,7 +62,7 @@ struct DownloadCamsCommand: AsyncCommand {
                 fatalError("Both WEATHER_CAMS_FTP_USER and WEATHER_CAMS_FTP_PASSWORD are required for CAMS global FTP/ECPDS download")
             }
             logger.info("Using CAMS global FTP/ECPDS source")
-            let handles = try await downloadCamsGlobal(application: context.application, domain: domain, run: run, variables: variables, user: ftpuser, password: ftppassword, uploadS3Bucket: signature.uploadS3Bucket)
+            let handles = try await downloadCamsGlobal(application: context.application, domain: domain, run: run, variables: variables, user: ftpuser, password: ftppassword, concurrent: signature.concurrent ?? 1, uploadS3Bucket: signature.uploadS3Bucket)
             try await GenericVariableHandle.convert(application: context.application, domain: domain, createNetcdf: signature.createNetcdf, run: run, handles: handles, concurrent: signature.concurrent ?? 1, writeUpdateJson: true, uploadS3Bucket: signature.uploadS3Bucket, uploadS3OnlyProbabilities: false)
             return
         default:
@@ -72,7 +72,7 @@ struct DownloadCamsCommand: AsyncCommand {
 
     /// Download from the ECMWF CAMS ftp/http server
     /// This data is also available via the ADC API, but queue times are 4 hours!
-    func downloadCamsGlobal(application: Application, domain: CamsDomain, run: Timestamp, variables: [CamsVariable], user: String, password: String, uploadS3Bucket: String?) async throws -> [GenericVariableHandle] {
+    func downloadCamsGlobal(application: Application, domain: CamsDomain, run: Timestamp, variables: [CamsVariable], user: String, password: String, concurrent: Int, uploadS3Bucket: String?) async throws -> [GenericVariableHandle] {
         try FileManager.default.createDirectory(atPath: domain.downloadDirectory, withIntermediateDirectories: true)
         let logger = application.logger
 
@@ -98,23 +98,35 @@ struct DownloadCamsCommand: AsyncCommand {
             logger.info("Downloading hour \(hour)")
             let writer = OmSpatialTimestepWriter(domain: domain, run: run, time: timestamp, storeOnDisk: true, realm: nil, logger: logger)
 
-            for variable in variables {
+            let jobs = variables.compactMap { variable -> CamsGlobalDownloadJob? in
                 guard let meta = variable.getCamsGlobalMeta() else {
-                   continue
+                    return nil
                 }
                 /// Multi level name `z_cams_c_ecmf_20220811120000_prod_fc_ml137_000_aermr03.nc`
                 /// Surface level name `z_cams_c_ecmf_20220803000000_prod_fc_sfc_012_uvbed.nc`
                 let levelType = meta.isMultiLevel ? "ml137" : "sfc"
                 let dir = meta.isMultiLevel ? remoteDirAdditional : remoteDir
                 let remoteFile = "\(dir)z_cams_c_ecmf_\(dateRun)0000_prod_fc_\(levelType)_\(hour.zeroPadded(len: 3))_\(meta.gribname).nc"
-                let tempNc = "\(domain.downloadDirectory)/temp.nc"
-                try await curl.download(url: remoteFile, toFile: tempNc, bzip2Decode: false)
+                let tempNc = "\(domain.downloadDirectory)/temp_\(hour.zeroPadded(len: 3))_\(meta.gribname).nc"
+                return CamsGlobalDownloadJob(variable: variable, gribname: meta.gribname, scalefactor: meta.scalefactor, remoteFile: remoteFile, tempNc: tempNc)
+            }
 
-                guard let ncFile = try NetCDF.open(path: tempNc, allowUpdate: false) else {
-                    fatalError("Could not open nc file for \(variable)")
+            defer {
+                for job in jobs {
+                    try? FileManager.default.removeItem(atPath: job.tempNc)
                 }
-                guard let ncVar = ncFile.getVariable(name: meta.gribname) else {
-                    fatalError("Could not open nc variable for \(meta.gribname)")
+            }
+
+            try await jobs.foreachConcurrent(nConcurrent: max(1, concurrent)) { job in
+                try await curl.download(url: job.remoteFile, toFile: job.tempNc, bzip2Decode: false)
+            }
+
+            for job in jobs {
+                guard let ncFile = try NetCDF.open(path: job.tempNc, allowUpdate: false) else {
+                    fatalError("Could not open nc file for \(job.variable)")
+                }
+                guard let ncVar = ncFile.getVariable(name: job.gribname) else {
+                    fatalError("Could not open nc variable for \(job.gribname)")
                 }
 
                 var data = try ncVar.readLevel()
@@ -124,10 +136,10 @@ struct DownloadCamsCommand: AsyncCommand {
                 }
 
                 for i in data.indices {
-                    data[i] *= meta.scalefactor
+                    data[i] *= job.scalefactor
                 }
                 
-                try await writer.write(member: 0, variable: variable, data: data)
+                try await writer.write(member: 0, variable: job.variable, data: data)
             }
             let completed = i == timestamps.count - 1
             return try await writer.finalise(application: application, completed: completed, validTimes: Array(timestamps[0...i]), uploadS3Bucket: uploadS3Bucket)
@@ -136,6 +148,14 @@ struct DownloadCamsCommand: AsyncCommand {
         return handles
     }
 
+}
+
+private struct CamsGlobalDownloadJob: Sendable {
+    let variable: CamsVariable
+    let gribname: String
+    let scalefactor: Float
+    let remoteFile: String
+    let tempNc: String
 }
 
 fileprivate extension Variable {

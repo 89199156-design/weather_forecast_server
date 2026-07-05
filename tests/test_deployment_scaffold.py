@@ -1,9 +1,20 @@
 from pathlib import Path
+import importlib.util
 import subprocess
 import sys
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def load_validation_batches_module():
+    path = ROOT / "scripts" / "validate_openmeteo_official_50point_batches.py"
+    spec = importlib.util.spec_from_file_location("validate_openmeteo_official_50point_batches", path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def test_root_dockerfile_builds_unmodified_vendored_openmeteo():
@@ -38,6 +49,96 @@ def test_build_script_uses_root_context_and_new_repository_paths_only():
 
 def test_singapore_internal_http_deploy_script_is_removed():
     assert not (ROOT / "scripts" / "deploy_singapore_candidate.sh").exists()
+
+
+def test_validation_candidates_can_use_remote_inventory_without_local_data(tmp_path):
+    validator = load_validation_batches_module()
+    variables = validator.candidate_variables(
+        ROOT,
+        "gfs",
+        tmp_path / "missing-openmeteo-data",
+        gfs_pressure_compare_levels_hpa={"850hPa"},
+        actual_names_by_domain={
+            "ncep_gfs013": {
+                "temperature_2m",
+                "relative_humidity_2m",
+                "cloud_cover",
+                "pressure_msl",
+                "wind_u_component_10m",
+                "wind_v_component_10m",
+            },
+            "ncep_gfs025": {
+                "temperature_850hPa",
+                "relative_humidity_850hPa",
+                "wind_u_component_850hPa",
+                "wind_v_component_850hPa",
+            },
+        },
+    )
+
+    assert "temperature_2m" in variables
+    assert "wind_speed_10m" in variables
+    assert "temperature_850hPa" in variables
+    assert "relativehumidity_850hPa" in variables
+    assert "wind_speed_850hPa" in variables
+
+
+def test_direct_validation_exports_local_variables_once_per_batch(monkeypatch, tmp_path):
+    validator = load_validation_batches_module()
+    local_requests = []
+    reference_requests = []
+
+    def fake_local_hourlies(**kwargs):
+        variables = [item for item in kwargs["params"]["hourly"].split(",") if item]
+        local_requests.append(tuple(variables))
+        hourly = {"time": ["2026-07-03T18:00"]}
+        for variable in variables:
+            hourly[variable] = [1.0]
+        return [hourly]
+
+    def fake_reference_hourlies(**kwargs):
+        variables = [item for item in kwargs["params"]["hourly"].split(",") if item]
+        reference_requests.append(tuple(variables))
+        hourly = {"time": ["2026-07-03T18:00"]}
+        for variable in variables:
+            hourly[variable] = [1.0]
+        return [hourly]
+
+    monkeypatch.setattr(validator, "fetch_local_hourlies", fake_local_hourlies)
+    monkeypatch.setattr(validator, "fetch_hourlies", fake_reference_hourlies)
+
+    report = validator.validate_scope_batch(
+        scope="gfs",
+        batch_index=1,
+        points=[{"latitude": 30.0, "longitude": 120.0}],
+        variables=["temperature_2m", "relative_humidity_2m", "wind_speed_10m"],
+        api_base_url="",
+        local_openmeteo_mode="direct",
+        data_dir=tmp_path,
+        output_dir=tmp_path,
+        openmeteo_image="image",
+        openmeteo_tag="tag",
+        direct_ssh_host="singapore",
+        direct_remote_root="/srv/weather",
+        reference_base_url="https://single-runs-api.open-meteo.com",
+        reference_ssh_host="seoul",
+        gfs_run="2026-07-03T18:00",
+        gfs_reference_mode="single-run",
+        start_hour="2026-07-03T18:00",
+        end_hour="2026-07-03T18:00",
+        frames=1,
+        chunk_size=1,
+        tolerance=0.001,
+        timeout=10,
+        retries=0,
+        retry_delay=0,
+        request_pause=0,
+        gfs_model="gfs_global",
+    )
+
+    assert report["passed"] is True
+    assert local_requests == [("temperature_2m", "relative_humidity_2m", "wind_speed_10m")]
+    assert reference_requests == [("temperature_2m",), ("relative_humidity_2m",), ("wind_speed_10m",)]
 
 
 def test_openmeteo_json_writer_uses_current_upstream_numeric_formatting():
@@ -118,6 +219,8 @@ def test_split_downloaders_cover_openmeteo_domains_without_cross_source_coupling
     assert "--only-variables \"$CAMS_VARIABLES\"" in ftp
     assert "CAMS_FTP_USER=" in ftp
     assert "CAMS_FTP_PASSWORD=" in ftp
+    assert 'CAMS_CONCURRENT="${WEATHER_CAMS_FTP_DOWNLOAD_CONCURRENT:-8}"' in ftp
+    assert "WEATHER_CAMS_DOWNLOAD_CONCURRENT" not in ftp
     assert "carbon_monoxide,nitrogen_dioxide,ozone,sulphur_dioxide" in ftp
     assert "download-gfs" not in ftp
     assert "WEATHER_CAMS_ADS" not in ftp
@@ -128,6 +231,8 @@ def test_split_downloaders_cover_openmeteo_domains_without_cross_source_coupling
     assert "download-cams-ads cams_global" in ads
     assert "--cdskey \"$CAMS_ADS_KEY\"" in ads
     assert "read_cdsapi_key" in ads
+    assert 'CAMS_CONCURRENT="${WEATHER_CAMS_ADS_DOWNLOAD_CONCURRENT:-1}"' in ads
+    assert "WEATHER_CAMS_DOWNLOAD_CONCURRENT" not in ads
     assert "download-gfs" not in ads
     assert "download-cams cams_global" not in ads
     assert "WEATHER_CAMS_FTP" not in ads
@@ -512,6 +617,8 @@ def test_runtime_data_download_uses_cams_ftp_ecpds_only():
 
     assert "CAMS_FTP_USER=" in script
     assert "CAMS_FTP_PASSWORD=" in script
+    assert 'CAMS_CONCURRENT="${WEATHER_CAMS_FTP_DOWNLOAD_CONCURRENT:-8}"' in script
+    assert "WEATHER_CAMS_DOWNLOAD_CONCURRENT" not in script
     assert "download_cams_ftp()" not in script
     assert "download_cams_ads()" not in script
     assert "CAMS_SOURCE" not in script
@@ -540,6 +647,8 @@ def test_optional_cams_ads_cds_download_is_separate_from_ftp_ecpds():
     assert "carbon_monoxide" in script
     assert "--cdskey \"$CAMS_ADS_KEY\"" in script
     assert "read_cdsapi_key" in script
+    assert 'CAMS_CONCURRENT="${WEATHER_CAMS_ADS_DOWNLOAD_CONCURRENT:-1}"' in script
+    assert "WEATHER_CAMS_DOWNLOAD_CONCURRENT" not in script
     assert "WEATHER_CAMS_FTP" not in script
     assert "CAMS_FTP" not in script
     assert "download-cams-ads" not in ftp_script
@@ -557,6 +666,8 @@ def test_singapore_config_keeps_cams_credentials_empty_for_private_override():
     assert "WEATHER_CAMS_CDS" not in config
     assert "WEATHER_CAMS_FTP_USER=" in config
     assert "WEATHER_CAMS_FTP_PASSWORD=" in config
+    assert "WEATHER_CAMS_FTP_DOWNLOAD_CONCURRENT=8" in config
+    assert "WEATHER_CAMS_DOWNLOAD_CONCURRENT" not in config
     assert "config/singapore.private.env" in config
     assert "WEATHER_CAMS_AREA_DOWNLOAD" not in config
 
@@ -665,6 +776,22 @@ def test_cams_global_download_is_ftp_ecpds_only():
     assert "getCamsGlobalAreaApiName" not in cams_domain
 
 
+def test_cams_ftp_concurrent_option_drives_file_downloads():
+    cams_download = (ROOT / "vendor" / "open-meteo" / "Sources" / "App" / "Cams" / "CamsDownload.swift").read_text(
+        encoding="utf-8"
+    )
+    global_case = cams_download.split("case .cams_global:", 1)[1].split("default:", 1)[0]
+    download_function = cams_download.split("func downloadCamsGlobal(", 1)[1].split("await curl.printStatistics()", 1)[0]
+
+    assert "concurrent: signature.concurrent ?? 1" in global_case
+    assert "func downloadCamsGlobal(" in cams_download
+    assert "concurrent: Int" in download_function
+    assert "jobs.foreachConcurrent(nConcurrent: max(1, concurrent))" in download_function
+    assert "curl.download(url: job.remoteFile, toFile: job.tempNc" in download_function
+    assert r'"\(domain.downloadDirectory)/temp.nc"' not in cams_download
+    assert r'temp_\(hour.zeroPadded(len: 3))_\(meta.gribname).nc' in cams_download
+
+
 def test_layer_scripts_are_documented_as_openmeteo_engine_backed():
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     build_script = (ROOT / "scripts" / "build_openmeteo_layers.py").read_text(encoding="utf-8")
@@ -694,6 +821,34 @@ def test_layer_scripts_are_documented_as_openmeteo_engine_backed():
     assert "satellite" not in validate_script.lower()
     assert "Dem90.read(lat: lat, lon: lon" in export_command
     assert "elevation: .nan" not in export_command
+
+
+def test_point_export_command_exposes_openmeteo_reader_without_http():
+    configure = (ROOT / "vendor" / "open-meteo" / "Sources" / "App" / "configure.swift").read_text(
+        encoding="utf-8"
+    )
+    command_path = ROOT / "vendor" / "open-meteo" / "Sources" / "App" / "Commands" / "PointForecastExportCommand.swift"
+    command = command_path.read_text(encoding="utf-8")
+    validator = (ROOT / "scripts" / "validate_openmeteo_official_50point_batches.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'app.asyncCommands.use(PointForecastExportCommand(), as: "export-point-forecast")' in configure
+    assert "struct PointForecastExportCommand: AsyncCommand" in command
+    assert "let points: [PointForecastExportPoint]" in command
+    assert "ForecastVariable.load" in command
+    assert "params.prepareCoordinates" in command
+    assert "domain.getReaders(" in command
+    assert "location.hourly(variables: hourlyVariables)" in command
+    assert "readMixed(readers:" not in command
+    assert "/v1/forecast" not in command
+    assert "/v1/air-quality" not in command
+    assert "app.http" not in command
+
+    assert "--local-openmeteo-mode" in validator
+    assert "choices=(\"http\", \"direct\")" in validator
+    assert "fetch_direct_hourlies" in validator
+    assert "export-point-forecast" in validator
 
 
 def test_gfs_weather_code_keeps_upstream_thunderstorm_logic():

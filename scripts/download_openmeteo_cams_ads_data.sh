@@ -45,7 +45,7 @@ trap cleanup_sensitive_artifacts EXIT
 
 cleanup_openmeteo_http_cache
 
-CAMS_CONCURRENT="${WEATHER_CAMS_DOWNLOAD_CONCURRENT:-1}"
+CAMS_CONCURRENT="${WEATHER_CAMS_ADS_DOWNLOAD_CONCURRENT:-1}"
 CAMS_ADS_KEY="${WEATHER_CAMS_ADS_KEY:-${WEATHER_CAMS_CDS_KEY:-}}"
 CAMS_VARIABLES="${WEATHER_CAMS_VARIABLES:-pm2_5,pm10,aerosol_optical_depth,dust,carbon_monoxide,nitrogen_dioxide,ozone,sulphur_dioxide}"
 CAMS_GREENHOUSE_VARIABLES="${WEATHER_CAMS_GREENHOUSE_VARIABLES:-carbon_monoxide}"

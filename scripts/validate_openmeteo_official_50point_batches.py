@@ -9,12 +9,19 @@ batch have matched the local API response.
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import math
 import random
+import shlex
+import shutil
+import struct
+import subprocess
 import sys
+import tarfile
 import time
 import urllib.parse
+import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -339,6 +346,248 @@ def fetch_hourlies(
     return extract_hourlies(payload)
 
 
+def split_float_csv(value: Any) -> list[float]:
+    return [float(item) for item in str(value).split(",") if item]
+
+
+def swift_formatted_number(value: float, decimals: int | None) -> float | int | None:
+    if not math.isfinite(value):
+        return None
+    if decimals is None:
+        return value
+    factor = 10**decimals
+    # Open-Meteo's JSON writer formats Float values as:
+    # Int((abs_val * Float(factor)).rounded()). Reproduce the Float32
+    # multiplication here; using Python double precision shifts boundary
+    # values such as 29.05 to the wrong side of the decimal rounding edge.
+    value32 = struct.unpack("<f", struct.pack("<f", float(value)))[0]
+    factor32 = struct.unpack("<f", struct.pack("<f", float(factor)))[0]
+    scaled_input = struct.unpack("<f", struct.pack("<f", abs(value32) * factor32))[0]
+    scaled = int(math.floor(scaled_input + 0.5))
+    sign = -1 if value < 0 else 1
+    if decimals <= 0:
+        return sign * scaled
+    integer = scaled // factor
+    fraction = scaled % factor
+    return float(f"{'-' if sign < 0 else ''}{integer}.{fraction:0{decimals}d}")
+
+
+def read_float32_values(path: Path, expected_count: int) -> list[float]:
+    data = path.read_bytes()
+    if len(data) != expected_count * 4:
+        raise ValueError(f"{path} has {len(data)} bytes, expected {expected_count * 4}")
+    return [value[0] for value in struct.iter_unpack("<f", data)]
+
+
+def fetch_direct_hourlies(
+    *,
+    scope: str,
+    params: dict[str, Any],
+    start_hour: str,
+    end_hour: str,
+    data_dir: Path,
+    work_dir: Path,
+    image: str,
+    tag: str,
+    timeout: float,
+    direct_ssh_host: str | None = None,
+    direct_remote_root: str | None = None,
+) -> list[dict[str, Any]]:
+    latitudes = split_float_csv(params["latitude"])
+    longitudes = split_float_csv(params["longitude"])
+    if len(latitudes) != len(longitudes):
+        raise ValueError("latitude and longitude counts differ")
+    variables = [item for item in str(params["hourly"]).split(",") if item]
+    if not variables:
+        raise ValueError("direct export requires hourly variables")
+    if scope == "gfs":
+        model = str(params.get("models") or "gfs_global")
+    elif scope == "cams":
+        model = str(params.get("domains") or "cams_global")
+    else:
+        raise ValueError(f"unknown scope: {scope}")
+
+    token = uuid.uuid4().hex
+    tmp_root = work_dir / "validation_point_export_tmp" / token
+    request_host = tmp_root / "request.json"
+    output_host = tmp_root / "out"
+    request_container = "/work/request.json"
+    output_container = "/work/out"
+    request_payload = {
+        "scope": scope,
+        "model": model,
+        "run": params.get("run"),
+        "start_hour": start_hour,
+        "end_hour": end_hour,
+        "points": [
+            {"latitude": latitude, "longitude": longitude}
+            for latitude, longitude in zip(latitudes, longitudes)
+        ],
+        "variables": variables,
+    }
+    output_host.mkdir(parents=True, exist_ok=True)
+    tmp_root.chmod(0o777)
+    output_host.chmod(0o777)
+    request_host.write_text(json.dumps(request_payload, ensure_ascii=False), encoding="utf-8")
+    request_host.chmod(0o666)
+    docker_image = f"{image}:{tag}" if tag else image
+    try:
+        if direct_ssh_host:
+            if not direct_remote_root:
+                raise ValueError("--direct-remote-root is required with --direct-ssh-host")
+            remote_request = base64.b64encode(request_host.read_bytes()).decode("ascii")
+            remote_script = f"""set -euo pipefail
+tmp="$(mktemp -d)"
+cleanup() {{ rm -rf "$tmp"; }}
+trap cleanup EXIT
+base64 -d > "$tmp/request.json" <<'REQ'
+{remote_request}
+REQ
+mkdir -p "$tmp/out"
+chmod 777 "$tmp" "$tmp/out"
+chmod 666 "$tmp/request.json"
+cd {direct_remote_root}
+sudo docker run --rm \\
+  -e DATA_DIRECTORY=/app/data/ \\
+  -e DATA_RUN_DIRECTORY=/app/data/data_run/ \\
+  -v {direct_remote_root}/data/openmeteo:/app/data:ro \\
+  -v "$tmp:/work" \\
+  {docker_image} \\
+  export-point-forecast \\
+  --request /work/request.json \\
+  --output-dir /work/out >"$tmp/export-point-forecast.log" 2>&1 || {{
+    cat "$tmp/export-point-forecast.log" >&2
+    exit 1
+  }}
+tar -C "$tmp/out" -cz . | base64 -w0
+"""
+            remote_script = remote_script.replace("\r", "")
+            completed = subprocess.run(
+                ["ssh", direct_ssh_host, "bash -s"],
+                input=remote_script.encode("utf-8"),
+                capture_output=True,
+                timeout=timeout + 120.0,
+                check=False,
+            )
+            if completed.returncode != 0:
+                stdout_text = completed.stdout.decode("utf-8", errors="replace")
+                stderr_text = completed.stderr.decode("utf-8", errors="replace")
+                raise RuntimeError(
+                    "remote direct Open-Meteo export failed\n"
+                    f"host={direct_ssh_host}\n"
+                    f"stdout={stdout_text[:2000]}\n"
+                    f"stderr={stderr_text[:4000]}"
+                )
+            archive_path = tmp_root / "out.tar.gz"
+            archive_path.write_bytes(base64.b64decode(completed.stdout.strip()))
+            with tarfile.open(archive_path, "r:gz") as tar:
+                tar.extractall(output_host, filter="data")
+        else:
+            command = [
+                "docker",
+                "run",
+                "--rm",
+                "-e",
+                "DATA_DIRECTORY=/app/data/",
+                "-e",
+                "DATA_RUN_DIRECTORY=/app/data/data_run/",
+                "--volume",
+                f"{data_dir.resolve()}:/app/data:ro",
+                "--volume",
+                f"{tmp_root.resolve()}:/work",
+                docker_image,
+                "export-point-forecast",
+                "--request",
+                request_container,
+                "--output-dir",
+                output_container,
+            ]
+            completed = subprocess.run(command, text=True, capture_output=True, timeout=timeout + 60.0, check=False)
+            if completed.returncode != 0:
+                raise RuntimeError(
+                    "direct Open-Meteo export failed\n"
+                    f"command={' '.join(command)}\n"
+                    f"stdout={completed.stdout}\n"
+                    f"stderr={completed.stderr}"
+                )
+        metadata = json.loads((output_host / "metadata.json").read_text(encoding="utf-8"))
+        times = [
+            datetime.fromtimestamp(int(timestamp), timezone.utc).strftime("%Y-%m-%dT%H:%M")
+            for timestamp in metadata["times"]
+        ]
+        point_count = len(metadata["points"])
+        time_count = len(times)
+        expected_count = point_count * time_count
+        variable_values: dict[str, list[float | int | None]] = {}
+        for variable in variables:
+            path = output_host / f"{variable}.float32"
+            if not path.exists():
+                variable_values[variable] = [None] * expected_count
+                continue
+            decimals = (metadata.get("variable_metadata") or {}).get(variable, {}).get("significant_digits")
+            variable_values[variable] = [
+                swift_formatted_number(value, int(decimals) if decimals is not None else None)
+                for value in read_float32_values(path, expected_count)
+            ]
+        hourlies: list[dict[str, Any]] = []
+        for point_index in range(point_count):
+            start = point_index * time_count
+            end = start + time_count
+            hourly: dict[str, Any] = {"time": times}
+            for variable in variables:
+                hourly[variable] = variable_values[variable][start:end]
+            hourlies.append(hourly)
+        return hourlies
+    finally:
+        shutil.rmtree(tmp_root, ignore_errors=True)
+
+
+def fetch_local_hourlies(
+    *,
+    local_openmeteo_mode: str,
+    api_base_url: str,
+    scope: str,
+    params: dict[str, Any],
+    start_hour: str,
+    end_hour: str,
+    data_dir: Path,
+    work_dir: Path,
+    openmeteo_image: str,
+    openmeteo_tag: str,
+    direct_ssh_host: str | None,
+    direct_remote_root: str | None,
+    timeout: float,
+    retries: int,
+    retry_delay: float,
+) -> list[dict[str, Any]]:
+    if local_openmeteo_mode == "direct":
+        return fetch_direct_hourlies(
+            scope=scope,
+            params=params,
+            start_hour=start_hour,
+            end_hour=end_hour,
+            data_dir=data_dir,
+            work_dir=work_dir,
+            image=openmeteo_image,
+            tag=openmeteo_tag,
+            timeout=timeout,
+            direct_ssh_host=direct_ssh_host,
+            direct_remote_root=direct_remote_root,
+        )
+    if not api_base_url:
+        raise ValueError("--api-base-url is required when --local-openmeteo-mode=http")
+    return fetch_hourlies(
+        base_url=api_base_url,
+        scope=scope,
+        params=params,
+        host_header=None,
+        timeout=timeout,
+        retries=retries,
+        retry_delay=retry_delay,
+        request_pause=0.0,
+    )
+
+
 def trim_hourly_to_window(hourly: dict[str, Any], *, start_hour: str, frames: int) -> dict[str, Any]:
     times = list(hourly.get("time") or [])
     if start_hour not in times:
@@ -380,11 +629,17 @@ def actual_pressure_candidates(
     data_dir: Path,
     *,
     compare_levels_hpa: set[str] | None = None,
+    actual_names_by_domain: dict[str, set[str]] | None = None,
 ) -> list[str]:
-    gfs025_dir = data_dir / "ncep_gfs025"
-    if not gfs025_dir.is_dir():
+    if actual_names_by_domain is not None:
+        actual = actual_names_by_domain.get("ncep_gfs025", set())
+    else:
+        gfs025_dir = data_dir / "ncep_gfs025"
+        if not gfs025_dir.is_dir():
+            return []
+        actual = {path.name for path in gfs025_dir.iterdir() if path.is_dir()}
+    if not actual:
         return []
-    actual = {path.name for path in gfs025_dir.iterdir() if path.is_dir()}
     output: list[str] = []
     for name in inventory_variables:
         parsed = split_pressure_name(name)
@@ -432,17 +687,29 @@ INTERNAL_GFS_RAW_VARIABLES_NOT_EXPOSED_BY_FORECAST_API = {
 }
 
 
-def actual_surface_names(data_dir: Path) -> set[str]:
+def actual_surface_names(
+    data_dir: Path,
+    *,
+    actual_names_by_domain: dict[str, set[str]] | None = None,
+) -> set[str]:
     names: set[str] = set()
     for domain in ("ncep_gfs013", "ncep_gfs025"):
+        if actual_names_by_domain is not None:
+            names.update(actual_names_by_domain.get(domain, set()))
+            continue
         domain_dir = data_dir / domain
         if domain_dir.is_dir():
             names.update(path.name for path in domain_dir.iterdir() if path.is_dir())
     return names
 
 
-def actual_surface_candidates(inventory_variables: list[str], data_dir: Path) -> list[str]:
-    actual = actual_surface_names(data_dir)
+def actual_surface_candidates(
+    inventory_variables: list[str],
+    data_dir: Path,
+    *,
+    actual_names_by_domain: dict[str, set[str]] | None = None,
+) -> list[str]:
+    actual = actual_surface_names(data_dir, actual_names_by_domain=actual_names_by_domain)
 
     def has(name: str) -> bool:
         return name in actual
@@ -487,11 +754,19 @@ def actual_surface_candidates(inventory_variables: list[str], data_dir: Path) ->
     return output
 
 
-def actual_cams_candidates(inventory_variables: list[str], data_dir: Path) -> list[str]:
-    cams_dir = data_dir / "cams_global"
-    if not cams_dir.is_dir():
-        return []
-    actual = {path.name for path in cams_dir.iterdir() if path.is_dir()}
+def actual_cams_candidates(
+    inventory_variables: list[str],
+    data_dir: Path,
+    *,
+    actual_names_by_domain: dict[str, set[str]] | None = None,
+) -> list[str]:
+    if actual_names_by_domain is not None:
+        actual = actual_names_by_domain.get("cams_global", set())
+    else:
+        cams_dir = data_dir / "cams_global"
+        if not cams_dir.is_dir():
+            return []
+        actual = {path.name for path in cams_dir.iterdir() if path.is_dir()}
     return [name for name in inventory_variables if name in actual or name == "is_day"]
 
 
@@ -501,6 +776,7 @@ def candidate_variables(
     data_dir: Path,
     *,
     gfs_pressure_compare_levels_hpa: set[str] | None = None,
+    actual_names_by_domain: dict[str, set[str]] | None = None,
 ) -> list[str]:
     inventory = build_inventory(repo_root)
     if scope == "gfs":
@@ -512,17 +788,61 @@ def candidate_variables(
             list(inventory["gfs_runtime_data"]["pressure_variables"])
             + list(inventory["gfs_point_api"]["pressure_variables"])
         )
-        return actual_surface_candidates(surface_variables, data_dir) + actual_pressure_candidates(
+        return actual_surface_candidates(
+            surface_variables,
+            data_dir,
+            actual_names_by_domain=actual_names_by_domain,
+        ) + actual_pressure_candidates(
             pressure_variables,
             data_dir,
             compare_levels_hpa=gfs_pressure_compare_levels_hpa,
+            actual_names_by_domain=actual_names_by_domain,
         )
     if scope == "cams":
         return actual_cams_candidates(
             list(inventory["air_quality"]["raw_variables"]) + list(inventory["air_quality"]["derived_variables"]),
             data_dir,
+            actual_names_by_domain=actual_names_by_domain,
         )
     raise ValueError(f"unknown scope: {scope}")
+
+
+def remote_actual_names_by_domain(
+    *,
+    direct_ssh_host: str,
+    direct_remote_root: str,
+    timeout: float,
+) -> dict[str, set[str]]:
+    remote_script = f"""set -euo pipefail
+cd {shlex.quote(direct_remote_root)}
+find data/openmeteo -mindepth 2 -maxdepth 2 -type d -printf '%P\\n'
+"""
+    remote_script = remote_script.replace("\r", "")
+    completed = subprocess.run(
+        ["ssh", direct_ssh_host, "bash -s"],
+        input=remote_script.encode("utf-8"),
+        capture_output=True,
+        timeout=timeout,
+        check=False,
+    )
+    stdout_text = completed.stdout.decode("utf-8", errors="replace")
+    stderr_text = completed.stderr.decode("utf-8", errors="replace")
+    if completed.returncode != 0:
+        raise RuntimeError(
+            "remote Open-Meteo data inventory failed\n"
+            f"host={direct_ssh_host}\n"
+            f"stdout={stdout_text[:2000]}\n"
+            f"stderr={stderr_text[:4000]}"
+        )
+    names_by_domain: dict[str, set[str]] = {}
+    for line in stdout_text.splitlines():
+        if "/" not in line:
+            continue
+        domain, name = line.split("/", 1)
+        if not domain or not name or "/" in name:
+            continue
+        names_by_domain.setdefault(domain, set()).add(name)
+    return names_by_domain
 
 
 def has_information(hourlies: list[dict[str, Any]], variable: str, frames: int) -> bool:
@@ -659,6 +979,13 @@ def validate_scope_batch(
     points: list[dict[str, float]],
     variables: list[str],
     api_base_url: str,
+    local_openmeteo_mode: str,
+    data_dir: Path,
+    output_dir: Path,
+    openmeteo_image: str,
+    openmeteo_tag: str,
+    direct_ssh_host: str | None,
+    direct_remote_root: str | None,
     reference_base_url: str,
     reference_ssh_host: str | None,
     gfs_run: str,
@@ -680,26 +1007,69 @@ def validate_scope_batch(
     diagnostic_values = 0
     official_requests = 0
     started = time.time()
-    for variable_chunk in chunked(variables, chunk_size):
-        local_hourlies = fetch_hourlies(
-            base_url=api_base_url,
+    direct_local_hourlies: list[dict[str, Any]] | None = None
+    if local_openmeteo_mode == "direct":
+        direct_local_hourlies = fetch_local_hourlies(
+            local_openmeteo_mode=local_openmeteo_mode,
+            api_base_url=api_base_url,
             scope=scope,
             params=local_params(
                 scope,
                 points,
-                variable_chunk,
+                variables,
                 start_hour,
                 end_hour,
-                gfs_run=None,
+                gfs_run=gfs_run if scope == "gfs" else None,
                 gfs_model=gfs_model,
             ),
-            host_header=None,
+            start_hour=start_hour,
+            end_hour=end_hour,
+            data_dir=data_dir,
+            work_dir=output_dir,
+            openmeteo_image=openmeteo_image,
+            openmeteo_tag=openmeteo_tag,
+            direct_ssh_host=direct_ssh_host,
+            direct_remote_root=direct_remote_root,
             timeout=timeout,
             retries=retries,
             retry_delay=retry_delay,
-            request_pause=0.0,
         )
-        local_hourlies = trim_hourlies_to_scope_window(scope, local_hourlies, start_hour=start_hour, frames=frames)
+        direct_local_hourlies = trim_hourlies_to_scope_window(
+            scope,
+            direct_local_hourlies,
+            start_hour=start_hour,
+            frames=frames,
+        )
+    for variable_chunk in chunked(variables, chunk_size):
+        if direct_local_hourlies is not None:
+            local_hourlies = direct_local_hourlies
+        else:
+            local_hourlies = fetch_local_hourlies(
+                local_openmeteo_mode=local_openmeteo_mode,
+                api_base_url=api_base_url,
+                scope=scope,
+                params=local_params(
+                    scope,
+                    points,
+                    variable_chunk,
+                    start_hour,
+                    end_hour,
+                    gfs_run=None,
+                    gfs_model=gfs_model,
+                ),
+                start_hour=start_hour,
+                end_hour=end_hour,
+                data_dir=data_dir,
+                work_dir=output_dir,
+                openmeteo_image=openmeteo_image,
+                openmeteo_tag=openmeteo_tag,
+                direct_ssh_host=direct_ssh_host,
+                direct_remote_root=direct_remote_root,
+                timeout=timeout,
+                retries=retries,
+                retry_delay=retry_delay,
+            )
+            local_hourlies = trim_hourlies_to_scope_window(scope, local_hourlies, start_hour=start_hour, frames=frames)
         reference_hourlies = fetch_hourlies(
             base_url=reference_base_url,
             scope=scope,
@@ -834,7 +1204,12 @@ def write_json(path: Path, payload: dict[str, Any]) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Validate local .om outputs against official Open-Meteo APIs.")
-    parser.add_argument("--api-base-url", required=True)
+    parser.add_argument("--api-base-url", default="")
+    parser.add_argument("--local-openmeteo-mode", default="http", choices=("http", "direct"))
+    parser.add_argument("--openmeteo-image", default="weather-forecast-openmeteo")
+    parser.add_argument("--openmeteo-tag", default="latest")
+    parser.add_argument("--direct-ssh-host", default=None)
+    parser.add_argument("--direct-remote-root", default="/opt/1panel/apps/weather_forecast_server")
     parser.add_argument("--gfs-reference-base-url", default="https://single-runs-api.open-meteo.com")
     parser.add_argument("--cams-reference-base-url", default="https://air-quality-api.open-meteo.com")
     parser.add_argument("--reference-ssh-host")
@@ -927,13 +1302,28 @@ def main() -> int:
     cams_end = format_utc_hour(parse_utc_hour(cams_start) + timedelta(hours=args.frames - 1))
 
     availability_points = points[: args.points_per_batch]
+    actual_names_by_domain = (
+        remote_actual_names_by_domain(
+            direct_ssh_host=args.direct_ssh_host,
+            direct_remote_root=args.direct_remote_root,
+            timeout=args.timeout,
+        )
+        if args.direct_ssh_host
+        else None
+    )
     gfs_variables = candidate_variables(
         repo_root,
         "gfs",
         data_dir,
         gfs_pressure_compare_levels_hpa=gfs_pressure_compare_levels,
+        actual_names_by_domain=actual_names_by_domain,
     )
-    cams_variables = candidate_variables(repo_root, "cams", data_dir)
+    cams_variables = candidate_variables(
+        repo_root,
+        "cams",
+        data_dir,
+        actual_names_by_domain=actual_names_by_domain,
+    )
     inventory_report = {
         "gfs_variables": gfs_variables,
         "cams_variables": cams_variables,
@@ -951,6 +1341,11 @@ def main() -> int:
         },
         "frames": {"gfs": gfs_frames, "cams": args.frames},
         "gfs_pressure_compare_levels_hpa": sorted(int(level[:-3]) for level in gfs_pressure_compare_levels),
+        "actual_names_by_domain_counts": (
+            {domain: len(names) for domain, names in sorted(actual_names_by_domain.items())}
+            if actual_names_by_domain is not None
+            else None
+        ),
     }
     write_json(output_dir / "available-variables.json", inventory_report)
     print(json.dumps({"stage": "available_variables", "gfs": len(gfs_variables), "cams": len(cams_variables)}), flush=True)
@@ -977,6 +1372,13 @@ def main() -> int:
                 points=batch_points,
                 variables=variables,
                 api_base_url=args.api_base_url,
+                local_openmeteo_mode=args.local_openmeteo_mode,
+                data_dir=data_dir,
+                output_dir=output_dir,
+                openmeteo_image=args.openmeteo_image,
+                openmeteo_tag=args.openmeteo_tag,
+                direct_ssh_host=args.direct_ssh_host,
+                direct_remote_root=args.direct_remote_root,
                 reference_base_url=reference_base_url,
                 reference_ssh_host=args.reference_ssh_host,
                 gfs_run=format_utc_hour(parse_utc_hour(args.gfs_run)),

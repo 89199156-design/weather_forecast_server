@@ -213,6 +213,7 @@ public func configure(_ app: Application) throws {
     app.asyncCommands.use(SyncCommand(), as: "sync")
     app.asyncCommands.use(ExportCommand(), as: "export")
     app.asyncCommands.use(LayerGridExportCommand(), as: "export-layer-grid")
+    app.asyncCommands.use(PointForecastExportCommand(), as: "export-point-forecast")
     app.asyncCommands.use(MergeYearlyCommand(), as: "merge-yearly")
     app.asyncCommands.use(ConvertOmCommand(), as: "convert-om")
     app.asyncCommands.use(ValidateOmFilesCommand(), as: "validate-om-files")
