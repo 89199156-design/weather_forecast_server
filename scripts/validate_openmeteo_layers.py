@@ -59,7 +59,12 @@ def values_match(expected: float | None, actual: float | None, *, scale: float) 
         return True
     if expected is None or actual is None:
         return False
-    tolerance = 0.5 / float(scale) + 1e-6
+    float32_spacing = max(
+        abs(float(np.spacing(np.float32(expected)))),
+        abs(float(np.spacing(np.float32(actual)))),
+        1e-6,
+    )
+    tolerance = 0.5 / float(scale) + float32_spacing
     return math.isclose(float(expected), float(actual), abs_tol=tolerance)
 
 
