@@ -164,7 +164,7 @@ def test_export_validation_supports_lightweight_manifest_without_http(tmp_path):
                 "scope": "gfs",
                 "model": "gfs_global",
                 "run": None,
-                "points": [{"latitude": 10.0, "longitude": 100.0}],
+                "points": [{"latitude": 10.00003, "longitude": 100.00003}],
                 "times": [1000],
                 "variables": ["temperature_2m"],
             }

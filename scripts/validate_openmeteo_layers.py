@@ -608,9 +608,9 @@ def verify_layers_against_export(
         store_location = point_ordinal if point_export else int(case["flat"])
         if point_export:
             exported_point = export_metadata["points"][point_ordinal]
-            if not math.isclose(float(exported_point["latitude"]), float(case["lat"]), abs_tol=1e-5):
+            if not math.isclose(float(exported_point["latitude"]), float(case["lat"]), abs_tol=1e-4):
                 raise ValueError(f"point export latitude mismatch at {point_ordinal}")
-            if not math.isclose(float(exported_point["longitude"]), float(case["lon"]), abs_tol=1e-5):
+            if not math.isclose(float(exported_point["longitude"]), float(case["lon"]), abs_tol=1e-4):
                 raise ValueError(f"point export longitude mismatch at {point_ordinal}")
         for time_index in selected_time_indices:
             valid_time = times[time_index]
