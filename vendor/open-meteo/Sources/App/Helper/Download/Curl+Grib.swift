@@ -13,7 +13,7 @@ extension Curl {
         let supportMultiRange = !url.contains("amazonaws.com")
         if !supportMultiRange, let parts = range?.split(separator: ","), parts.count > 1 {
             let messages = try await parts.map(String.init).mapConcurrent(nConcurrent: max(1, nConcurrent)) { part in
-                try await self.downloadGrib(url: url, bzip2Decode: bzip2Decode, range: part, deadLineHours: deadLineHours, headers: headers)
+                try await downloadGrib(url: url, bzip2Decode: bzip2Decode, range: part, deadLineHours: deadLineHours, headers: headers)
             }
             return messages.flatMap { $0 }
         }
