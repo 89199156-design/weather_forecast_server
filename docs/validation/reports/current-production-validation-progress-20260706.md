@@ -58,13 +58,16 @@ Completed:
 - Offset `450`: 1 batch, 50 points, 517,500 values, 0 mismatch
   - Report root: `docs\validation\reports\gfs-2026070606-pressure16-offset450-550x50-reflocalvpn-20260707T005232`
   - Stopped before batch 2 because the local VPN official-reference exit returned `429 Too Many Requests`.
+- Offset `500`: 3 batches, 150 points, 1,552,500 values, 0 mismatch
+  - Report root: `docs\validation\reports\gfs-2026070606-pressure16-offset500-500x50-refsingapore-20260707T010058`
+  - Stopped before batch 4 because Singapore official-reference exit returned `429 Minutely API request limit exceeded`.
 
 Total current 06Z evidence:
 
-- 10 batches
-- 500 distinct points
+- 13 batches
+- 650 distinct points
 - 50 frames per point
-- 5,175,000 checked values
+- 6,727,500 checked values
 - 0 mismatch
 
 Stop reason:
@@ -72,18 +75,19 @@ Stop reason:
 - Official API returned `429 Daily API request limit exceeded` through both Seoul and Shanghai reference exits.
 - Singapore reference exit then completed 3 additional 50-point batches and stopped on `429 Hourly API request limit exceeded`.
 - Local VPN reference exit then completed 1 additional 50-point batch and stopped on `429 Too Many Requests`.
+- Singapore reference exit then completed 3 additional 50-point batches and stopped on `429 Minutely API request limit exceeded`.
 - This is an external official API limit, not a local parity mismatch.
 
 Next resume point:
 
-- Continue at `--point-offset 500`
-- Remaining target: 500 points, 10 batches
+- Continue at `--point-offset 650`
+- Remaining target: 350 points, 7 batches
 
 Resume command template:
 
 ```powershell
 $ts=(Get-Date -Format 'yyyyMMddTHHmmss')
-$out="docs\validation\reports\gfs-2026070606-pressure16-offset500-500x50-ref<exit>-$ts"
+$out="docs\validation\reports\gfs-2026070606-pressure16-offset650-350x50-ref<exit>-$ts"
 python scripts\validate_openmeteo_official_50point_batches.py `
   --local-openmeteo-mode direct `
   --direct-ssh-host singapore `
@@ -96,9 +100,9 @@ python scripts\validate_openmeteo_official_50point_batches.py `
   --gfs-start-hour 2026-07-06T06 `
   --cams-start-hour 2026-07-06T00 `
   --frames 50 `
-  --batches 10 `
+  --batches 7 `
   --points-per-batch 50 `
-  --point-offset 500 `
+  --point-offset 650 `
   --chunk-size 20 `
   --timeout 120 `
   --request-retries 1 `
