@@ -873,6 +873,8 @@ def test_point_export_command_supports_cams_derived_variables_without_weather_pa
         "} else {",
         1,
     )[0]
+    assert "domains = [try MultiDomains.load(rawValue: request.model)]" in command
+    assert "CamsQuery.Domain.load" not in command
     assert "domain.getReader(" in cams_export
     assert "readMixed(readers: rawReaders" in cams_export
     assert "location.hourly(variables: hourlyVariables)" not in cams_export

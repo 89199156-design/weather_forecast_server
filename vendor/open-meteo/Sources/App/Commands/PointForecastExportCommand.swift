@@ -189,8 +189,7 @@ struct PointForecastExportCommand: AsyncCommand {
 
         let domains: [MultiDomains]
         if request.scope == "cams" {
-            let camsDomains = try params.domains.map { [$0] } ?? CamsQuery.Domain.load(commaSeparatedOptional: params.models) ?? [.auto]
-            domains = camsDomains.map(\.multiDomain)
+            domains = [try MultiDomains.load(rawValue: request.model)]
         } else if request.scope == "gfs" {
             domains = try MultiDomains.load(commaSeparatedOptional: params.models)?.map { $0 == .best_match ? .best_match : $0 } ?? [.best_match]
         } else {
