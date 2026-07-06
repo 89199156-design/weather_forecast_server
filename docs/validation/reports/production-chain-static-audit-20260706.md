@@ -57,9 +57,10 @@ Observed behavior:
   With the production default `max_forecast_hour=120`, this checks forecast
   hours `0...120` for every configured CAMS variable before production starts.
 - The full-hour probe is rate-safe: URLs are submitted in batches of at most
-  `workers` requests and the probe stops scheduling additional URLs as soon as
-  any batch reports a missing or rate-limited file. This prevents an incomplete
-  remote run from causing a burst across all 121 hours.
+  `workers` requests, `workers` defaults to `1`, and the probe stops scheduling
+  additional URLs as soon as any batch reports a missing or rate-limited file.
+  This prevents an incomplete remote run from causing a burst across all 121
+  hours.
 
 Conclusion: CAMS FTP/ECPDS production download writes hourly frames, including multi-level variables. The scheduled probe now requires every configured hourly file to be present before starting production.
 

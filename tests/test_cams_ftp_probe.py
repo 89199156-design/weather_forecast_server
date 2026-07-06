@@ -41,6 +41,12 @@ def test_cams_probe_forecast_hours_are_sorted_unique_and_bounded():
     assert probe.probe_forecast_hours(None, max_forecast_hour=24) == list(range(25))
 
 
+def test_cams_probe_default_workers_are_serial_to_avoid_ecmwf_rate_limit():
+    probe = load_module()
+
+    assert probe.DEFAULT_CAMS_FTP_PROBE_WORKERS == 1
+
+
 def test_cams_probe_stops_scheduling_urls_after_first_failure(monkeypatch):
     probe = load_module()
     run = datetime(2026, 7, 3, 0, tzinfo=timezone.utc)

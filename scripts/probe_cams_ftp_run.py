@@ -15,6 +15,7 @@ from urllib.request import Request, urlopen
 
 
 UTC = timezone.utc
+DEFAULT_CAMS_FTP_PROBE_WORKERS = 1
 
 CAMS_GLOBAL_META: dict[str, tuple[str, bool]] = {
     "pm2_5": ("pm2p5", False),
@@ -157,7 +158,7 @@ def main() -> int:
     parser.add_argument("--probe-forecast-hours", default=os.environ.get("WEATHER_CAMS_PROBE_FORECAST_HOURS"))
     parser.add_argument("--lookback-hours", type=int, default=72)
     parser.add_argument("--timeout-seconds", type=float, default=8.0)
-    parser.add_argument("--workers", type=int, default=8)
+    parser.add_argument("--workers", type=int, default=DEFAULT_CAMS_FTP_PROBE_WORKERS)
     parser.add_argument("--user", default=os.environ.get("WEATHER_CAMS_FTP_USER", ""))
     parser.add_argument("--password", default=os.environ.get("WEATHER_CAMS_FTP_PASSWORD", ""))
     args = parser.parse_args()
