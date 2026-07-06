@@ -73,6 +73,8 @@ Current intentional differences from upstream `4efb9c49`:
   FTP/ECPDS NetCDF fields are cropped to the configured China/surrounding-region
   grid slice before Open-Meteo writes `.om` files. Multi-level CAMS files are
   requested hourly rather than filtered to 3-hour steps.
+- `CamsRegionalDownload.swift`: shared regional NetCDF crop/write helper used
+  by the CAMS FTP/ECPDS and isolated ADS/CDS download commands.
 - `CamsDownloadAds.swift`: the project-authorized ADS/CDS area request is kept
   as a separate backup command. It is not selected by the FTP/ECPDS production
   path and has no shared source-switch branch.
@@ -86,8 +88,13 @@ Current intentional differences from upstream `4efb9c49`:
 - `LayerGridExportCommand.swift`: exports grid values by calling the same
   Open-Meteo reader/mixing path used after API request parsing, avoiding the
   removed internal HTTP hop.
+- `PointForecastExportCommand.swift`: exports point forecast JSON through the
+  same Open-Meteo reader/mixing path for validation without running a local
+  HTTP API.
 - GFS domain/download files also contain the configured China/surrounding-region
   source and production area adaptations.
+- Repository-local OpenAPI files and upstream test files may differ from the
+  selected upstream tree; they are not part of the runtime forecast engine.
 
 Any other vendored difference requires a root-cause note and validation record
 before it can be treated as intentional.
