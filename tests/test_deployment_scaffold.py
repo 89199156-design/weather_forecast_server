@@ -862,7 +862,7 @@ def test_point_export_command_supports_cams_derived_variables_without_weather_pa
         ROOT / "vendor" / "open-meteo" / "Sources" / "App" / "Commands" / "PointForecastExportCommand.swift"
     ).read_text(encoding="utf-8")
     variable_parser = command.split("let hourlyVariables: [ForecastVariable]", 1)[1].split("let outputURL", 1)[0]
-    cams_export = command.split('if request.scope == "cams" {\n                guard let camsDomain', 1)[1].split(
+    cams_export = command.split('if request.scope == "cams" {\n                let rawReaders', 1)[1].split(
         "let timeLocal",
         1,
     )[0]
@@ -873,11 +873,10 @@ def test_point_export_command_supports_cams_derived_variables_without_weather_pa
         "} else {",
         1,
     )[0]
-    assert "camsDomain = CamsDomain(rawValue: request.model)" in command
-    assert "GenericReader<CamsDomain, CamsVariable>" in cams_export
-    assert "CamsReader(reader: GenericReaderCached(reader: rawReader))" in cams_export
+    assert "domains = [try MultiDomains.load(rawValue: request.model)]" in command
     assert "CamsQuery.Domain.load" not in command
-    assert "domain.getReader(" not in cams_export
+    assert "GenericReader<CamsDomain, CamsVariable>" not in cams_export
+    assert "domain.getReader(" in cams_export
     assert "readMixed(readers: rawReaders" in cams_export
     assert "location.hourly(variables: hourlyVariables)" not in cams_export
     assert "reader.get(mixed: variable" in command
