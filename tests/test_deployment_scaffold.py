@@ -1,5 +1,6 @@
 from pathlib import Path
 import importlib.util
+import os
 import subprocess
 import sys
 
@@ -1046,6 +1047,60 @@ def test_gfs_probe_cycle_uses_official_indices_before_gfs_only_production():
     assert "download-cams" not in download
     assert "date -u" in cycle
     assert "CST" not in cycle
+
+
+def test_gfs_probe_cycle_starts_latest_ready_run_after_newer_not_ready(tmp_path):
+    app_dir = tmp_path / "app"
+    scripts_dir = app_dir / "scripts"
+    scripts_dir.mkdir(parents=True)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+
+    (scripts_dir / "probe_gfs_official_run.py").write_text(
+        "\n".join(
+            [
+                "print('NOT_READY 2026070606 http_404 remote.idx')",
+                "print('READY 2026070600 2026-07-06T00:00:00Z')",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (scripts_dir / "run_gfs_production_cycle.sh").write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "printf '%s\\n' \"$1\" > \"$WEATHER_TEST_PRODUCTION_RUN_FILE\"\n",
+        encoding="utf-8",
+    )
+    (bin_dir / "flock").write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    (bin_dir / "python3").write_text("#!/usr/bin/env bash\npython \"$@\"\n", encoding="utf-8")
+
+    run_file = tmp_path / "production-run.txt"
+    env = os.environ.copy()
+    env.update(
+        {
+            "WEATHER_FORECAST_APP_DIR": str(app_dir),
+            "WEATHER_OPENMETEO_BUILD_LOG_DIR": str(log_dir),
+            "WEATHER_OPENMETEO_GFS_PROBE_LOCK_FILE": str(tmp_path / "probe.lock"),
+            "WEATHER_OPENMETEO_GFS_LOCK_FILE": str(tmp_path / "cycle.lock"),
+            "WEATHER_TEST_PRODUCTION_RUN_FILE": str(run_file),
+            "PATH": f"{bin_dir}{os.pathsep}{env.get('PATH', '')}",
+        }
+    )
+
+    completed = subprocess.run(
+        ["bash", str(ROOT / "scripts" / "run_gfs_probe_and_cycle.sh")],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert run_file.read_text(encoding="utf-8").strip() == "2026070600"
 
 
 def test_openmeteo_cron_installer_runs_gfs_and_cams_ftp_every_20_minutes_and_ads_twice_daily():

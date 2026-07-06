@@ -34,14 +34,14 @@ mkdir -p "$LOG_DIR"
     exit 0
   fi
 
-  set -- $probe_output
-  if [[ "${1:-}" != "READY" || -z "${2:-}" ]]; then
+  ready_line="$(printf '%s\n' "$probe_output" | awk '$1 == "READY" && $2 != "" { print; exit }')"
+  if [[ -z "$ready_line" ]]; then
     echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_GFS_PROBE] $probe_output"
     exit 0
   fi
 
+  set -- $ready_line
   run="$2"
   echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_GFS_PROBE] complete official run=$run"
   WEATHER_GFS_RUN="$run" bash scripts/run_gfs_production_cycle.sh "$run"
 } 9>"$LOCK_FILE" >> "$LOG_DIR/openmeteo_gfs_probe.log" 2>&1
-
