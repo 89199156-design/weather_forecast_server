@@ -1189,22 +1189,11 @@ def test_cams_ftp_scheduled_cycle_probes_remote_batches_like_gfs():
     assert "CST" not in scheduled
 
 
-def test_cams_ads_scheduled_cycle_keeps_fixed_utc_target_logic():
-    scheduled = (ROOT / "scripts" / "run_cams_ads_scheduled_cycle.sh").read_text(encoding="utf-8")
+def test_cams_ads_backup_has_no_scheduled_entrypoint():
     production = (ROOT / "scripts" / "run_cams_ads_production_cycle.sh").read_text(encoding="utf-8")
     download = (ROOT / "scripts" / "download_openmeteo_cams_ads_data.sh").read_text(encoding="utf-8")
 
-    assert "datetime.now(timezone.utc)" in scheduled
-    assert "now.hour >= 22" in scheduled
-    assert "now.hour >= 10" in scheduled
-    assert "scripts/probe_cams_ftp_run.py" not in scheduled
-    assert "scripts/run_cams_ads_production_cycle.sh" in scheduled
-    assert "scripts/run_cams_ftp_production_cycle.sh" not in scheduled
-    assert "CAMS ADS/CDS production cycle already running, skip." in scheduled
-    assert "GLOBAL_LOCK_FILE" in scheduled
-    assert "another Open-Meteo production cycle is running, skip." in scheduled
-    assert "greenhouse_run=" in scheduled
-    assert "cams_global_greenhouse_gases --min-frames 41" in scheduled
+    assert not (ROOT / "scripts" / "run_cams_ads_scheduled_cycle.sh").exists()
     assert "scripts/download_openmeteo_cams_ads_data.sh" in production
     assert "scripts/download_openmeteo_cams_data.sh" not in production
     assert "CAMS_GREENHOUSE_RUN=" in production
