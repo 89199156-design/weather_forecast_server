@@ -1,5 +1,6 @@
 from pathlib import Path
 import hashlib
+import re
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -230,3 +231,30 @@ def test_china_aqi_hourly_uses_current_hour_concentrations_without_rolling_windo
     assert "24 * 3600" not in china_cases
     assert "8 * 3600" not in china_cases
     assert "o3_8h_mean" not in china_cases
+
+
+def test_china_aqi_formula_uses_hj633_2026_hourly_breakpoints():
+    air_quality = read_vendor("Sources/App/Helper/AirQuality.swift")
+    reader = read_vendor("Sources/App/Cams/CamsReader.swift")
+    china = air_quality.split("enum ChinaAirQuality {", 1)[1].split("extension Array where Element == Float", 1)[0]
+
+    def array(name: str) -> list[int]:
+        match = re.search(rf"static let {name}: \[Float\] = \[([^\]]+)\]", china)
+        assert match, f"missing {name}"
+        return [int(value.strip()) for value in match.group(1).split(",")]
+
+    assert array("iaqiBreakpoints") == [0, 50, 100, 150, 200, 300, 400, 500]
+    assert array("pm2_5HourlyThresholds") == [0, 35, 60, 115, 150, 250, 350, 500]
+    assert array("pm10HourlyThresholds") == [0, 50, 120, 250, 350, 420, 500, 600]
+    assert array("no2HourlyThresholds") == [0, 100, 200, 700, 1200, 2340, 3090, 3840]
+    assert array("o3HourlyThresholds") == [0, 160, 200, 300, 400, 800, 1000, 1200]
+    assert array("so2HourlyThresholds") == [0, 150, 500, 650, 800]
+    assert array("coHourlyThresholds") == [0, 5, 10, 35, 60, 90, 120, 150]
+
+    assert "return Swift.min(value.rounded(.up), maxIndex)" in china
+    assert (
+        "index(concentration: so2, thresholds: so2HourlyThresholds, indices: [0, 50, 100, 150, 200], cap: 200)"
+        in china
+    )
+    assert "ChinaAirQuality.indexCo(co: $0 / 1000)" in reader
+    assert "return ChinaAirQuality.maxIgnoringNaN(particles, gases)" in reader

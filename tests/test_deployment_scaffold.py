@@ -846,7 +846,7 @@ def test_point_export_command_exposes_openmeteo_reader_without_http():
     assert "params.prepareCoordinates" in command
     assert "domain.getReaders(" in command
     assert "location.hourly(variables: hourlyVariables)" in command
-    assert "readMixed(readers:" not in command
+    assert "readMixed(readers:" in command
     assert "/v1/forecast" not in command
     assert "/v1/air-quality" not in command
     assert "app.http" not in command
@@ -855,6 +855,27 @@ def test_point_export_command_exposes_openmeteo_reader_without_http():
     assert "choices=(\"http\", \"direct\")" in validator
     assert "fetch_direct_hourlies" in validator
     assert "export-point-forecast" in validator
+
+
+def test_point_export_command_supports_cams_derived_variables_without_weather_parser():
+    command = (
+        ROOT / "vendor" / "open-meteo" / "Sources" / "App" / "Commands" / "PointForecastExportCommand.swift"
+    ).read_text(encoding="utf-8")
+    variable_parser = command.split("let hourlyVariables: [ForecastVariable]", 1)[1].split("let outputURL", 1)[0]
+    cams_export = command.split('if request.scope == "cams" {\n                let hourlyReaders', 1)[1].split(
+        "let timeLocal",
+        1,
+    )[0]
+
+    assert "CamsReader.MixingVar.load" in variable_parser
+    assert "hourlyVariables = try ForecastVariable.load" in variable_parser
+    assert "ForecastVariable.load" not in variable_parser.split('if request.scope == "cams" {', 1)[1].split(
+        "} else {",
+        1,
+    )[0]
+    assert "readMixed(readers: hourlyReaders" in cams_export
+    assert "location.hourly(variables: hourlyVariables)" not in cams_export
+    assert "reader.get(mixed: variable" in command
 
 
 def test_gfs_weather_code_keeps_upstream_thunderstorm_logic():

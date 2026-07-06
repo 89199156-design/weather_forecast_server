@@ -149,9 +149,17 @@ struct PointForecastExportCommand: AsyncCommand {
             endHour: request.run == nil ? [request.endHour] : []
         )
         let params = try JSONDecoder().decode(ApiQueryParameter.self, from: JSONEncoder().encode(apiQuery))
-        let hourlyVariables = try ForecastVariable.load(commaSeparatedOptional: params.hourly) ?? []
-        guard !hourlyVariables.isEmpty else {
-            throw ForecastApiError.generic(message: "hourly variables must not be empty")
+        let hourlyVariables: [ForecastVariable]
+        if request.scope == "cams" {
+            guard try CamsReader.MixingVar.load(commaSeparatedOptional: params.hourly)?.isEmpty == false else {
+                throw ForecastApiError.generic(message: "hourly variables must not be empty")
+            }
+            hourlyVariables = []
+        } else {
+            hourlyVariables = try ForecastVariable.load(commaSeparatedOptional: params.hourly) ?? []
+            guard !hourlyVariables.isEmpty else {
+                throw ForecastApiError.generic(message: "hourly variables must not be empty")
+            }
         }
 
         let outputURL = URL(fileURLWithPath: outputDirectory, isDirectory: true)
@@ -249,6 +257,40 @@ struct PointForecastExportCommand: AsyncCommand {
             guard !readers.isEmpty else {
                 throw ForecastApiError.noDataAvailableForThisLocation
             }
+            if request.scope == "cams" {
+                let hourlyReaders = readers.compactMap(\.readerHourly)
+                guard !hourlyReaders.isEmpty else {
+                    throw ForecastApiError.noDataAvailableForThisLocation
+                }
+                let hourlyDt = (params.temporal_resolution ?? temporalResolutionDefault).dtSeconds ?? hourlyReaders[0].modelDtSeconds
+                let timeHourlyRead = time.hourlyRead.with(dtSeconds: hourlyDt)
+                let timeHourlyDisplay = time.hourlyDisplay.with(dtSeconds: hourlyDt)
+                let timeRead = timeHourlyRead.toSettings(run: params.run)
+                let timeCount = timeHourlyRead.count
+                if timestamps == nil {
+                    timestamps = timeHourlyDisplay.map { $0.timeIntervalSince1970 }
+                }
+
+                for variable in request.variables {
+                    guard let handle = handles[variable] else {
+                        continue
+                    }
+                    guard let output = try await readMixed(readers: hourlyReaders, variable: variable, time: timeRead)?.convertAndRound(params: params) else {
+                        let values = Array(repeating: Float.nan, count: timeCount)
+                        try handle.write(contentsOf: values.withUnsafeBufferPointer { Data(buffer: $0) })
+                        continue
+                    }
+                    if variableMetadata[variable] == nil {
+                        variableMetadata[variable] = PointForecastExportVariableMetadata(
+                            unit: "\(output.unit)",
+                            significantDigits: output.unit.significantDigits
+                        )
+                    }
+                    try handle.write(contentsOf: output.data.withUnsafeBufferPointer { Data(buffer: $0) })
+                }
+                continue
+            }
+
             let timeLocal = TimerangeLocal(range: time.dailyRead.range, utcOffsetSeconds: timezone.utcOffsetSeconds)
             let location = ForecastapiResult<MultiDomainsReader>.PerLocation(
                 timezone: timezone,
@@ -312,5 +354,34 @@ struct PointForecastExportCommand: AsyncCommand {
         )
         let metadataData = try JSONEncoder().encode(metadata)
         try metadataData.write(to: outputURL.appendingPathComponent("metadata.json"), options: .atomic)
+    }
+
+    private func readMixed(
+        readers: [any GenericReaderProtocol],
+        variable: String,
+        time: TimerangeDtAndSettings
+    ) async throws -> DataAndUnit? {
+        var data: [Float]?
+        var unit: SiUnit?
+        for reader in readers.reversed() {
+            guard let output = try await reader.get(mixed: variable, time: time) else {
+                continue
+            }
+            if data == nil {
+                data = output.data
+                unit = output.unit
+            } else if let unit, [.wmoCode, .dimensionless].contains(unit) {
+                data?.integrateIfNaN(output.data)
+            } else {
+                data?.integrateIfNaNSmooth(output.data)
+            }
+            if data?.containsNaN() == false {
+                break
+            }
+        }
+        guard let data, let unit else {
+            return nil
+        }
+        return DataAndUnit(data, unit)
     }
 }
