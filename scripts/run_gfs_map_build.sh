@@ -19,7 +19,7 @@ mkdir -p "$LOG_DIR"
   fi
 
   export WEATHER_OPENMETEO_PUBLIC_DATA_DIR="${WEATHER_OPENMETEO_PUBLIC_DATA_DIR:-/opt/1panel/apps/weather/data}"
-  export WEATHER_OPENMETEO_LAYER_ROOT_DIR="${WEATHER_OPENMETEO_LAYER_ROOT_DIR:-$APP_DIR/data/openmeteo_layers}"
+  export WEATHER_OPENMETEO_LAYER_ROOT_DIR="${WEATHER_OPENMETEO_LAYER_ROOT_DIR:-$APP_DIR/data/webp}"
 
   bash scripts/build_openmeteo_gfs_layers.sh
 } 9>"$LOCK_FILE" >> "$LOG_DIR/openmeteo_products_build.log" 2>&1

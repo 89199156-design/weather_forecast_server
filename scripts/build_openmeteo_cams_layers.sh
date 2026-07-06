@@ -35,7 +35,7 @@ openmeteo_set_runtime_defaults
 require_dem_source
 write_sanitized_env_file
 
-LAYER_ROOT_DIR="${WEATHER_OPENMETEO_LAYER_ROOT_DIR:-$APP_DIR/data/openmeteo_layers}"
+LAYER_ROOT_DIR="${WEATHER_OPENMETEO_LAYER_ROOT_DIR:-$APP_DIR/data/webp}"
 CAMS_OUTPUT_DIR="${WEATHER_OPENMETEO_CAMS_LAYER_DIR:-$LAYER_ROOT_DIR/cams_global}"
 PUBLIC_DATA_DIR="${WEATHER_OPENMETEO_PUBLIC_DATA_DIR:-$APP_DIR/data/public}"
 LAYER_START_HOUR="${WEATHER_OPENMETEO_LAYER_START_HOUR:-$(date -u '+%Y-%m-%dT%H:00')}"
@@ -64,7 +64,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-python3 scripts/build_openmeteo_layers.py \
+python3 scripts/build_webp.py \
   --scope cams \
   --prepare-export-request "$REQUEST_HOST" \
   --domain "$CAMS_DOMAIN" \
@@ -76,7 +76,7 @@ run_openmeteo export-layer-grid \
   --request "$REQUEST_CONTAINER" \
   --output-dir "$EXPORT_DIR_CONTAINER"
 
-python3 scripts/build_openmeteo_layers.py \
+python3 scripts/build_webp.py \
   --scope cams \
   --export-dir "$EXPORT_DIR_HOST" \
   --output-dir "$CAMS_OUTPUT_DIR" \
@@ -85,6 +85,6 @@ python3 scripts/build_openmeteo_layers.py \
   --end-hour "$LAYER_END_HOUR" \
   --chunk-size "$LAYER_CHUNK_SIZE"
 
-mkdir -p "$PUBLIC_DATA_DIR/openmeteo_layers"
-cp -f "$APP_DIR/config/weather_layer_catalog.json" "$PUBLIC_DATA_DIR/openmeteo_layers/weather_layer_catalog.json"
-publish_public_link "$CAMS_OUTPUT_DIR" "$PUBLIC_DATA_DIR/openmeteo_layers/cams_global"
+mkdir -p "$PUBLIC_DATA_DIR/webp"
+cp -f "$APP_DIR/config/weather_layer_catalog.json" "$PUBLIC_DATA_DIR/webp/weather_layer_catalog.json"
+publish_public_link "$CAMS_OUTPUT_DIR" "$PUBLIC_DATA_DIR/webp/cams_global"

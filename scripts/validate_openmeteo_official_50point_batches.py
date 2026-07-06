@@ -457,7 +457,7 @@ cd {direct_remote_root}
 sudo docker run --rm \\
   -e DATA_DIRECTORY=/app/data/ \\
   -e DATA_RUN_DIRECTORY=/app/data/data_run/ \\
-  -v {direct_remote_root}/data/openmeteo:/app/data:ro \\
+  -v {direct_remote_root}/data/point:/app/data:ro \\
   -v "$tmp:/work" \\
   {docker_image} \\
   export-point-forecast \\
@@ -822,7 +822,7 @@ def remote_actual_names_by_domain(
 ) -> dict[str, set[str]]:
     remote_script = f"""set -euo pipefail
 cd {shlex.quote(direct_remote_root)}
-find data/openmeteo -mindepth 2 -maxdepth 2 -type d -printf '%P\\n'
+find data/point -mindepth 2 -maxdepth 2 -type d -printf '%P\\n'
 """
     remote_script = remote_script.replace("\r", "")
     completed = subprocess.run(

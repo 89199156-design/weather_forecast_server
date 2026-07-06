@@ -106,7 +106,7 @@ def run_complete(run: datetime, max_forecast_hour: int, timeout_seconds: float, 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Probe official GFS index files and report the newest complete run.")
-    parser.add_argument("--data-dir", default="./data/openmeteo")
+    parser.add_argument("--data-dir", default="./data/point")
     parser.add_argument("--max-forecast-hour", type=int, default=120)
     parser.add_argument("--lookback-hours", type=int, default=36)
     parser.add_argument("--timeout-seconds", type=float, default=8.0)

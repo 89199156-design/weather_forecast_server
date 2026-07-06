@@ -19,11 +19,11 @@ from PIL import Image
 DEFAULT_API_BASE_URL = os.environ.get("WEATHER_OPENMETEO_API_URL", "")
 DEFAULT_GFS_OUTPUT_DIR = os.environ.get(
     "WEATHER_OPENMETEO_LAYER_DIR",
-    "./data/openmeteo_layers/gfs013_surface",
+    "./data/webp/gfs013_surface",
 )
 DEFAULT_CAMS_OUTPUT_DIR = os.environ.get(
     "WEATHER_OPENMETEO_CAMS_LAYER_DIR",
-    "./data/openmeteo_layers/cams_global",
+    "./data/webp/cams_global",
 )
 DEFAULT_OUTPUT_DIR = DEFAULT_GFS_OUTPUT_DIR
 DEFAULT_LAYER_MODEL = os.environ.get("WEATHER_OPENMETEO_LAYER_MODEL", "gfs_global")

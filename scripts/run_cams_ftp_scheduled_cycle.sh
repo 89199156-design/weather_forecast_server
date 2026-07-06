@@ -30,7 +30,7 @@ mkdir -p "$LOG_DIR"
     }
   } 7>"$GLOBAL_LOCK_FILE"
 
-  data_dir="${WEATHER_OPENMETEO_DATA_DIR:-$APP_DIR/data/openmeteo}"
+  data_dir="${WEATHER_OPENMETEO_DATA_DIR:-$APP_DIR/data/point}"
   {
     flock -n 8 || {
       echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_FTP_SCHEDULE] CAMS FTP/ECPDS production cycle already running, skip probe."

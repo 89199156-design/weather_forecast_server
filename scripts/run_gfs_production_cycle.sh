@@ -49,9 +49,9 @@ mkdir -p "$LOG_DIR"
   unset WEATHER_OPENMETEO_LAYER_END_HOUR
   GFS_UPPER_LEVELS="${WEATHER_GFS_UPPER_LEVELS:-1000,975,950,925,900,850,800,750,700,650,600,550,500,400,300,200}"
   GFS_UPPER_LEVEL_VARIABLES="${WEATHER_GFS_UPPER_LEVEL_VARIABLES:-temperature,wind_u_component,wind_v_component,geopotential_height,cloud_cover,relative_humidity,vertical_velocity}"
-  ACTIVE_DATA_DIR="${WEATHER_OPENMETEO_DATA_DIR:-$APP_DIR/data/openmeteo}"
+  ACTIVE_DATA_DIR="${WEATHER_OPENMETEO_DATA_DIR:-$APP_DIR/data/point}"
   ACTIVE_PUBLIC_DATA_DIR="${WEATHER_OPENMETEO_PUBLIC_DATA_DIR:-/opt/1panel/apps/weather/data}"
-  ACTIVE_LAYER_ROOT_DIR="${WEATHER_OPENMETEO_LAYER_ROOT_DIR:-$APP_DIR/data/openmeteo_layers}"
+  ACTIVE_LAYER_ROOT_DIR="${WEATHER_OPENMETEO_LAYER_ROOT_DIR:-$APP_DIR/data/webp}"
   GFS_OUTPUT_DIR="${WEATHER_OPENMETEO_LAYER_DIR:-$ACTIVE_LAYER_ROOT_DIR/gfs013_surface}"
   GFS_STAGING_DATA_DIR="$ACTIVE_DATA_DIR/gfs_staging_${RUN}_$$"
   GFS_STAGING_LAYER_DIR="$ACTIVE_LAYER_ROOT_DIR/gfs013_surface_staging_${RUN}_$$"
@@ -137,14 +137,14 @@ mkdir -p "$LOG_DIR"
     done
     backup_active_path "$GFS_OUTPUT_DIR" "$GFS_PUBLISH_BACKUP_DIR/gfs013_surface"
 
-    mkdir -p "$ACTIVE_DATA_DIR/data_run" "$ACTIVE_LAYER_ROOT_DIR" "$ACTIVE_PUBLIC_DATA_DIR/openmeteo_layers"
+    mkdir -p "$ACTIVE_DATA_DIR/data_run" "$ACTIVE_LAYER_ROOT_DIR" "$ACTIVE_PUBLIC_DATA_DIR/webp"
     for domain in ncep_gfs013 ncep_gfs025; do
       mv "$GFS_STAGING_DATA_DIR/$domain" "$ACTIVE_DATA_DIR/$domain"
       mv "$GFS_STAGING_DATA_DIR/data_run/$domain" "$ACTIVE_DATA_DIR/data_run/$domain"
     done
     mv "$GFS_STAGING_LAYER_DIR" "$GFS_OUTPUT_DIR"
-    cp -f "$APP_DIR/config/weather_layer_catalog.json" "$ACTIVE_PUBLIC_DATA_DIR/openmeteo_layers/weather_layer_catalog.json"
-    publish_public_link "$GFS_OUTPUT_DIR" "$ACTIVE_PUBLIC_DATA_DIR/openmeteo_layers/gfs013_surface"
+    cp -f "$APP_DIR/config/weather_layer_catalog.json" "$ACTIVE_PUBLIC_DATA_DIR/webp/weather_layer_catalog.json"
+    publish_public_link "$GFS_OUTPUT_DIR" "$ACTIVE_PUBLIC_DATA_DIR/webp/gfs013_surface"
     rm -rf "$GFS_PUBLISH_BACKUP_DIR"
     gfs_publish_started=false
   }

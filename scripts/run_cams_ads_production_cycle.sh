@@ -56,7 +56,7 @@ mkdir -p "$LOG_DIR"
   export WEATHER_OPENMETEO_LAYER_FRAME_COUNT="121"
   unset WEATHER_OPENMETEO_LAYER_END_HOUR
   export WEATHER_OPENMETEO_PUBLIC_DATA_DIR="${WEATHER_OPENMETEO_PUBLIC_DATA_DIR:-/opt/1panel/apps/weather/data}"
-  export WEATHER_OPENMETEO_LAYER_ROOT_DIR="${WEATHER_OPENMETEO_LAYER_ROOT_DIR:-$APP_DIR/data/openmeteo_layers}"
+  export WEATHER_OPENMETEO_LAYER_ROOT_DIR="${WEATHER_OPENMETEO_LAYER_ROOT_DIR:-$APP_DIR/data/webp}"
   CAMS_GREENHOUSE_RUN="${WEATHER_CAMS_GREENHOUSE_RUN:-$(run_to_greenhouse_run "$RUN")}"
   export WEATHER_CAMS_GREENHOUSE_RUN="$CAMS_GREENHOUSE_RUN"
 
@@ -67,12 +67,12 @@ mkdir -p "$LOG_DIR"
   echo "$download_end [OPENMETEO_CAMS_ADS] download runtime data run=$RUN end=$download_end"
 
   python3 scripts/validate_openmeteo_latest_run.py \
-    --data-dir "${WEATHER_OPENMETEO_DATA_DIR:-$APP_DIR/data/openmeteo}" \
+    --data-dir "${WEATHER_OPENMETEO_DATA_DIR:-$APP_DIR/data/point}" \
     --run "$RUN" \
     --domains cams_global \
     --min-frames 121
   python3 scripts/validate_openmeteo_latest_run.py \
-    --data-dir "${WEATHER_OPENMETEO_DATA_DIR:-$APP_DIR/data/openmeteo}" \
+    --data-dir "${WEATHER_OPENMETEO_DATA_DIR:-$APP_DIR/data/point}" \
     --run "$CAMS_GREENHOUSE_RUN" \
     --domains cams_global_greenhouse_gases \
     --min-frames 41

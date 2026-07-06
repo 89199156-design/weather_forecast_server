@@ -34,7 +34,7 @@ mkdir -p "$LOG_DIR"
     }
   } 7>"$GLOBAL_LOCK_FILE"
 
-  data_dir="${WEATHER_OPENMETEO_DATA_DIR:-$APP_DIR/data/openmeteo}"
+  data_dir="${WEATHER_OPENMETEO_DATA_DIR:-$APP_DIR/data/point}"
   max_hour="${WEATHER_GFS_MAX_FORECAST_HOUR:-120}"
   probe_output=""
   if ! probe_output="$(python3 scripts/probe_gfs_official_run.py --data-dir "$data_dir" --max-forecast-hour "$max_hour" 2>&1)"; then

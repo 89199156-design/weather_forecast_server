@@ -144,7 +144,7 @@ def test_manifest_path_prefers_gfs_then_cams(tmp_path):
 
 def test_export_validation_supports_lightweight_manifest_without_http(tmp_path):
     validator = load_module()
-    builder_spec = importlib.util.spec_from_file_location("build_openmeteo_layers", ROOT / "scripts" / "build_openmeteo_layers.py")
+    builder_spec = importlib.util.spec_from_file_location("build_webp", ROOT / "scripts" / "build_webp.py")
     builder = importlib.util.module_from_spec(builder_spec)
     assert builder_spec.loader is not None
     sys.modules[builder_spec.name] = builder
@@ -258,7 +258,7 @@ def test_prepare_point_export_request_uses_lightweight_manifest_grid_and_layer_v
 
 def test_decode_scalar_and_wind_pixels_match_builder_encoding():
     validator = load_module()
-    builder_spec = importlib.util.spec_from_file_location("build_openmeteo_layers", ROOT / "scripts" / "build_openmeteo_layers.py")
+    builder_spec = importlib.util.spec_from_file_location("build_webp", ROOT / "scripts" / "build_webp.py")
     builder = importlib.util.module_from_spec(builder_spec)
     assert builder_spec.loader is not None
     sys.modules[builder_spec.name] = builder

@@ -6,11 +6,11 @@ import numpy as np
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "scripts" / "build_openmeteo_layers.py"
+SCRIPT = ROOT / "scripts" / "build_webp.py"
 
 
 def load_module():
-    spec = importlib.util.spec_from_file_location("build_openmeteo_layers", SCRIPT)
+    spec = importlib.util.spec_from_file_location("build_webp", SCRIPT)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     sys.modules[spec.name] = module

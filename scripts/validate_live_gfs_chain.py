@@ -23,7 +23,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-import build_openmeteo_layers as layer_builder  # noqa: E402
+import build_webp as layer_builder  # noqa: E402
 from validate_openmeteo_layers import transform_api_value, values_match  # noqa: E402
 
 

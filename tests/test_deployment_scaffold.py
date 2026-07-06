@@ -173,7 +173,7 @@ def test_legacy_combined_and_bin_product_builders_are_removed():
         ROOT / "scripts" / "run_gfs_profile_build.sh",
         ROOT / "scripts" / "download_openmeteo_runtime_data.sh",
         ROOT / "scripts" / "run_openmeteo_production_cycle.sh",
-        ROOT / "scripts" / "build_server_openmeteo_layers.sh",
+        ROOT / "scripts" / "build_server_webp.sh",
         ROOT / "tests" / "test_openmeteo_point_package.py",
         ROOT / "tests" / "test_openmeteo_pressure_profile_package.py",
     ]
@@ -801,20 +801,22 @@ def test_cams_ftp_concurrent_option_drives_file_downloads():
 
 def test_layer_scripts_are_documented_as_openmeteo_engine_backed():
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    build_script = (ROOT / "scripts" / "build_openmeteo_layers.py").read_text(encoding="utf-8")
+    build_script = (ROOT / "scripts" / "build_webp.py").read_text(encoding="utf-8")
     validate_script = (ROOT / "scripts" / "validate_openmeteo_layers.py").read_text(encoding="utf-8")
     configure = (ROOT / "vendor" / "open-meteo" / "Sources" / "App" / "configure.swift").read_text(encoding="utf-8")
     export_command = (
         ROOT / "vendor" / "open-meteo" / "Sources" / "App" / "Commands" / "LayerGridExportCommand.swift"
     ).read_text(encoding="utf-8")
 
-    assert "scripts/build_openmeteo_layers.py" in readme
+    assert "scripts/build_webp.py" in readme
     assert "scripts/build_openmeteo_point_package.py" not in readme
     assert "scripts/render_gfs_layers_from_point_package.py" not in readme
-    assert "scripts/build_server_openmeteo_layers.sh" not in readme
+    assert "scripts/build_server_webp.sh" not in readme
     assert "scripts/build_openmeteo_gfs_layers.sh" in readme
     assert "scripts/build_openmeteo_cams_layers.sh" in readme
     assert "scripts/validate_openmeteo_layers.py" in readme
+    assert "data/webp/gfs013_surface" in readme
+    assert "data/openmeteo_layers" not in readme
     assert "Open-Meteo engine" in readme
     assert "import requests" not in build_script
     assert "requests.get" not in build_script
@@ -828,6 +830,29 @@ def test_layer_scripts_are_documented_as_openmeteo_engine_backed():
     assert "satellite" not in validate_script.lower()
     assert "Dem90.read(lat: lat, lon: lon" in export_command
     assert "elevation: .nan" not in export_command
+
+
+def test_runtime_data_and_webp_directories_use_renamed_defaults():
+    runtime = (ROOT / "scripts" / "openmeteo_runtime_common.sh").read_text(encoding="utf-8")
+    gfs = (ROOT / "scripts" / "run_gfs_production_cycle.sh").read_text(encoding="utf-8")
+    cams = (ROOT / "scripts" / "run_cams_ftp_production_cycle.sh").read_text(encoding="utf-8")
+    gfs_layers = (ROOT / "scripts" / "build_openmeteo_gfs_layers.sh").read_text(encoding="utf-8")
+    cams_layers = (ROOT / "scripts" / "build_openmeteo_cams_layers.sh").read_text(encoding="utf-8")
+    probe_gfs = (ROOT / "scripts" / "probe_gfs_official_run.py").read_text(encoding="utf-8")
+    probe_cams = (ROOT / "scripts" / "probe_cams_ftp_run.py").read_text(encoding="utf-8")
+
+    combined = "\n".join([runtime, gfs, cams, gfs_layers, cams_layers, probe_gfs, probe_cams])
+
+    assert "$APP_DIR/data/point" in runtime
+    assert "$APP_DIR/data/webp" in gfs
+    assert "$APP_DIR/data/webp" in cams
+    assert "$PUBLIC_DATA_DIR/webp" in gfs_layers
+    assert "$PUBLIC_DATA_DIR/webp" in cams_layers
+    assert "./data/point" in probe_gfs
+    assert "./data/point" in probe_cams
+    assert "data/openmeteo_layers" not in combined
+    assert "$APP_DIR/data/openmeteo" not in combined
+    assert "./data/openmeteo" not in combined
 
 
 def test_point_export_command_exposes_openmeteo_reader_without_http():
@@ -996,7 +1021,7 @@ def test_layer_builders_are_split_by_source_product():
 def test_combined_production_cycle_is_removed_in_favor_of_split_source_cycles():
     assert not (ROOT / "scripts" / "run_openmeteo_production_cycle.sh").exists()
     assert not (ROOT / "scripts" / "download_openmeteo_runtime_data.sh").exists()
-    assert not (ROOT / "scripts" / "build_server_openmeteo_layers.sh").exists()
+    assert not (ROOT / "scripts" / "build_server_webp.sh").exists()
     assert not (ROOT / "scripts" / "run_cams_production_cycle.sh").exists()
     assert not (ROOT / "scripts" / "run_cams_scheduled_cycle.sh").exists()
 
@@ -1008,7 +1033,7 @@ def test_combined_production_cycle_is_removed_in_favor_of_split_source_cycles():
     for path in split_scripts:
         script = path.read_text(encoding="utf-8")
         assert "scripts/download_openmeteo_runtime_data.sh" not in script
-        assert "scripts/build_server_openmeteo_layers.sh" not in script
+        assert "scripts/build_server_webp.sh" not in script
         assert "scripts/deploy_singapore_candidate.sh" not in script
         assert "restart local Open-Meteo API" not in script
         assert "download runtime data run=$RUN start=" in script

@@ -152,7 +152,7 @@ def run_complete(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Probe ECMWF CAMS FTP/ECPDS files and report the newest complete run.")
-    parser.add_argument("--data-dir", default="./data/openmeteo")
+    parser.add_argument("--data-dir", default="./data/point")
     parser.add_argument("--variables", default=os.environ.get("WEATHER_CAMS_VARIABLES", "pm2_5,pm10,aerosol_optical_depth,dust,carbon_monoxide,nitrogen_dioxide,ozone,sulphur_dioxide"))
     parser.add_argument("--max-forecast-hour", type=int, default=120)
     parser.add_argument("--probe-forecast-hours", default=os.environ.get("WEATHER_CAMS_PROBE_FORECAST_HOURS"))
