@@ -1106,16 +1106,21 @@ def test_gfs_probe_cycle_starts_latest_ready_run_after_newer_not_ready(tmp_path)
     assert run_file.read_text(encoding="utf-8").strip() == "2026070600"
 
 
-def test_openmeteo_cron_installer_runs_only_gfs_and_cams_ftp_by_default():
+def test_openmeteo_cron_installer_installs_1panel_jobs_only_for_gfs_and_cams_ftp():
     script = (ROOT / "scripts" / "install_openmeteo_cron.sh").read_text(encoding="utf-8")
 
-    assert 'CRON_USER="${WEATHER_OPENMETEO_CRON_USER:-root}"' in script
+    assert "PANEL_DB=" in script
+    assert "DELETE FROM cronjobs WHERE name LIKE 'weather_%' OR name LIKE 'openmeteo_%'" in script
+    assert "openmeteo_gfs_probe_cycle" in script
+    assert "openmeteo_cams_ftp_probe_cycle" in script
     assert "*/20 * * * *" in script
     assert "scripts/run_gfs_probe_and_cycle.sh" in script
     assert "scripts/run_cams_ftp_scheduled_cycle.sh" in script
     assert "scripts/run_cams_ads_scheduled_cycle.sh" not in script
     assert "0 10,22 * * *" not in script
-    assert "CRON_TZ=UTC" in script
+    assert "cat >" not in script
+    assert "CRON_TZ=UTC" not in script
+    assert "rm -f \"$SYSTEM_CRON_FILE\"" in script
     assert "CST" not in script
 
 
