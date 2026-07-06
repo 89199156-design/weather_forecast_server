@@ -3,7 +3,7 @@
 ## Server State
 
 - Server: Singapore
-- Repository HEAD on Singapore: `86b6428`
+- Repository HEAD on Singapore: `dff76e2`
 - Open-Meteo validation/runtime image used by current reports: `weather-forecast-openmeteo:313077c`
 - GFS 0.117 domain latest: `2026-07-06T12:00:00Z`
 - GFS 0.25 domain latest: `2026-07-06T12:00:00Z`
@@ -33,6 +33,9 @@
 - Follow-up local constraint tests passed on 2026-07-07:
   - `python -m pytest tests/test_deployment_scaffold.py tests/test_cams_ftp_probe.py tests/test_openmeteo_target_validation.py tests/test_openmeteo_api_inventory.py tests/test_vendor_integration.py -q`
   - Result: `67 passed`
+- Follow-up local constraint tests passed on 2026-07-07 after deployment image cleanup:
+  - `python -m pytest tests/test_deployment_scaffold.py tests/test_cams_ftp_probe.py tests/test_openmeteo_api_inventory.py tests/test_vendor_integration.py -q`
+  - Result: `64 passed`
 
 ## Internal HTTP And Legacy Bin Audit
 
@@ -128,6 +131,10 @@ Fresh attempts:
 - Added checked values: 0
 - Stop reason: official API daily quota exhausted across all currently configured reference exits. This is not a local `.om` mismatch.
 - Follow-up light probe on 2026-07-07 using the first real offset-650 request shape (`10 points x 20 variables`) still returned:
+  - HTTP status: `429`
+  - Content-Type: `application/json; charset=utf-8`
+  - Body: `{"reason":"Daily API request limit exceeded. Please try again tomorrow.","error":true}`
+- Follow-up minimum official API probe on 2026-07-07 using `1 point x 1 variable x 1 frame` still returned:
   - HTTP status: `429`
   - Content-Type: `application/json; charset=utf-8`
   - Body: `{"reason":"Daily API request limit exceeded. Please try again tomorrow.","error":true}`
