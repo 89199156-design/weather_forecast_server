@@ -116,7 +116,7 @@ source-chain analysis before changing code again.
 Production scheduling is expressed in UTC only. Do not encode local server time
 or region-specific time-zone names in scripts or crontab entries.
 
-GFS uses a lightweight official-source probe every 30 minutes. The probe checks
+GFS uses a lightweight official-source probe every 20 minutes. The probe checks
 NOAA GFS `.idx` files for `gfs013` sflux, `gfs025` pgrb2, and `gfs025` pgrb2b
 through the configured forecast horizon. Only after a newer run is complete does
 the GFS production cycle download source data and rebuild the GFS WebP layers
