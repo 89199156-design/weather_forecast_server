@@ -1048,6 +1048,19 @@ def test_gfs_probe_cycle_uses_official_indices_before_gfs_only_production():
     assert "CST" not in cycle
 
 
+def test_openmeteo_cron_installer_runs_gfs_and_cams_ftp_every_20_minutes_and_ads_twice_daily():
+    script = (ROOT / "scripts" / "install_openmeteo_cron.sh").read_text(encoding="utf-8")
+
+    assert "*/20 * * * *" in script
+    assert "scripts/run_gfs_probe_and_cycle.sh" in script
+    assert "scripts/run_cams_ftp_scheduled_cycle.sh" in script
+    assert "scripts/run_cams_ads_scheduled_cycle.sh" in script
+    assert "0 10,22 * * *" in script
+    assert "run_cams_ads_scheduled_cycle.sh" not in script.split("*/20 * * * *", 1)[1].split("0 10,22", 1)[0]
+    assert "CRON_TZ=UTC" in script
+    assert "CST" not in script
+
+
 def test_gfs_production_publishes_only_after_bound_domains_and_layers_succeed():
     production = (ROOT / "scripts" / "run_gfs_production_cycle.sh").read_text(encoding="utf-8")
 
