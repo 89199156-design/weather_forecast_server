@@ -1031,6 +1031,8 @@ def test_gfs_probe_cycle_uses_official_indices_before_gfs_only_production():
     assert "scripts/probe_gfs_official_run.py" in cycle
     assert "CYCLE_LOCK_FILE" in cycle
     assert "GFS production cycle already running, skip probe." in cycle
+    assert "GLOBAL_LOCK_FILE" in cycle
+    assert "another Open-Meteo production cycle is running, skip probe." in cycle
     assert "scripts/run_gfs_production_cycle.sh" in cycle
     assert "scripts/download_openmeteo_gfs_data.sh" in production
     assert "scripts/build_openmeteo_gfs_layers.sh" in production
@@ -1152,6 +1154,8 @@ def test_cams_ftp_scheduled_cycle_probes_remote_batches_like_gfs():
     assert "ftp|ecpds|ftp_ecpds)" not in scheduled
     assert "ads|cds|ads_cds)" not in scheduled
     assert "CAMS FTP/ECPDS production cycle already running, skip probe." in scheduled
+    assert "GLOBAL_LOCK_FILE" in scheduled
+    assert "another Open-Meteo production cycle is running, skip probe." in scheduled
     assert "datetime.now(timezone.utc)" not in scheduled
     assert "now.hour >= 22" not in scheduled
     assert "now.hour >= 10" not in scheduled
@@ -1198,6 +1202,8 @@ def test_cams_ads_scheduled_cycle_keeps_fixed_utc_target_logic():
     assert "scripts/run_cams_ads_production_cycle.sh" in scheduled
     assert "scripts/run_cams_ftp_production_cycle.sh" not in scheduled
     assert "CAMS ADS/CDS production cycle already running, skip." in scheduled
+    assert "GLOBAL_LOCK_FILE" in scheduled
+    assert "another Open-Meteo production cycle is running, skip." in scheduled
     assert "greenhouse_run=" in scheduled
     assert "cams_global_greenhouse_gases --min-frames 41" in scheduled
     assert "scripts/download_openmeteo_cams_ads_data.sh" in production
@@ -1208,6 +1214,21 @@ def test_cams_ads_scheduled_cycle_keeps_fixed_utc_target_logic():
     assert "cams_global_greenhouse_gases \\\n    --min-frames 41" in production
     assert "download-cams-ads cams_global" in download
     assert "download-cams cams_global" not in download
+
+
+def test_openmeteo_production_cycles_share_global_lock():
+    scripts = [
+        ROOT / "scripts" / "run_gfs_production_cycle.sh",
+        ROOT / "scripts" / "run_cams_ftp_production_cycle.sh",
+        ROOT / "scripts" / "run_cams_ads_production_cycle.sh",
+    ]
+
+    for path in scripts:
+        script = path.read_text(encoding="utf-8")
+        assert "GLOBAL_LOCK_FILE" in script, path.name
+        assert "WEATHER_OPENMETEO_GLOBAL_LOCK_FILE" in script, path.name
+        assert "/tmp/weather_openmeteo_production.lock" in script, path.name
+        assert "another Open-Meteo production cycle is running, skip." in script, path.name
 
 
 def test_split_layer_builders_publish_only_their_product():

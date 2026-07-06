@@ -5,6 +5,7 @@ APP_DIR="${WEATHER_FORECAST_APP_DIR:-/opt/1panel/apps/weather_forecast_server}"
 LOG_DIR="${WEATHER_OPENMETEO_BUILD_LOG_DIR:-/opt/1panel/apps/weather/logs}"
 LOCK_FILE="${WEATHER_OPENMETEO_CAMS_ADS_SCHEDULE_LOCK_FILE:-/tmp/weather_openmeteo_cams_ads_schedule.lock}"
 CYCLE_LOCK_FILE="${WEATHER_OPENMETEO_CAMS_ADS_LOCK_FILE:-/tmp/weather_openmeteo_cams_ads_cycle.lock}"
+GLOBAL_LOCK_FILE="${WEATHER_OPENMETEO_GLOBAL_LOCK_FILE:-/tmp/weather_openmeteo_production.lock}"
 
 mkdir -p "$LOG_DIR"
 
@@ -21,6 +22,13 @@ mkdir -p "$LOG_DIR"
   if [[ "${WEATHER_GIT_PULL:-false}" == "true" ]]; then
     git pull --ff-only
   fi
+
+  {
+    flock -n 7 || {
+      echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_ADS_SCHEDULE] another Open-Meteo production cycle is running, skip."
+      exit 0
+    }
+  } 7>"$GLOBAL_LOCK_FILE"
 
   run="$(python3 - <<'PY'
 from datetime import datetime, timedelta, timezone

@@ -10,6 +10,7 @@ fi
 APP_DIR="${WEATHER_FORECAST_APP_DIR:-/opt/1panel/apps/weather_forecast_server}"
 LOG_DIR="${WEATHER_OPENMETEO_BUILD_LOG_DIR:-/opt/1panel/apps/weather/logs}"
 LOCK_FILE="${WEATHER_OPENMETEO_CAMS_FTP_LOCK_FILE:-/tmp/weather_openmeteo_cams_ftp_cycle.lock}"
+GLOBAL_LOCK_FILE="${WEATHER_OPENMETEO_GLOBAL_LOCK_FILE:-/tmp/weather_openmeteo_production.lock}"
 
 run_to_utc_layer_start() {
   python3 - "$1" <<'PY'
@@ -26,6 +27,12 @@ mkdir -p "$LOG_DIR"
 {
   flock -n 9 || {
     echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_FTP] previous job still running, skip."
+    exit 0
+  }
+
+  exec 8>"$GLOBAL_LOCK_FILE"
+  flock -n 8 || {
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_FTP] another Open-Meteo production cycle is running, skip."
     exit 0
   }
 
