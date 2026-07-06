@@ -288,6 +288,18 @@ def test_scalar_and_wind_encoding_round_trip():
     assert np.isclose(decoded_v[1, 1], 9.9)
 
 
+def test_cams_dust_encoding_round_trips_high_values_without_saturation():
+    layers = load_module()
+
+    dust_layer = next(layer for layer in layers.CAMS_LAYER_DEFINITIONS if layer.name == "dust")
+    values = np.array([[6810.0, 6951.0]], dtype=np.float32)
+
+    rgba = layers.encode_scalar_rgba(values, vmin=dust_layer.vmin, scale=dust_layer.scale)
+    decoded = layers.decode_scalar_rgba(rgba, vmin=dust_layer.vmin, scale=dust_layer.scale)
+
+    np.testing.assert_allclose(decoded, values, atol=0.5)
+
+
 def test_openmeteo_weather_code_drives_phase_and_thunderstorm_layers():
     layers = load_module()
 

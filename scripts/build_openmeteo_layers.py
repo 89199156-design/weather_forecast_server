@@ -191,7 +191,7 @@ CAMS_LAYER_DEFINITIONS: tuple[LayerDefinition, ...] = (
     LayerDefinition("pm2_5", "pm2_5", ("pm2_5",), "pm2_5", "ug/m3", 10.0, (0.0, 6000.0)),
     LayerDefinition("pm10", "pm10", ("pm10",), "pm10", "ug/m3", 10.0, (0.0, 6000.0)),
     LayerDefinition("aerosol_optical_depth", "aerosol_optical_depth", ("aerosol_optical_depth",), "aod", "1", 1000.0, (0.0, 65.0)),
-    LayerDefinition("dust", "dust", ("dust",), "dust", "ug/m3", 10.0, (0.0, 6000.0)),
+    LayerDefinition("dust", "dust", ("dust",), "dust", "ug/m3", 1.0, (0.0, 65535.0)),
 )
 
 
