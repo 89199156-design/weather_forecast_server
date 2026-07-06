@@ -78,7 +78,7 @@ def probe_forecast_hours(value: str | None, max_forecast_hour: int) -> list[int]
     if value:
         hours = [int(item.strip()) for item in value.split(",") if item.strip()]
     else:
-        hours = [0, 1, max_forecast_hour]
+        hours = list(range(max_forecast_hour + 1))
     bounded = [hour for hour in hours if 0 <= hour <= max_forecast_hour]
     if not bounded:
         raise SystemExit("CAMS FTP probe forecast hours must include at least one hour in range")
