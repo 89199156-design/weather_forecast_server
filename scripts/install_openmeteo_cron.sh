@@ -3,7 +3,7 @@ set -euo pipefail
 
 APP_DIR="${WEATHER_FORECAST_APP_DIR:-/opt/1panel/apps/weather_forecast_server}"
 CRON_FILE="${WEATHER_OPENMETEO_CRON_FILE:-/etc/cron.d/weather-openmeteo}"
-CRON_USER="${WEATHER_OPENMETEO_CRON_USER:-ubuntu}"
+CRON_USER="${WEATHER_OPENMETEO_CRON_USER:-root}"
 LOG_DIR="${WEATHER_OPENMETEO_BUILD_LOG_DIR:-/opt/1panel/apps/weather/logs}"
 
 tmp_file="$(mktemp)"

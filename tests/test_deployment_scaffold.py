@@ -1106,6 +1106,7 @@ def test_gfs_probe_cycle_starts_latest_ready_run_after_newer_not_ready(tmp_path)
 def test_openmeteo_cron_installer_runs_gfs_and_cams_ftp_every_20_minutes_and_ads_twice_daily():
     script = (ROOT / "scripts" / "install_openmeteo_cron.sh").read_text(encoding="utf-8")
 
+    assert 'CRON_USER="${WEATHER_OPENMETEO_CRON_USER:-root}"' in script
     assert "*/20 * * * *" in script
     assert "scripts/run_gfs_probe_and_cycle.sh" in script
     assert "scripts/run_cams_ftp_scheduled_cycle.sh" in script
