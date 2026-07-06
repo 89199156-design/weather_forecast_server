@@ -3,11 +3,12 @@
 ## Server State
 
 - Server: Singapore
-- Deployed commit: `313077c`
-- GFS 0.117 domain latest: `2026-07-06T06:00:00Z`
-- GFS 0.25 domain latest: `2026-07-06T06:00:00Z`
+- Repository HEAD on Singapore: `86b6428`
+- Open-Meteo validation/runtime image used by current reports: `weather-forecast-openmeteo:313077c`
+- GFS 0.117 domain latest: `2026-07-06T12:00:00Z`
+- GFS 0.25 domain latest: `2026-07-06T12:00:00Z`
 - CAMS global latest: `2026-07-06T00:00:00Z`
-- GFS layer manifest batch: `1783317600`, 121 frames
+- GFS layer manifest batch: `1783339200`, 121 frames
 - CAMS layer manifest batch: `1783296000`, 121 frames
 
 ## Scheduling And Source Separation
@@ -23,6 +24,9 @@
 - Local constraint tests passed:
   - `python -m pytest tests/test_deployment_scaffold.py tests/test_cams_ftp_probe.py tests/test_openmeteo_official_50point_batches.py`
   - Result: `65 passed`
+- Follow-up local constraint tests passed on 2026-07-07:
+  - `python -m pytest tests/test_deployment_scaffold.py tests/test_cams_ftp_probe.py tests/test_openmeteo_target_validation.py tests/test_openmeteo_api_inventory.py tests/test_vendor_integration.py -q`
+  - Result: `67 passed`
 
 ## Internal HTTP And Legacy Bin Audit
 
@@ -87,6 +91,36 @@ Next resume point:
 
 - Continue at `--point-offset 650`
 - Remaining target: 350 points, 7 batches
+- The original `2026-07-06T06` local `.om` anchor has since been replaced on Singapore by the `2026-07-06T12` production batch. Do not mix new `12Z` results into the `06Z` total above unless the report is explicitly labelled as a separate `12Z` validation.
+
+## GFS Official API Parity, Current 12Z Run
+
+User-approved follow-up target:
+
+- Local source: Singapore `.om`, direct mode
+- Official reference: Open-Meteo official API
+- GFS run: `2026-07-06T12`
+- Start hour: `2026-07-06T12`
+- Requested continuation point set: offset `650`, remaining 350 points
+
+Fresh attempts:
+
+- `7 x 50` via Singapore reference exit: stopped before adding a batch because the official API returned `429 Daily API request limit exceeded`.
+- `1 x 50` via Seoul reference exit: stopped before adding a batch because the official API returned `429 Daily API request limit exceeded`.
+- `1 x 50` via Shanghai reference exit: stopped before adding a batch because the official API returned `429 Daily API request limit exceeded`.
+- `1 x 50` via local direct reference exit: stopped before adding a batch because the official API returned a non-JSON successful response during script execution; reproducing the first real 10-point request showed the official API returning `429 Daily API request limit exceeded`.
+- `1 x 50` via local v2ray proxy `127.0.0.1:10808`: stopped before adding a batch because the official API returned a non-JSON successful response during script execution.
+- A direct reproduction of the first real `10 points x 20 variables` official single-run request for offset `650` returned:
+  - URL length: 767
+  - HTTP status: `429`
+  - Content-Type: `application/json; charset=utf-8`
+  - Body: `{"error":true,"reason":"Daily API request limit exceeded. Please try again tomorrow."}`
+
+12Z continuation result:
+
+- Added batches: 0
+- Added checked values: 0
+- Stop reason: official API daily quota exhausted across all currently configured reference exits. This is not a local `.om` mismatch.
 
 Resume command template:
 
@@ -140,6 +174,24 @@ CAMS current layer validation:
 - Checked values: 968,000
 - Mismatch count: 0
 
+## CAMS Official API Parity Evidence
+
+Current production-style 50-frame CAMS report:
+
+- Report root: `docs/validation/reports/cams-production-dfce90a-1000x50-refshanghai-20260706T143309Z`
+- Completed batches: 20
+- Completed points: 1000
+- Frames per point: 50
+- Variables available for CAMS: 9
+- Batch evidence: every `batch-*-cams.json` report is `passed: true`; sampled batches show `failed_points: 0` and empty `failures`.
+- Summary result: `passed: true`
+
+Earlier 121-frame CAMS parity evidence:
+
+- First 50 points: `docs/validation/reports/cams-official-batch01-50x121-2026070412-30aca1e-localtunnel-strict-20260705T0225/summary-50x121.json`, `passed: true`
+- Remaining 950 points: `docs/validation/reports/cams-official-remaining950x121-2026070412-30aca1e-localtunnel-strict-20260705T0226/summary-950x121.json`, `passed: true`
+- Combined scope: 1000 unique points, 121 frames, 9 CAMS outputs.
+
 ## CAMS China AQI Direct Export Gate
 
 Root cause found and fixed in `db58a2b`:
@@ -183,6 +235,6 @@ Not complete.
 
 Remaining mandatory items:
 
-- Finish GFS official parity for the remaining 700 current-run points after official API quota recovers or another reference exit is available.
-- Keep CAMS standard-output official parity evidence tied to the production FTP/ECPDS source.
+- Finish GFS official parity for the remaining 350 current-run points after official API quota recovers or another reference exit is available.
+- Run or refresh full current-batch layer-to-local-OM parity if production WebP output is regenerated after the recorded layer reports.
 - Keep this report updated with final 1000-point results before claiming completion.
