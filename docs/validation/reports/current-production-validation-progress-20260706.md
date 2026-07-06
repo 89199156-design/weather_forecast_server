@@ -3,7 +3,7 @@
 ## Server State
 
 - Server: Singapore
-- Deployed commit: `db58a2b`
+- Deployed commit: `313077c`
 - GFS 0.117 domain latest: `2026-07-06T06:00:00Z`
 - GFS 0.25 domain latest: `2026-07-06T06:00:00Z`
 - CAMS global latest: `2026-07-06T00:00:00Z`
@@ -39,7 +39,7 @@
 Validation target:
 
 - Local source: Singapore `.om`, direct mode
-- Official reference: Open-Meteo official API through Seoul/Shanghai SSH exits
+- Official reference: Open-Meteo official API through Seoul/Shanghai/Singapore SSH exits
 - GFS run: `2026-07-06T06`
 - Start hour: `2026-07-06T06`
 - Frames per point: 50
@@ -52,30 +52,34 @@ Completed:
 - Offset `0`: 1 batch, 50 points, 517,500 values, 0 mismatch
 - Offset `50`: 2 batches, 100 points, 1,035,000 values, 0 mismatch
 - Offset `150`: 3 batches, 150 points, 1,552,500 values, 0 mismatch
+- Offset `300`: 3 batches, 150 points, 1,552,500 values, 0 mismatch
+  - Report root: `docs\validation\reports\gfs-2026070606-pressure16-offset300-700x50-refsingapore-20260707T002343`
+  - Stopped before batch 4 because Singapore official-reference exit returned `429 Hourly API request limit exceeded`.
 
 Total current 06Z evidence:
 
-- 6 batches
-- 300 distinct points
+- 9 batches
+- 450 distinct points
 - 50 frames per point
-- 3,105,000 checked values
+- 4,657,500 checked values
 - 0 mismatch
 
 Stop reason:
 
 - Official API returned `429 Daily API request limit exceeded` through both Seoul and Shanghai reference exits.
+- Singapore reference exit then completed 3 additional 50-point batches and stopped on `429 Hourly API request limit exceeded`.
 - This is an external official API limit, not a local parity mismatch.
 
 Next resume point:
 
-- Continue at `--point-offset 300`
-- Remaining target: 700 points, 14 batches
+- Continue at `--point-offset 450`
+- Remaining target: 550 points, 11 batches
 
 Resume command template:
 
 ```powershell
 $ts=(Get-Date -Format 'yyyyMMddTHHmmss')
-$out="docs\validation\reports\gfs-2026070606-pressure16-offset300-700x50-ref<exit>-$ts"
+$out="docs\validation\reports\gfs-2026070606-pressure16-offset450-550x50-ref<exit>-$ts"
 python scripts\validate_openmeteo_official_50point_batches.py `
   --local-openmeteo-mode direct `
   --direct-ssh-host singapore `
@@ -83,14 +87,14 @@ python scripts\validate_openmeteo_official_50point_batches.py `
   --reference-ssh-host <exit> `
   --scopes gfs `
   --openmeteo-image weather-forecast-openmeteo `
-  --openmeteo-tag latest `
+  --openmeteo-tag 313077c `
   --gfs-run 2026-07-06T06 `
   --gfs-start-hour 2026-07-06T06 `
   --cams-start-hour 2026-07-06T00 `
   --frames 50 `
-  --batches 14 `
+  --batches 11 `
   --points-per-batch 50 `
-  --point-offset 300 `
+  --point-offset 450 `
   --chunk-size 20 `
   --timeout 120 `
   --request-retries 1 `
