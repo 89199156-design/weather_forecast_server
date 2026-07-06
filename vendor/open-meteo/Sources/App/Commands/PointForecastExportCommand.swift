@@ -187,11 +187,17 @@ struct PointForecastExportCommand: AsyncCommand {
         var variableMetadata: [String: PointForecastExportVariableMetadata] = [:]
         var timestamps: [Int]?
 
-        let domains: [MultiDomains]
+        let gfsDomains: [MultiDomains]
+        let camsDomain: CamsDomain?
         if request.scope == "cams" {
-            domains = [try MultiDomains.load(rawValue: request.model)]
+            camsDomain = CamsDomain(rawValue: request.model)
+            guard camsDomain != nil else {
+                throw ForecastApiError.generic(message: "unknown CAMS model: \(request.model)")
+            }
+            gfsDomains = []
         } else if request.scope == "gfs" {
-            domains = try MultiDomains.load(commaSeparatedOptional: params.models)?.map { $0 == .best_match ? .best_match : $0 } ?? [.best_match]
+            camsDomain = nil
+            gfsDomains = try MultiDomains.load(commaSeparatedOptional: params.models)?.map { $0 == .best_match ? .best_match : $0 } ?? [.best_match]
         } else {
             throw ForecastApiError.generic(message: "unknown scope: \(request.scope)")
         }
@@ -227,19 +233,22 @@ struct PointForecastExportCommand: AsyncCommand {
                 pastDaysMax: pastDaysMax
             )
             if request.scope == "cams" {
-                let rawReaders = try await domains.asyncFlatMap { domain in
-                    try await domain.getReader(
-                        lat: coordinate.latitude,
-                        lon: coordinate.longitude,
-                        elevation: coordinate.elevation,
-                        mode: .land,
-                        options: options,
-                        include15Min: false
-                    )
+                guard let camsDomain else {
+                    throw ForecastApiError.generic(message: "missing CAMS domain")
                 }
-                guard !rawReaders.isEmpty else {
+                guard let rawReader = try await GenericReader<CamsDomain, CamsVariable>(
+                    domain: camsDomain,
+                    lat: coordinate.latitude,
+                    lon: coordinate.longitude,
+                    elevation: coordinate.elevation,
+                    mode: .land,
+                    options: options
+                ) else {
                     throw ForecastApiError.noDataAvailableForThisLocation
                 }
+                let rawReaders: [any GenericReaderProtocol] = [
+                    CamsReader(reader: GenericReaderCached(reader: rawReader))
+                ]
                 let timeHourlyRead = time.hourlyRead.with(dtSeconds: 3600)
                 let timeHourlyDisplay = time.hourlyDisplay.with(dtSeconds: 3600)
                 let timeRead = timeHourlyRead.toSettings(run: params.run)
@@ -268,7 +277,7 @@ struct PointForecastExportCommand: AsyncCommand {
                 continue
             }
 
-            let readers: [MultiDomainsReader] = try await domains.asyncCompactMap { domain in
+            let readers: [MultiDomainsReader] = try await gfsDomains.asyncCompactMap { domain in
                 guard let r = try await domain.getReaders(
                     lat: coordinate.latitude,
                     lon: coordinate.longitude,
