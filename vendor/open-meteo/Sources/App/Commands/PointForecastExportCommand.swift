@@ -227,6 +227,48 @@ struct PointForecastExportCommand: AsyncCommand {
                 allowedRange: allowedRange,
                 pastDaysMax: pastDaysMax
             )
+            if request.scope == "cams" {
+                let rawReaders = try await domains.asyncFlatMap { domain in
+                    try await domain.getReader(
+                        lat: coordinate.latitude,
+                        lon: coordinate.longitude,
+                        elevation: coordinate.elevation,
+                        mode: .land,
+                        options: options,
+                        include15Min: false
+                    )
+                }
+                guard !rawReaders.isEmpty else {
+                    throw ForecastApiError.noDataAvailableForThisLocation
+                }
+                let timeHourlyRead = time.hourlyRead.with(dtSeconds: 3600)
+                let timeHourlyDisplay = time.hourlyDisplay.with(dtSeconds: 3600)
+                let timeRead = timeHourlyRead.toSettings(run: params.run)
+                let timeCount = timeHourlyRead.count
+                if timestamps == nil {
+                    timestamps = timeHourlyDisplay.map { $0.timeIntervalSince1970 }
+                }
+
+                for variable in request.variables {
+                    guard let handle = handles[variable] else {
+                        continue
+                    }
+                    guard let output = try await readMixed(readers: rawReaders, variable: variable, time: timeRead)?.convertAndRound(params: params) else {
+                        let values = Array(repeating: Float.nan, count: timeCount)
+                        try handle.write(contentsOf: values.withUnsafeBufferPointer { Data(buffer: $0) })
+                        continue
+                    }
+                    if variableMetadata[variable] == nil {
+                        variableMetadata[variable] = PointForecastExportVariableMetadata(
+                            unit: "\(output.unit)",
+                            significantDigits: output.unit.significantDigits
+                        )
+                    }
+                    try handle.write(contentsOf: output.data.withUnsafeBufferPointer { Data(buffer: $0) })
+                }
+                continue
+            }
+
             let readers: [MultiDomainsReader] = try await domains.asyncCompactMap { domain in
                 guard let r = try await domain.getReaders(
                     lat: coordinate.latitude,
@@ -257,40 +299,6 @@ struct PointForecastExportCommand: AsyncCommand {
             guard !readers.isEmpty else {
                 throw ForecastApiError.noDataAvailableForThisLocation
             }
-            if request.scope == "cams" {
-                let hourlyReaders = readers.compactMap(\.readerHourly)
-                guard !hourlyReaders.isEmpty else {
-                    throw ForecastApiError.noDataAvailableForThisLocation
-                }
-                let hourlyDt = (params.temporal_resolution ?? temporalResolutionDefault).dtSeconds ?? hourlyReaders[0].modelDtSeconds
-                let timeHourlyRead = time.hourlyRead.with(dtSeconds: hourlyDt)
-                let timeHourlyDisplay = time.hourlyDisplay.with(dtSeconds: hourlyDt)
-                let timeRead = timeHourlyRead.toSettings(run: params.run)
-                let timeCount = timeHourlyRead.count
-                if timestamps == nil {
-                    timestamps = timeHourlyDisplay.map { $0.timeIntervalSince1970 }
-                }
-
-                for variable in request.variables {
-                    guard let handle = handles[variable] else {
-                        continue
-                    }
-                    guard let output = try await readMixed(readers: hourlyReaders, variable: variable, time: timeRead)?.convertAndRound(params: params) else {
-                        let values = Array(repeating: Float.nan, count: timeCount)
-                        try handle.write(contentsOf: values.withUnsafeBufferPointer { Data(buffer: $0) })
-                        continue
-                    }
-                    if variableMetadata[variable] == nil {
-                        variableMetadata[variable] = PointForecastExportVariableMetadata(
-                            unit: "\(output.unit)",
-                            significantDigits: output.unit.significantDigits
-                        )
-                    }
-                    try handle.write(contentsOf: output.data.withUnsafeBufferPointer { Data(buffer: $0) })
-                }
-                continue
-            }
-
             let timeLocal = TimerangeLocal(range: time.dailyRead.range, utcOffsetSeconds: timezone.utcOffsetSeconds)
             let location = ForecastapiResult<MultiDomainsReader>.PerLocation(
                 timezone: timezone,
