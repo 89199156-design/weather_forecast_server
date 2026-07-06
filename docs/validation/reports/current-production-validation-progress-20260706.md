@@ -156,23 +156,26 @@ Replace `<exit>` with a reference SSH host that is not currently API-limited.
 
 GFS current layer validation:
 
-- Report: `docs/validation/reports/layers-gfs-2026070606-182f4f6-2000x121-localom-20260706.md`
+- Report: `docs/validation/reports/layers-gfs-2026070612-313077c-2000x121-localom-20260706T183324Z.md`
 - Scope: GFS layers
 - Points: 2000
 - Frames: 121
 - Layers: 18
 - Checked values: 4,598,000
 - Mismatch count: 0
+- Source batch: `2026-07-06T12`
 
 CAMS current layer validation:
 
-- Report: `docs/validation/reports/layers-cams-2026070600-182f4f6-2000x121-localom-20260706.md`
+- Report: `docs/validation/reports/layers-cams-2026070600-313077c-2000x121-localom-20260706T184931Z.md`
 - Scope: CAMS layers
 - Points: 2000
 - Frames: 121
 - Layers: 4
 - Checked values: 968,000
 - Mismatch count: 0
+- Source batch: `2026-07-06T00`
+- Validation export cleanup: `data/openmeteo/validation_layer_export` reduced to `4.0K`; production layer directories were left in place.
 
 ## CAMS Official API Parity Evidence
 
