@@ -43,10 +43,17 @@ from validate_openmeteo_point_api import (  # noqa: E402
 
 DEFAULT_OFFICIAL_GFS_PRESSURE_COMPARE_LEVELS_HPA: tuple[int, ...] = (
     1000,
+    975,
+    950,
     925,
+    900,
     850,
+    800,
+    750,
     700,
+    650,
     600,
+    550,
     500,
     400,
     300,

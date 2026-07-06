@@ -330,6 +330,29 @@ def test_parse_scopes_requires_known_scope_names():
         raise AssertionError("invalid scope should fail")
 
 
+def test_default_gfs_pressure_compare_levels_cover_full_product_contract():
+    validator = load_module()
+
+    assert validator.DEFAULT_OFFICIAL_GFS_PRESSURE_COMPARE_LEVELS_HPA == (
+        1000,
+        975,
+        950,
+        925,
+        900,
+        850,
+        800,
+        750,
+        700,
+        650,
+        600,
+        550,
+        500,
+        400,
+        300,
+        200,
+    )
+
+
 def test_missing_runtime_dirs_do_not_claim_variables(tmp_path):
     validator = load_module()
 
