@@ -70,10 +70,10 @@ INSERT INTO cronjobs (
   status, entry_ids, secret
 ) VALUES (
   datetime('now','localtime'), datetime('now','localtime'),
-  ?, 'shell', '*/20 * * * *', '', '', ?,
-  '', '', '', '', '', '', '',
-  '', 0, '', '', 10,
-  'Enable', '', ''
+  ?, 'shell', '*/20 * * * *', NULL, NULL, ?,
+  NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+  NULL, NULL, NULL, NULL, 10,
+  'Enable', NULL, NULL
 )
 """
 
