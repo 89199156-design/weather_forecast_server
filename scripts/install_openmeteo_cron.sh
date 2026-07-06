@@ -19,7 +19,6 @@ CRON_TZ=UTC
 
 */20 * * * * $CRON_USER cd $APP_DIR && bash scripts/run_gfs_probe_and_cycle.sh
 */20 * * * * $CRON_USER cd $APP_DIR && bash scripts/run_cams_ftp_scheduled_cycle.sh
-0 10,22 * * * $CRON_USER cd $APP_DIR && bash scripts/run_cams_ads_scheduled_cycle.sh
 EOF
 
 install -d -m 0755 "$(dirname "$CRON_FILE")"

@@ -60,9 +60,9 @@ the other after failure. Put real credential values in
 `config/singapore.private.env`; the tracked example config only contains empty
 variable names.
 
-For CAMS FTP/ECPDS, the scheduler can run every 30 minutes like GFS. It probes
-the newest complete remote run first; ADS/CDS mode keeps the fixed UTC target
-schedule because it is an API request path rather than direct file publication.
+For CAMS FTP/ECPDS, the scheduler can run every 20 minutes like GFS. It probes
+the newest complete remote run first. ADS/CDS remains a manual backup path and
+is not installed into production cron by default.
 
 Point-output parity also requires Open-Meteo's Copernicus DEM90 static data for
 land elevation correction. For production, keep the runtime data local and
@@ -130,8 +130,8 @@ bash scripts/run_gfs_probe_and_cycle.sh
 
 CAMS FTP/ECPDS global forecasts use the same probe pattern as GFS: the scheduled
 script checks the remote files and starts CAMS FTP/ECPDS production only after a
-new complete run is available. The ADS/CDS backup path is separate and keeps its
-own fixed UTC schedule script.
+new complete run is available. The ADS/CDS backup path is separate and can be
+run manually when needed; it is not part of the default production crontab.
 
 ```bash
 bash scripts/run_cams_ftp_scheduled_cycle.sh
@@ -141,8 +141,6 @@ The production crontab should use:
 
 ```cron
 CRON_TZ=UTC
-*/30 * * * * WEATHER_FORECAST_APP_DIR=/opt/1panel/apps/weather_forecast_server /bin/bash /opt/1panel/apps/weather_forecast_server/scripts/run_gfs_probe_and_cycle.sh
-*/30 * * * * WEATHER_FORECAST_APP_DIR=/opt/1panel/apps/weather_forecast_server /bin/bash /opt/1panel/apps/weather_forecast_server/scripts/run_cams_ftp_scheduled_cycle.sh
-# ADS/CDS backup only, if explicitly enabled:
-# 30 10,22 * * * WEATHER_FORECAST_APP_DIR=/opt/1panel/apps/weather_forecast_server /bin/bash /opt/1panel/apps/weather_forecast_server/scripts/run_cams_ads_scheduled_cycle.sh
+*/20 * * * * WEATHER_FORECAST_APP_DIR=/opt/1panel/apps/weather_forecast_server /bin/bash /opt/1panel/apps/weather_forecast_server/scripts/run_gfs_probe_and_cycle.sh
+*/20 * * * * WEATHER_FORECAST_APP_DIR=/opt/1panel/apps/weather_forecast_server /bin/bash /opt/1panel/apps/weather_forecast_server/scripts/run_cams_ftp_scheduled_cycle.sh
 ```
