@@ -18,6 +18,12 @@
   - `scripts/run_cams_ftp_scheduled_cycle.sh` every 20 minutes
 - No CAMS ADS/CDS cron entry exists on Singapore.
 - `scripts/run_cams_ads_scheduled_cycle.sh` does not exist.
+- Follow-up Singapore cron check on 2026-07-07 confirmed:
+  - `CRON_TZ=UTC`
+  - both installed cron entries are `*/20 * * * *`
+  - GFS probe uses `flock` on probe, GFS cycle, and global production locks.
+  - CAMS FTP schedule uses `flock` on schedule, CAMS FTP cycle, and global production locks.
+  - CAMS ADS exists only as manual production/download scripts, not as a scheduled 20-minute probe path.
 - Static code scan found no cross references between:
   - CAMS FTP production path and CAMS ADS/CDS backup path
   - GFS production path and CAMS production paths
@@ -121,6 +127,10 @@ Fresh attempts:
 - Added batches: 0
 - Added checked values: 0
 - Stop reason: official API daily quota exhausted across all currently configured reference exits. This is not a local `.om` mismatch.
+- Follow-up light probe on 2026-07-07 using the first real offset-650 request shape (`10 points x 20 variables`) still returned:
+  - HTTP status: `429`
+  - Content-Type: `application/json; charset=utf-8`
+  - Body: `{"reason":"Daily API request limit exceeded. Please try again tomorrow.","error":true}`
 
 Resume command template:
 
@@ -241,3 +251,12 @@ Remaining mandatory items:
 - Finish GFS official parity for the remaining 350 current-run points after official API quota recovers or another reference exit is available.
 - Run or refresh full current-batch layer-to-local-OM parity if production WebP output is regenerated after the recorded layer reports.
 - Keep this report updated with final 1000-point results before claiming completion.
+## Deployment image cleanup on 2026-07-07
+
+Singapore private runtime config now pins `WEATHER_OPENMETEO_TAG=313077c`.
+Old Open-Meteo image tags were removed from Singapore; remaining tags are:
+
+- `weather-forecast-openmeteo:313077c`
+- `weather-forecast-openmeteo:latest`
+
+Both remaining tags point to the same image id (`f099e313b4a5`).
