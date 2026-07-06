@@ -133,14 +133,19 @@ def run_complete(
 ) -> tuple[bool, list[ProbeResult]]:
     urls = cams_urls(run, variables, forecast_hours)
     failures: list[ProbeResult] = []
+    batch_size = max(1, workers)
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = [executor.submit(check_url, url, authorization, timeout_seconds) for url in urls]
-        for future in concurrent.futures.as_completed(futures):
-            result = future.result()
-            if not result.ok:
-                failures.append(result)
-                if len(failures) >= 20:
-                    return False, failures
+        for index in range(0, len(urls), batch_size):
+            futures = [
+                executor.submit(check_url, url, authorization, timeout_seconds)
+                for url in urls[index : index + batch_size]
+            ]
+            for future in concurrent.futures.as_completed(futures):
+                result = future.result()
+                if not result.ok:
+                    failures.append(result)
+            if failures:
+                return False, failures
     return not failures, failures
 
 

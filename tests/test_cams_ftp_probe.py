@@ -39,3 +39,28 @@ def test_cams_probe_forecast_hours_are_sorted_unique_and_bounded():
 
     assert probe.probe_forecast_hours("120,0,1,1", max_forecast_hour=120) == [0, 1, 120]
     assert probe.probe_forecast_hours(None, max_forecast_hour=24) == list(range(25))
+
+
+def test_cams_probe_stops_scheduling_urls_after_first_failure(monkeypatch):
+    probe = load_module()
+    run = datetime(2026, 7, 3, 0, tzinfo=timezone.utc)
+    calls = []
+
+    def fake_check_url(url, authorization, timeout_seconds):
+        calls.append(url)
+        return probe.ProbeResult(url=url, ok=False, detail="http_429")
+
+    monkeypatch.setattr(probe, "check_url", fake_check_url)
+
+    complete, failures = probe.run_complete(
+        run=run,
+        variables=["pm2_5"],
+        forecast_hours=list(range(121)),
+        timeout_seconds=1,
+        workers=4,
+        authorization="Basic test",
+    )
+
+    assert complete is False
+    assert failures[0].detail == "http_429"
+    assert len(calls) <= 4
