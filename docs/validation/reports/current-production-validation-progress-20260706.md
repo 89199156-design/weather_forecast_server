@@ -76,6 +76,11 @@ Stop reason:
 - Singapore reference exit then completed 3 additional 50-point batches and stopped on `429 Hourly API request limit exceeded`.
 - Local VPN reference exit then completed 1 additional 50-point batch and stopped on `429 Too Many Requests`.
 - Singapore reference exit then completed 3 additional 50-point batches and stopped on `429 Minutely API request limit exceeded`.
+- Follow-up checks at offset `650` did not add any batches:
+  - Shanghai still returned `429 Daily API request limit exceeded`.
+  - Seoul still returned `429 Daily API request limit exceeded`.
+  - Local direct/VPN returned `429 Too Many Requests`.
+  - v2rayN local proxy `127.0.0.1:10808` had exit IP `43.156.81.216` and also returned `429 Too Many Requests`.
 - This is an external official API limit, not a local parity mismatch.
 
 Next resume point:
