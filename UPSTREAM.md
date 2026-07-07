@@ -12,10 +12,15 @@ updated whenever upstream code is imported, rebased, or patched.
 - Commit subject:
   `fix: weather codes slightly less thunderstorm lat scaling`
 - Reason for this baseline:
-  This single upstream commit contains the GFS weather-code behavior and
-  JSON/CSV numeric writer behavior validated against the current public
-  Open-Meteo APIs. The vendored tree must not mix reader, weather-code, writer,
-  interpolation, or model-fallback files from different Open-Meteo commits.
+  Validation against the current public Open-Meteo API showed that the older
+  `acfb7eb13ffdca9d3772c57716c240d3a7d73da5` baseline missed thunderstorm
+  weather-code cases, `10e3cc3902d9193a5af01650876bbc1f09ebb114` over-produced
+  thunderstorm weather codes in low-latitude high-CAPE/no-precipitation cases,
+  and the newer `ceb2c7244bc3cae269adb4014a4fd6909cdee1c7` baseline applied
+  later thunderstorm-suppression changes that also mismatched the public API on
+  the same data inputs. The vendored tree must not mix reader, weather-code,
+  writer, interpolation, or model-fallback files from different Open-Meteo
+  commits.
 
 ## Open-Meteo SDK
 
@@ -63,38 +68,14 @@ paths, not from a separately maintained Python clone or local formula.
 
 ## Local Patches In Vendored Open-Meteo
 
-Current intentional differences from upstream `4efb9c49`:
+There are no intentional local patches inside `vendor/open-meteo`.
 
-- `Dockerfile`: copies Arrow/Parquet runtime libraries needed by the packaged
-  image.
-- `CamsDomain.swift`: `cams_global` uses the configured China/surrounding-region
-  grid slice and exposes a helper used by the ADS/CDS area downloader.
-- `CamsDownload.swift`: `cams_global` uses ECMWF CAMS FTP/ECPDS credentials.
-  FTP/ECPDS NetCDF fields are cropped to the configured China/surrounding-region
-  grid slice before Open-Meteo writes `.om` files. Multi-level CAMS files are
-  requested hourly rather than filtered to 3-hour steps.
-- `CamsRegionalDownload.swift`: shared regional NetCDF crop/write helper used
-  by the CAMS FTP/ECPDS and isolated ADS/CDS download commands.
-- `CamsDownloadAds.swift`: the project-authorized ADS/CDS area request is kept
-  as a separate backup command. It is not selected by the FTP/ECPDS production
-  path and has no shared source-switch branch.
-- `CamsGreenhouseGases.swift`: greenhouse-gas ADS helper is attached to the
-  ADS/CDS command after the command split.
-- `CamsReader.swift`, `VariableHourly.swift`, `AirQuality.swift`, and
-  `FlatBuffers+WeatherApi.swift`: add project-specific `ch_aqi` and
-  `ch_iaqi_*` variables. These are not official Open-Meteo parity variables.
-- `configure.swift`: registers the isolated `download-cams-ads` command and the
-  direct `export-layer-grid` command.
-- `LayerGridExportCommand.swift`: exports grid values by calling the same
-  Open-Meteo reader/mixing path used after API request parsing, avoiding the
-  removed internal HTTP hop.
-- `PointForecastExportCommand.swift`: exports point forecast JSON through the
-  same Open-Meteo reader/mixing path for validation without running a local
-  HTTP API.
-- GFS domain/download files also contain the configured China/surrounding-region
-  source and production area adaptations.
-- Repository-local OpenAPI files and upstream test files may differ from the
-  selected upstream tree; they are not part of the runtime forecast engine.
+The vendored directory is imported as a whole from upstream
+`4efb9c49fb4a3718ed385fb22580d2e0fc56bdb2`. Production code that adapts data
+source credentials, China/surrounding-region handling, WebP generation,
+mirroring, scheduling, or project-specific API output must live outside the
+vendored Open-Meteo source tree.
 
-Any other vendored difference requires a root-cause note and validation record
-before it can be treated as intentional.
+Any future change under `vendor/open-meteo` must be a full upstream baseline
+replacement, not a hand-written patch or a mix of files from different upstream
+commits.

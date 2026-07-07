@@ -62,19 +62,18 @@ def test_gfs_hourly_deriver_keeps_upstream_derived_surface_logic():
     vpd_case = deriver.split("case .vapour_pressure_deficit, .vapor_pressure_deficit:", 1)[1].split("case .evapotranspiration:", 1)[0]
 
     assert 'let rh = self.getDeriverMap(variable: .relativehumidity_2m)' in vpd_case
-    assert 'let dewpoint = self.getDeriverMap(variable: .dew_point_2m)' not in vpd_case
     assert ".two(.raw(temperature), .mapped(rh))" in vpd_case
 
     upstream_required_snippets = (
         'case .weather_code, .weathercode:',
-        'convectiveInhibition: Reader.variableFromString("convective_inhibition")',
-        'boundaryLayerHeight: Reader.variableFromString("boundary_layer_height")',
         '.windSpeed(u: Reader.variableFromString("wind_u_component_100m"), v: Reader.variableFromString("wind_v_component_100m"), levelFrom: 100, levelTo: 80)',
         '.windDirection(u: Reader.variableFromString("wind_u_component_100m"), v: Reader.variableFromString("wind_v_component_100m"))',
         '.windSpeed(u: Reader.variableFromString("wind_u_component_200m"), v: Reader.variableFromString("wind_v_component_200m"), levelFrom: 200, levelTo: 180)',
     )
     for snippet in upstream_required_snippets:
         assert snippet in deriver
+    assert 'convectiveInhibition: Reader.variableFromString("convective_inhibition")' in deriver
+    assert 'boundaryLayerHeight: Reader.variableFromString("boundary_layer_height")' in deriver
 
 
 def test_openmeteo_chmi_domain_registration_matches_selected_upstream_case():
@@ -95,53 +94,35 @@ def test_upstream_record_uses_one_openmeteo_engine_baseline():
     assert "`98a3e0f00bf13633c5511a6c7788462088bfe752`" not in upstream
 
 
-def test_vendored_openmeteo_only_patches_download_transport_and_region_grid():
+def test_vendored_openmeteo_only_has_required_gfs_region_patches():
     domain = read_vendor("Sources/App/Gfs/GfsDomain.swift")
     download = read_vendor("Sources/App/Gfs/GfsDownload.swift")
     cams_domain = read_vendor("Sources/App/Cams/CamsDomain.swift")
     cams_download = read_vendor("Sources/App/Cams/CamsDownload.swift")
     curl = read_vendor("Sources/App/Helper/Download/Curl.swift")
 
-    forbidden_tokens = (
-        "gfsNoaaDownloadHeaders",
-        "roundToGribDecimalScale",
-        "decimalScaleFactor",
-        "GfsController",
-        "weather_code",
-    )
-
-    combined = "\n".join((domain, download, curl))
-    for token in forbidden_tokens:
-        assert token not in combined
-
     assert "WeatherForecastServerSourceConfig" in domain
+    assert "regularGridSlice" in domain
+    assert "RegionalRegularGrid" in domain
+    assert "WEATHER_REGION_LEFT_LON" in domain
     assert "GfsRegionalDownload" in download
     assert "decodeRegional" in download
+
+    combined = "\n".join((domain, download, curl))
+    for token in ("WEATHER_GFS_FILTER", "GfsController", "weather_code", "calculateThunderstormProbability"):
+        assert token not in combined
+
     assert "downloadIndexedGrib" in download
-    assert "downloadFilteredIndexedGrib" not in download
-    assert "filter_gfs_sflux" not in download
-    assert "WEATHER_GFS_FILTER" not in download
-    assert "regularGridSlice" in domain
-    assert "struct RegionalRegularGrid: Gridable" in domain
-    assert "return base.getCoordinates(gridpoint: (y + y0) * base.nx + x + x0)" in domain
-    assert domain.count("return RegionalRegularGrid(base: base, x0: slice.x0, y0: slice.y0, nx: slice.nx, ny: slice.ny)") == 2
-    assert "let base = RegularGrid(nx: 1440, ny: 721, latMin: -90, lonMin: -180, dx: 0.25, dy: 0.25)" in domain
-    assert domain.count("haloCells: 2") == 2
-    assert download.count("haloCells: 2") == 2
-    assert "let dy = Float(0.11714935)" in download
+    assert "RegularGrid(nx: 1440, ny: 721, latMin: -90, lonMin: -180, dx: 0.25, dy: 0.25)" in domain
+    assert "return RegionalRegularGrid(base: base" in domain
+
     assert "downloadCamsGlobalArea" not in cams_download
     assert "cams-global-atmospheric-composition-forecasts" not in cams_download
     assert "getCamsGlobalAreaApiName" not in cams_domain
     assert "downloadCamsGlobal(application:" in cams_download
-    assert "domain.regionalDownloadSlice" in cams_download
-    assert "data.shift180LongitudeAndFlipLatitude(nt: 1, ny: sourceNy, nx: sourceNx)" in cams_download
-    assert "data = data.sliceGrid(" in cams_download
-    grid_source = cams_domain.split("var grid: any Gridable", 1)[1]
-    cams_global_grid = grid_source.split("case .cams_global:", 1)[1].split("case .cams_global_greenhouse_gases:", 1)[0]
-    assert "WeatherForecastServerSourceConfig.regularGridSlice" in cams_global_grid
-    assert "let base = RegularGrid(nx: 900, ny: 451, latMin: -90, lonMin: -180, dx: 0.4, dy: 0.4)" in cams_global_grid
-    assert "RegularGrid(nx: slice.nx, ny: slice.ny" not in cams_global_grid
-    assert "RegionalRegularGrid(base: base" in cams_global_grid
+    assert "domain.regionalDownloadSlice" not in cams_download
+    assert "data.sliceGrid(" not in cams_download
+    assert "WeatherForecastServerSourceConfig" not in cams_domain
 
 
 def test_openmeteo_raw_download_is_the_default_runtime_data_mode():
@@ -153,108 +134,63 @@ def test_openmeteo_raw_download_is_the_default_runtime_data_mode():
     assert "download-gfs gfs025" in script
 
 
-def test_cams_downloaders_keep_ftp_and_ads_isolated_and_request_every_hour():
+def test_cams_downloaders_remain_upstream_without_project_ads_split():
     ftp_download = read_vendor("Sources/App/Cams/CamsDownload.swift")
-    ads_download = read_vendor("Sources/App/Cams/CamsDownloadAds.swift")
     configure = read_vendor("Sources/App/configure.swift")
 
     assert "func downloadCamsGlobalArea" not in ftp_download
     assert "CamsGlobalAreaQuery" not in ftp_download
-    assert "downloadCdsApi(" not in ftp_download
     assert "readCamsGlobalArea" not in ftp_download
-    assert "ADS" not in ftp_download
-    assert "CDS" not in ftp_download
-    assert "cdskey" not in ftp_download.lower()
+    assert "func downloadCamsGlobalArea" not in ftp_download
 
-    assert "struct DownloadCamsAdsCommand" in ads_download
-    assert "func downloadCamsGlobalArea" in ads_download
-    assert "CamsGlobalAreaQuery" in ads_download
-    assert "downloadCdsApi(" in ads_download
-    assert "readCamsGlobalArea" in ads_download
-    assert "WEATHER_CAMS_FTP" not in ads_download
-    assert "ftpuser" not in ads_download.lower()
-    assert "ftppassword" not in ads_download.lower()
+    assert not (ROOT / "vendor" / "open-meteo" / "Sources" / "App" / "Cams" / "CamsDownloadAds.swift").exists()
     assert 'app.asyncCommands.use(DownloadCamsCommand(), as: "download-cams")' in configure
-    assert 'app.asyncCommands.use(DownloadCamsAdsCommand(), as: "download-cams-ads")' in configure
-    assert "hour % 3" not in ftp_download
-    assert "hour % 3" not in ads_download
+    assert 'DownloadCamsAdsCommand' not in configure
 
 
-def test_cams_greenhouse_gases_helper_belongs_to_ads_command_after_split():
+def test_cams_greenhouse_gases_helper_remains_upstream_download_command_extension():
     greenhouse = read_vendor("Sources/App/Cams/CamsGreenhouseGases.swift")
 
-    assert "extension DownloadCamsAdsCommand" in greenhouse
-    assert "extension DownloadCamsCommand" not in greenhouse
+    assert "extension DownloadCamsCommand" in greenhouse
+    assert "extension DownloadCamsAdsCommand" not in greenhouse
 
 
-def test_cams_greenhouse_gases_are_region_sliced_like_other_global_domains():
+def test_cams_greenhouse_gases_are_not_region_sliced_inside_vendor():
     domain = read_vendor("Sources/App/Cams/CamsDomain.swift")
-    region = read_vendor("Sources/App/Cams/CamsRegionalDownload.swift")
     greenhouse = read_vendor("Sources/App/Cams/CamsGreenhouseGases.swift")
 
     grid_source = domain.split("var grid: any Gridable", 1)[1]
     greenhouse_grid = grid_source.split("case .cams_global_greenhouse_gases:", 1)[1].split("case .cams_europe:", 1)[0]
-    assert "WeatherForecastServerSourceConfig.regularGridSlice" in greenhouse_grid
-    assert "let base = RegularGrid(nx: 3600, ny: 1801, latMin: -90, lonMin: -180, dx: 0.1, dy: 0.1)" in greenhouse_grid
-    assert "RegionalRegularGrid(base: base" in greenhouse_grid
-
-    assert "case .cams_global_greenhouse_gases:" in region
-    assert "fullNx: 3600" in region
-    assert "fullNy: 1801" in region
-    assert "dx: 0.1" in region
-    assert "dy: 0.1" in region
-
-    assert "let regionalSlice = domain.regionalDownloadSlice" in greenhouse
-    assert "sourceNx = regionalSlice?.fullNx" in greenhouse
-    assert "data = data.sliceGrid(" in greenhouse
+    assert "RegularGrid(nx: 3600, ny: 1801, latMin: -90, lonMin: -180, dx: 0.1, dy: 0.1)" in greenhouse_grid
+    assert "RegionalRegularGrid(base: base" not in greenhouse_grid
+    assert not (ROOT / "vendor" / "open-meteo" / "Sources" / "App" / "Cams" / "CamsRegionalDownload.swift").exists()
+    assert "regionalSlice" not in greenhouse
+    assert "data.sliceGrid(" not in greenhouse
 
 
-def test_cams_global_uses_ftp_ecpds_credentials_only():
+def test_cams_global_uses_upstream_ftp_options_not_project_env_config():
     download = read_vendor("Sources/App/Cams/CamsDownload.swift")
     global_case = download.split("case .cams_global:", 1)[1].split("case .cams_europe:", 1)[0]
 
-    assert 'WeatherForecastServerSourceConfig.string("WEATHER_CAMS_FTP_USER"' in global_case
-    assert 'WeatherForecastServerSourceConfig.string("WEATHER_CAMS_FTP_PASSWORD"' in global_case
+    assert "signature.ftpuser" in global_case
+    assert "signature.ftppassword" in global_case
+    assert "WEATHER_CAMS_FTP_USER" not in global_case
+    assert "WEATHER_CAMS_FTP_PASSWORD" not in global_case
     assert "downloadCamsGlobal(" in global_case
     assert "cdskey" not in global_case.lower()
     assert "downloadCamsGlobalArea(" not in global_case
-    assert "Both WEATHER_CAMS_FTP_USER and WEATHER_CAMS_FTP_PASSWORD are required" in global_case
 
 
-def test_china_aqi_hourly_uses_current_hour_concentrations_without_rolling_windows():
+def test_china_aqi_is_not_patched_into_vendored_cams_reader():
     reader = read_vendor("Sources/App/Cams/CamsReader.swift")
-    china_cases = reader.split("case .ch_aqi:", 1)[1].split("case .is_day:", 1)[0]
 
-    assert ".slidingAverageDroppingFirstDt" not in china_cases
-    assert "time.with(start:" not in china_cases
-    assert "dropFirst" not in china_cases
-    assert "24 * 3600" not in china_cases
-    assert "8 * 3600" not in china_cases
-    assert "o3_8h_mean" not in china_cases
+    assert "case .ch_aqi:" not in reader
+    assert "ch_iaqi_" not in reader
 
 
-def test_china_aqi_formula_uses_hj633_2026_hourly_breakpoints():
+def test_china_aqi_formula_is_not_patched_into_vendored_air_quality():
     air_quality = read_vendor("Sources/App/Helper/AirQuality.swift")
     reader = read_vendor("Sources/App/Cams/CamsReader.swift")
-    china = air_quality.split("enum ChinaAirQuality {", 1)[1].split("extension Array where Element == Float", 1)[0]
 
-    def array(name: str) -> list[int]:
-        match = re.search(rf"static let {name}: \[Float\] = \[([^\]]+)\]", china)
-        assert match, f"missing {name}"
-        return [int(value.strip()) for value in match.group(1).split(",")]
-
-    assert array("iaqiBreakpoints") == [0, 50, 100, 150, 200, 300, 400, 500]
-    assert array("pm2_5HourlyThresholds") == [0, 35, 60, 115, 150, 250, 350, 500]
-    assert array("pm10HourlyThresholds") == [0, 50, 120, 250, 350, 420, 500, 600]
-    assert array("no2HourlyThresholds") == [0, 100, 200, 700, 1200, 2340, 3090, 3840]
-    assert array("o3HourlyThresholds") == [0, 160, 200, 300, 400, 800, 1000, 1200]
-    assert array("so2HourlyThresholds") == [0, 150, 500, 650, 800]
-    assert array("coHourlyThresholds") == [0, 5, 10, 35, 60, 90, 120, 150]
-
-    assert "return Swift.min(value.rounded(.up), maxIndex)" in china
-    assert (
-        "index(concentration: so2, thresholds: so2HourlyThresholds, indices: [0, 50, 100, 150, 200], cap: 200)"
-        in china
-    )
-    assert "ChinaAirQuality.indexCo(co: $0 / 1000)" in reader
-    assert "return ChinaAirQuality.maxIgnoringNaN(particles, gases)" in reader
+    assert "enum ChinaAirQuality" not in air_quality
+    assert "ChinaAirQuality" not in reader

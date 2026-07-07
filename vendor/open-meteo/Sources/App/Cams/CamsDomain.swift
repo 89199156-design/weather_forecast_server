@@ -107,29 +107,9 @@ enum CamsDomain: String, GenericDomain, CaseIterable {
     var grid: any Gridable {
         switch self {
         case .cams_global:
-            let base = RegularGrid(nx: 900, ny: 451, latMin: -90, lonMin: -180, dx: 0.4, dy: 0.4)
-            let slice = WeatherForecastServerSourceConfig.regularGridSlice(
-                fullNx: 900,
-                fullNy: 451,
-                latMin: Double(base.latMin),
-                lonMin: Double(base.lonMin),
-                dx: 0.4,
-                dy: 0.4,
-                region: WeatherForecastServerSourceConfig.region
-            )
-            return RegionalRegularGrid(base: base, x0: slice.x0, y0: slice.y0, nx: slice.nx, ny: slice.ny)
+            return RegularGrid(nx: 900, ny: 451, latMin: -90, lonMin: -180, dx: 0.4, dy: 0.4)
         case .cams_global_greenhouse_gases:
-            let base = RegularGrid(nx: 3600, ny: 1801, latMin: -90, lonMin: -180, dx: 0.1, dy: 0.1)
-            let slice = WeatherForecastServerSourceConfig.regularGridSlice(
-                fullNx: 3600,
-                fullNy: 1801,
-                latMin: Double(base.latMin),
-                lonMin: Double(base.lonMin),
-                dx: 0.1,
-                dy: 0.1,
-                region: WeatherForecastServerSourceConfig.region
-            )
-            return RegionalRegularGrid(base: base, x0: slice.x0, y0: slice.y0, nx: slice.nx, ny: slice.ny)
+            return RegularGrid(nx: 3600, ny: 1801, latMin: -90, lonMin: -180, dx: 0.1, dy: 0.1)
         case .cams_europe:
             // IMPORTANT: GRID is flipped! Therefore dy negative!
             return RegularGrid(nx: 700, ny: 420, latMin: /*30.05*/ 71.95, lonMin: -24.95, dx: 0.1, dy: -0.1)
@@ -511,12 +491,6 @@ enum CamsVariable: String, CaseIterable, GenericVariable, GenericVariableMixable
             return ("methane", massMixingToUgm3, "ch4")
         default:
             return nil
-        }
-    }
-
-    static func camsGlobalAreaFromGribShortName(_ shortName: String) -> Self? {
-        return Self.allCases.first {
-            $0.getCamsGlobalMeta()?.gribname == shortName
         }
     }
 }

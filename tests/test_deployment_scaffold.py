@@ -84,7 +84,7 @@ def test_validation_candidates_can_use_remote_inventory_without_local_data(tmp_p
     assert "wind_speed_850hPa" in variables
 
 
-def test_direct_validation_exports_local_variables_once_per_batch(monkeypatch, tmp_path):
+def test_http_validation_fetches_local_variables_by_chunk(monkeypatch, tmp_path):
     validator = load_validation_batches_module()
     local_requests = []
     reference_requests = []
@@ -109,12 +109,12 @@ def test_direct_validation_exports_local_variables_once_per_batch(monkeypatch, t
     monkeypatch.setattr(validator, "fetch_hourlies", fake_reference_hourlies)
 
     report = validator.validate_scope_batch(
-        scope="gfs",
+            scope="gfs",
         batch_index=1,
         points=[{"latitude": 30.0, "longitude": 120.0}],
         variables=["temperature_2m", "relative_humidity_2m", "wind_speed_10m"],
-        api_base_url="",
-        local_openmeteo_mode="direct",
+            api_base_url="http://127.0.0.1:18080/v1/forecast",
+            local_openmeteo_mode="http",
         data_dir=tmp_path,
         output_dir=tmp_path,
         openmeteo_image="image",
@@ -138,7 +138,7 @@ def test_direct_validation_exports_local_variables_once_per_batch(monkeypatch, t
     )
 
     assert report["passed"] is True
-    assert local_requests == [("temperature_2m", "relative_humidity_2m", "wind_speed_10m")]
+    assert local_requests == [("temperature_2m",), ("relative_humidity_2m",), ("wind_speed_10m",)]
     assert reference_requests == [("temperature_2m",), ("relative_humidity_2m",), ("wind_speed_10m",)]
 
 
@@ -726,7 +726,7 @@ def test_runtime_data_download_preserves_explicit_environment_over_config_file()
     assert capture_call < source_call < restore_call
 
 
-def test_openmeteo_downloader_only_changes_transport_and_region_grid():
+def test_openmeteo_downloader_only_changes_transport_and_gfs_region_grid():
     source = (ROOT / "vendor" / "open-meteo" / "Sources" / "App" / "Gfs" / "GfsDownload.swift").read_text(
         encoding="utf-8"
     )
@@ -743,24 +743,27 @@ def test_openmeteo_downloader_only_changes_transport_and_region_grid():
         encoding="utf-8"
     )
 
-    assert "cams-global-atmospheric-composition-forecasts" not in cams_download
-    assert "downloadCamsGlobalArea" not in cams_download
-    assert "getCamsGlobalAreaApiName" not in cams_domain
-    assert "let base = RegularGrid(nx: 900, ny: 451, latMin: -90, lonMin: -180, dx: 0.4, dy: 0.4)" in cams_domain
-    assert "return RegionalRegularGrid(base: base, x0: slice.x0, y0: slice.y0, nx: slice.nx, ny: slice.ny)" in cams_domain
-    assert "downloadCamsGlobal(application:" in cams_download
-    assert "domain.regionalDownloadSlice" in cams_download
-    assert "data = data.sliceGrid(" in cams_download
-    assert "filter_gfs_0p25.pl" not in source
-    assert "filter_gfs_0p25b.pl" not in source
-    assert "filter_gfs_sflux.pl" not in source
-    assert "downloadFilteredIndexedGrib" not in source
+    assert "WeatherForecastServerSourceConfig" in domain
+    assert "RegionalRegularGrid" in domain
     assert "GfsRegionalDownload" in source
     assert "decodeRegional" in source
     assert "regularGridSlice" in domain
     assert "WEATHER_REGION_LEFT_LON" in domain
+    assert "WeatherForecastServer" not in cams_download
+    assert "WeatherForecastServer" not in cams_domain
+    assert "downloadCamsGlobalArea" not in cams_download
+    assert "getCamsGlobalAreaApiName" not in cams_domain
+    assert "downloadCamsGlobal(application:" in cams_download
+    assert "domain.regionalDownloadSlice" not in cams_download
+    assert "data.sliceGrid(" not in cams_download
+    assert "filter_gfs_0p25.pl" not in source
+    assert "filter_gfs_0p25b.pl" not in source
+    assert "filter_gfs_sflux.pl" not in source
+    assert "downloadIndexedGrib" in source
     assert "GfsController" not in source
     assert "weather_code" not in source
+    assert "calculateThunderstormProbability" not in source
+    assert "calculateThunderstormProbability" not in domain
     assert "WeatherForecastServer" not in curl
 
 
@@ -773,8 +776,10 @@ def test_cams_global_download_is_ftp_ecpds_only():
     )
 
     global_case = cams_download.split("case .cams_global:", 1)[1].split("case .cams_europe:", 1)[0]
-    assert "WEATHER_CAMS_FTP_USER" in global_case
-    assert "WEATHER_CAMS_FTP_PASSWORD" in global_case
+    assert "signature.ftpuser" in global_case
+    assert "signature.ftppassword" in global_case
+    assert "WEATHER_CAMS_FTP_USER" not in global_case
+    assert "WEATHER_CAMS_FTP_PASSWORD" not in global_case
     assert "downloadCamsGlobal(" in global_case
     assert "cdskey" not in global_case.lower()
     assert "downloadCamsGlobalArea" not in cams_download
@@ -792,11 +797,12 @@ def test_cams_ftp_concurrent_option_drives_file_downloads():
 
     assert "concurrent: signature.concurrent ?? 1" in global_case
     assert "func downloadCamsGlobal(" in cams_download
-    assert "concurrent: Int" in download_function
-    assert "jobs.foreachConcurrent(nConcurrent: max(1, concurrent))" in download_function
-    assert "curl.download(url: job.remoteFile, toFile: job.tempNc" in download_function
-    assert r'"\(domain.downloadDirectory)/temp.nc"' not in cams_download
-    assert r'temp_\(hour.zeroPadded(len: 3))_\(meta.gribname).nc' in cams_download
+    assert "concurrent: Int" not in download_function
+    assert "jobs.foreachConcurrent" not in download_function
+    assert "hour % 3 != 0" in download_function
+    assert "curl.download(url: remoteFile, toFile: tempNc" in download_function
+    assert r'"\(domain.downloadDirectory)/temp.nc"' in cams_download
+    assert r'temp_\(hour.zeroPadded(len: 3))_\(meta.gribname).nc' not in cams_download
 
 
 def test_layer_scripts_are_documented_as_openmeteo_engine_backed():
@@ -804,9 +810,6 @@ def test_layer_scripts_are_documented_as_openmeteo_engine_backed():
     build_script = (ROOT / "scripts" / "build_webp.py").read_text(encoding="utf-8")
     validate_script = (ROOT / "scripts" / "validate_openmeteo_layers.py").read_text(encoding="utf-8")
     configure = (ROOT / "vendor" / "open-meteo" / "Sources" / "App" / "configure.swift").read_text(encoding="utf-8")
-    export_command = (
-        ROOT / "vendor" / "open-meteo" / "Sources" / "App" / "Commands" / "LayerGridExportCommand.swift"
-    ).read_text(encoding="utf-8")
 
     assert "scripts/build_webp.py" in readme
     assert "scripts/build_openmeteo_point_package.py" not in readme
@@ -818,18 +821,19 @@ def test_layer_scripts_are_documented_as_openmeteo_engine_backed():
     assert "data/webp/gfs013_surface" in readme
     assert "data/openmeteo_layers" not in readme
     assert "Open-Meteo engine" in readme
-    assert "import requests" not in build_script
-    assert "requests.get" not in build_script
-    assert "/v1/forecast" not in build_script
-    assert "/v1/air-quality" not in build_script
-    assert "127.0.0.1:18080" not in build_script
-    assert 'app.asyncCommands.use(LayerGridExportCommand(), as: "export-layer-grid")' in configure
+    assert "import requests" in build_script
+    assert "requests.get" in build_script
+    assert "/v1/forecast" in build_script
+    assert "/v1/air-quality" in build_script
+    assert "127.0.0.1:18080" in build_script
+    assert "LayerGridExportCommand" not in configure
+    assert "PointForecastExportCommand" not in configure
+    assert not (ROOT / "vendor" / "open-meteo" / "Sources" / "App" / "Commands" / "LayerGridExportCommand.swift").exists()
+    assert not (ROOT / "vendor" / "open-meteo" / "Sources" / "App" / "Commands" / "PointForecastExportCommand.swift").exists()
     assert "gfs_raw_download_core" not in build_script
     assert "gfs_raw_download_core" not in validate_script
     assert "satellite" not in build_script.lower()
     assert "satellite" not in validate_script.lower()
-    assert "Dem90.read(lat: lat, lon: lon" in export_command
-    assert "elevation: .nan" not in export_command
 
 
 def test_runtime_data_and_webp_directories_use_renamed_defaults():
@@ -855,58 +859,30 @@ def test_runtime_data_and_webp_directories_use_renamed_defaults():
     assert "./data/openmeteo" not in combined
 
 
-def test_point_export_command_exposes_openmeteo_reader_without_http():
+def test_point_export_command_is_not_patched_into_vendored_openmeteo():
     configure = (ROOT / "vendor" / "open-meteo" / "Sources" / "App" / "configure.swift").read_text(
         encoding="utf-8"
     )
     command_path = ROOT / "vendor" / "open-meteo" / "Sources" / "App" / "Commands" / "PointForecastExportCommand.swift"
-    command = command_path.read_text(encoding="utf-8")
     validator = (ROOT / "scripts" / "validate_openmeteo_official_50point_batches.py").read_text(
         encoding="utf-8"
     )
 
-    assert 'app.asyncCommands.use(PointForecastExportCommand(), as: "export-point-forecast")' in configure
-    assert "struct PointForecastExportCommand: AsyncCommand" in command
-    assert "let points: [PointForecastExportPoint]" in command
-    assert "ForecastVariable.load" in command
-    assert "params.prepareCoordinates" in command
-    assert "domain.getReaders(" in command
-    assert "location.hourly(variables: hourlyVariables)" in command
-    assert "readMixed(readers:" in command
-    assert "/v1/forecast" not in command
-    assert "/v1/air-quality" not in command
-    assert "app.http" not in command
+    assert "PointForecastExportCommand" not in configure
+    assert not command_path.exists()
 
     assert "--local-openmeteo-mode" in validator
-    assert "choices=(\"http\", \"direct\")" in validator
-    assert "fetch_direct_hourlies" in validator
-    assert "export-point-forecast" in validator
+    assert "choices=(\"http\",)" in validator
+    assert "fetch_direct_hourlies" not in validator
+    assert "export-point-forecast" not in validator
 
 
-def test_point_export_command_supports_cams_derived_variables_without_weather_parser():
-    command = (
-        ROOT / "vendor" / "open-meteo" / "Sources" / "App" / "Commands" / "PointForecastExportCommand.swift"
-    ).read_text(encoding="utf-8")
-    variable_parser = command.split("let hourlyVariables: [ForecastVariable]", 1)[1].split("let outputURL", 1)[0]
-    cams_export = command.split('if request.scope == "cams" {', 1)[1].split(
-        "let timeLocal",
-        1,
-    )[0]
+def test_vendored_openmeteo_has_no_project_export_commands():
+    commands_dir = ROOT / "vendor" / "open-meteo" / "Sources" / "App" / "Commands"
+    vendored_commands = "\n".join(path.name for path in commands_dir.glob("*.swift"))
 
-    assert "CamsReader.MixingVar.load" in variable_parser
-    assert "hourlyVariables = try ForecastVariable.load" in variable_parser
-    assert "ForecastVariable.load" not in variable_parser.split('if request.scope == "cams" {', 1)[1].split(
-        "} else {",
-        1,
-    )[0]
-    assert "let camsDomain: CamsDomain?" in command
-    assert "camsDomain = CamsDomain(rawValue: request.model)" in command
-    assert "GenericReader<CamsDomain, CamsVariable>" in cams_export
-    assert "CamsReader(reader: GenericReaderCached(reader: rawReader))" in cams_export
-    assert "domain.getReader(" not in cams_export
-    assert "readMixed(readers: rawReaders" in cams_export
-    assert "location.hourly(variables: hourlyVariables)" not in cams_export
-    assert "reader.get(mixed: variable" in command
+    assert "LayerGridExportCommand.swift" not in vendored_commands
+    assert "PointForecastExportCommand.swift" not in vendored_commands
 
 
 def test_gfs_weather_code_keeps_upstream_thunderstorm_logic():
@@ -924,22 +900,8 @@ def test_gfs_weather_code_keeps_upstream_thunderstorm_logic():
     assert "convectiveInhibition: Float?" in weather_code
     assert "pblHeight: Float?" in weather_code
     assert "latitude: Float" in weather_code
+    assert "if let cin = convectiveInhibition, cin > 250.0" in weather_code
     assert "latitudeFactor" in weather_code
-    assert "cinWeight" in weather_code
-    assert "pblWeight" in weather_code
-    assert "0.8 + (0.2 * (absLat / 30.0))" in weather_code
-    assert "(cape - 300.0) / (maxCapeThreshold - 300.0)" in weather_code
-    assert "let precipWeight: Float = 0.25" in weather_code
-    assert "if thunderstroms > 90" in weather_code
-    assert "return .thunderstormHeavy" in weather_code
-    assert "if thunderstroms > 70" in weather_code
-    assert "return .thunderstormStrong" in weather_code
-    assert "if thunderstroms > 50" in weather_code
-    assert "return .thunderstormSlightOrModerate" in weather_code
-    assert "if thunderstroms > 85" not in weather_code
-    assert "if thunderstroms > 60" not in weather_code
-    assert "if cloudcover < 30.0" not in weather_code
-    assert "cloudCoverFactor" not in weather_code
 
     weather_prefetch = gfs_controller.split("case .weather_code, .weathercode:", 1)[1].split(
         "case .is_day:", 1
@@ -951,13 +913,12 @@ def test_gfs_weather_code_keeps_upstream_thunderstorm_logic():
     assert "raw: .surface(.boundary_layer_height)" in weather_prefetch
     assert "let convective_inhibition = try await get(raw: .surface(.convective_inhibition)" in weather_get
     assert "let boundary_layer_height = try await get(raw: .surface(.boundary_layer_height)" in weather_get
-    assert "convectiveInhibition: convective_inhibition" in weather_get
-    assert "pblHeight: boundary_layer_height" in weather_get
+    assert "convectiveInhibition:" in weather_get
+    assert "pblHeight:" in weather_get
     assert "latitude: reader.modelLat" in weather_get
     assert "convectiveInhibition: Variable?" in derived_mapping
     assert "boundaryLayerHeight: Variable?" in derived_mapping
     assert "latitude: reader.modelLat" in derived_mapping
-
     assert "pblHeight: try await get(variable: boundaryLayerHeight" in derived_mapping
 
 
@@ -990,9 +951,9 @@ def test_all_weather_code_call_sites_use_current_api_signature():
             if call == "WeatherCode.calculate()":
                 start = index + len("WeatherCode.calculate(")
                 continue
-            assert "convectiveInhibition:" in call, f"{path} has an old WeatherCode.calculate call"
-            assert "pblHeight:" in call, f"{path} has an old WeatherCode.calculate call"
-            assert "latitude:" in call, f"{path} has an old WeatherCode.calculate call"
+            assert "convectiveInhibition:" in call, f"{path} is not using the selected upstream WeatherCode.calculate call"
+            assert "pblHeight:" in call, f"{path} is not using the selected upstream WeatherCode.calculate call"
+            assert "latitude:" in call, f"{path} is not using the selected upstream WeatherCode.calculate call"
             start = index + len("WeatherCode.calculate(")
 
 
@@ -1006,16 +967,21 @@ def test_layer_builders_are_split_by_source_product():
         assert "point_package" not in script
         assert "pressure_profile_package" not in script
         assert "openmeteo_points" not in script
-        assert "WEATHER_OPENMETEO_GFS_API_URL" not in script
-        assert "WEATHER_OPENMETEO_CAMS_API_URL" not in script
         assert "date -u -d" not in script
-        assert "http://127.0.0.1:18080" not in script
-        assert "/v1/forecast" not in script
-        assert "/v1/air-quality" not in script
         assert "http://127.0.0.1:18084" not in script
         assert "scripts/build_openmeteo_point_package.py" not in script
         assert "scripts/build_openmeteo_pressure_profile_package.py" not in script
         assert "scripts/render_gfs_layers_from_point_package.py" not in script
+    assert "WEATHER_OPENMETEO_GFS_API_URL" in gfs
+    assert "WEATHER_OPENMETEO_CAMS_API_URL" not in gfs
+    assert "http://127.0.0.1:18080" in gfs
+    assert "/v1/forecast" in gfs
+    assert "/v1/air-quality" not in gfs
+    assert "WEATHER_OPENMETEO_CAMS_API_URL" in cams
+    assert "WEATHER_OPENMETEO_GFS_API_URL" not in cams
+    assert "http://127.0.0.1:18080" in cams
+    assert "/v1/air-quality" in cams
+    assert "/v1/forecast" not in cams
 
 
 def test_combined_production_cycle_is_removed_in_favor_of_split_source_cycles():
@@ -1261,16 +1227,16 @@ def test_split_layer_builders_publish_only_their_product():
     assert "date -u -d" not in cams
     assert "--scope gfs" in gfs
     assert "--scope cams" not in gfs
-    assert "export-layer-grid" in gfs
-    assert "http://127.0.0.1:18080" not in gfs
-    assert "/v1/forecast" not in gfs
+    assert "export-layer-grid" not in gfs
+    assert "http://127.0.0.1:18080" in gfs
+    assert "/v1/forecast" in gfs
     assert "gfs013_surface" in gfs
     assert "cams_global" not in gfs
     assert "--scope cams" in cams
     assert "--scope gfs" not in cams
-    assert "export-layer-grid" in cams
-    assert "http://127.0.0.1:18080" not in cams
-    assert "/v1/air-quality" not in cams
+    assert "export-layer-grid" not in cams
+    assert "http://127.0.0.1:18080" in cams
+    assert "/v1/air-quality" in cams
     assert "cams_global" in cams
     assert "gfs013_surface" not in cams
     assert "date -u" in gfs

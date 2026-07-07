@@ -39,7 +39,7 @@ def test_gfs_official_window_starts_at_run_and_covers_requested_end():
     }
 
 
-def test_gfs_validation_uses_static_window_locally_and_pinned_run_for_reference(monkeypatch):
+def test_gfs_validation_uses_pinned_run_locally_and_for_reference(monkeypatch):
     validator = load_module()
 
     seen_params = []
@@ -82,10 +82,10 @@ def test_gfs_validation_uses_static_window_locally_and_pinned_run_for_reference(
     assert report["passed"] is True
     assert report["checked_values"] == 3
     assert seen_params[0]["models"] == "gfs013"
-    assert seen_params[0]["start_hour"] == "2026-06-29T06:00"
-    assert seen_params[0]["end_hour"] == "2026-06-29T08:00"
-    assert "run" not in seen_params[0]
-    assert "forecast_hours" not in seen_params[0]
+    assert seen_params[0]["run"] == "2026-06-29T06:00"
+    assert seen_params[0]["forecast_hours"] == 3
+    assert "start_hour" not in seen_params[0]
+    assert "end_hour" not in seen_params[0]
     assert seen_params[1]["models"] == "gfs013"
     assert seen_params[1]["run"] == "2026-06-29T06:00"
     assert seen_params[1]["forecast_hours"] == 3

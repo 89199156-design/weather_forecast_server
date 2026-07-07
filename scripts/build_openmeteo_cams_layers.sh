@@ -38,52 +38,39 @@ write_sanitized_env_file
 LAYER_ROOT_DIR="${WEATHER_OPENMETEO_LAYER_ROOT_DIR:-$APP_DIR/data/webp}"
 CAMS_OUTPUT_DIR="${WEATHER_OPENMETEO_CAMS_LAYER_DIR:-$LAYER_ROOT_DIR/cams_global}"
 PUBLIC_DATA_DIR="${WEATHER_OPENMETEO_PUBLIC_DATA_DIR:-$APP_DIR/data/public}"
+CAMS_API_URL="${WEATHER_OPENMETEO_CAMS_API_URL:-http://127.0.0.1:18080/v1/air-quality}"
 LAYER_START_HOUR="${WEATHER_OPENMETEO_LAYER_START_HOUR:-$(date -u '+%Y-%m-%dT%H:00')}"
 LAYER_FRAME_COUNT="${WEATHER_OPENMETEO_LAYER_FRAME_COUNT:-121}"
 LAYER_END_HOUR="${WEATHER_OPENMETEO_LAYER_END_HOUR:-$(utc_hour_after "$LAYER_START_HOUR" "$((LAYER_FRAME_COUNT - 1))")}"
 LAYER_CHUNK_SIZE="${WEATHER_OPENMETEO_LAYER_CHUNK_SIZE:-250}"
+LAYER_TIMEOUT="${WEATHER_OPENMETEO_LAYER_TIMEOUT:-120}"
+LAYER_REQUEST_RETRIES="${WEATHER_OPENMETEO_LAYER_REQUEST_RETRIES:-2}"
+LAYER_REQUEST_RETRY_DELAY="${WEATHER_OPENMETEO_LAYER_REQUEST_RETRY_DELAY:-2}"
+LAYER_REQUEST_PAUSE="${WEATHER_OPENMETEO_LAYER_REQUEST_PAUSE:-0}"
 CAMS_DOMAIN="${WEATHER_OPENMETEO_CAMS_LAYER_DOMAIN:-cams_global}"
 
 cd "$APP_DIR"
 mkdir -p "$CAMS_OUTPUT_DIR" "$PUBLIC_DATA_DIR"
 
-EXPORT_DIR_HOST="$DATA_DIR/layer_export_tmp/cams_$$"
-EXPORT_DIR_CONTAINER="/app/data/layer_export_tmp/cams_$$"
-REQUEST_HOST="$EXPORT_DIR_HOST/request.json"
-REQUEST_CONTAINER="$EXPORT_DIR_CONTAINER/request.json"
-mkdir -p "$EXPORT_DIR_HOST"
-if [[ "$(id -u)" -eq 0 ]]; then
-  chown "$OPENMETEO_UID:$OPENMETEO_GID" "$EXPORT_DIR_HOST"
-fi
-
 cleanup() {
   rm -f "${SANITIZED_ENV_FILE:-}"
-  if [[ -n "${EXPORT_DIR_HOST:-}" ]]; then
-    cleanup_download_work_dirs "$EXPORT_DIR_HOST"
-  fi
 }
 trap cleanup EXIT
 
-python3 scripts/build_webp.py \
-  --scope cams \
-  --prepare-export-request "$REQUEST_HOST" \
-  --domain "$CAMS_DOMAIN" \
-  --start-hour "$LAYER_START_HOUR" \
-  --end-hour "$LAYER_END_HOUR" \
-  --chunk-size "$LAYER_CHUNK_SIZE"
-
-run_openmeteo export-layer-grid \
-  --request "$REQUEST_CONTAINER" \
-  --output-dir "$EXPORT_DIR_CONTAINER"
+bash scripts/run_openmeteo_api_server.sh
 
 python3 scripts/build_webp.py \
   --scope cams \
-  --export-dir "$EXPORT_DIR_HOST" \
+  --api-base-url "$CAMS_API_URL" \
   --output-dir "$CAMS_OUTPUT_DIR" \
   --domain "$CAMS_DOMAIN" \
   --start-hour "$LAYER_START_HOUR" \
   --end-hour "$LAYER_END_HOUR" \
-  --chunk-size "$LAYER_CHUNK_SIZE"
+  --chunk-size "$LAYER_CHUNK_SIZE" \
+  --timeout-seconds "$LAYER_TIMEOUT" \
+  --request-retries "$LAYER_REQUEST_RETRIES" \
+  --request-retry-delay "$LAYER_REQUEST_RETRY_DELAY" \
+  --request-pause "$LAYER_REQUEST_PAUSE"
 
 mkdir -p "$PUBLIC_DATA_DIR/webp"
 cp -f "$APP_DIR/config/weather_layer_catalog.json" "$PUBLIC_DATA_DIR/webp/weather_layer_catalog.json"
