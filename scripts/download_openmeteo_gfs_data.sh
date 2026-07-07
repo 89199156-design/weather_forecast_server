@@ -16,6 +16,7 @@ cleanup_sensitive_artifacts() {
 trap cleanup_sensitive_artifacts EXIT
 
 cleanup_openmeteo_http_cache
+prepare_openmeteo_http_cache
 
 GFS_MAX_FORECAST_HOUR="${WEATHER_GFS_MAX_FORECAST_HOUR:-120}"
 GFS_CONCURRENT="${WEATHER_GFS_DOWNLOAD_CONCURRENT:-4}"

@@ -247,3 +247,19 @@ cleanup_openmeteo_http_cache() {
     fi
   fi
 }
+
+prepare_openmeteo_http_cache() {
+  local cache_dir_host
+  cache_dir_host="$(host_http_cache_dir)"
+  if [[ -z "${cache_dir_host:-}" ]]; then
+    return
+  fi
+  if [[ "$cache_dir_host" != "$DATA_DIR"/* ]]; then
+    printf '%s\n' "Refusing to prepare HTTP cache outside DATA_DIR: $cache_dir_host" >&2
+    exit 2
+  fi
+  mkdir -p "$cache_dir_host"
+  if [[ "$(id -u)" -eq 0 ]]; then
+    chown -R "$OPENMETEO_UID:$OPENMETEO_GID" "$cache_dir_host"
+  fi
+}

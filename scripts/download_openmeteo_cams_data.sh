@@ -16,6 +16,7 @@ cleanup_sensitive_artifacts() {
 trap cleanup_sensitive_artifacts EXIT
 
 cleanup_openmeteo_http_cache
+prepare_openmeteo_http_cache
 
 CAMS_CONCURRENT="${WEATHER_CAMS_FTP_DOWNLOAD_CONCURRENT:-8}"
 CAMS_FTP_USER="${WEATHER_CAMS_FTP_USER:-}"
