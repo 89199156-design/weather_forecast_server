@@ -636,8 +636,8 @@ def test_runtime_data_download_uses_cams_ftp_ecpds_only():
     assert "ADS" not in common
     assert "CDS" not in common
     assert "cdsapi" not in common.lower()
-    assert "--ftpuser" not in script
-    assert "--ftppassword" not in script
+    assert '--ftpuser "$CAMS_FTP_USER"' in script
+    assert '--ftppassword "$CAMS_FTP_PASSWORD"' in script
 
 
 def test_optional_cams_ads_cds_download_is_separate_from_ftp_ecpds():
@@ -749,13 +749,13 @@ def test_openmeteo_downloader_only_changes_transport_and_gfs_region_grid():
     assert "decodeRegional" in source
     assert "regularGridSlice" in domain
     assert "WEATHER_REGION_LEFT_LON" in domain
-    assert "WeatherForecastServer" not in cams_download
-    assert "WeatherForecastServer" not in cams_domain
+    assert "WeatherForecastServerSourceConfig" not in cams_download
+    assert "WeatherForecastServerSourceConfig" in cams_domain
     assert "downloadCamsGlobalArea" not in cams_download
     assert "getCamsGlobalAreaApiName" not in cams_domain
     assert "downloadCamsGlobal(application:" in cams_download
-    assert "domain.regionalDownloadSlice" not in cams_download
-    assert "data.sliceGrid(" not in cams_download
+    assert "domain.regionalDownloadSlice" in cams_download
+    assert "data.sliceGrid(" in cams_download
     assert "filter_gfs_0p25.pl" not in source
     assert "filter_gfs_0p25b.pl" not in source
     assert "filter_gfs_sflux.pl" not in source
@@ -797,12 +797,12 @@ def test_cams_ftp_concurrent_option_drives_file_downloads():
 
     assert "concurrent: signature.concurrent ?? 1" in global_case
     assert "func downloadCamsGlobal(" in cams_download
-    assert "concurrent: Int" not in download_function
-    assert "jobs.foreachConcurrent" not in download_function
+    assert "concurrent: Int" in download_function
+    assert "jobs.foreachConcurrent" in download_function
     assert "hour % 3 != 0" in download_function
-    assert "curl.download(url: remoteFile, toFile: tempNc" in download_function
-    assert r'"\(domain.downloadDirectory)/temp.nc"' in cams_download
-    assert r'temp_\(hour.zeroPadded(len: 3))_\(meta.gribname).nc' not in cams_download
+    assert "curl.download(url: job.remoteFile, toFile: job.tempNc" in download_function
+    assert r'"\(domain.downloadDirectory)/temp.nc"' not in cams_download
+    assert r'temp_\(hour.zeroPadded(len: 3))_\(meta.gribname).nc' in cams_download
 
 
 def test_layer_scripts_are_documented_as_openmeteo_engine_backed():

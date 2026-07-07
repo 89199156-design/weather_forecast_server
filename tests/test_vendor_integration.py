@@ -94,7 +94,7 @@ def test_upstream_record_uses_one_openmeteo_engine_baseline():
     assert "`98a3e0f00bf13633c5511a6c7788462088bfe752`" not in upstream
 
 
-def test_vendored_openmeteo_only_has_required_gfs_region_patches():
+def test_vendored_openmeteo_only_has_required_region_patches():
     domain = read_vendor("Sources/App/Gfs/GfsDomain.swift")
     download = read_vendor("Sources/App/Gfs/GfsDownload.swift")
     cams_domain = read_vendor("Sources/App/Cams/CamsDomain.swift")
@@ -120,9 +120,9 @@ def test_vendored_openmeteo_only_has_required_gfs_region_patches():
     assert "cams-global-atmospheric-composition-forecasts" not in cams_download
     assert "getCamsGlobalAreaApiName" not in cams_domain
     assert "downloadCamsGlobal(application:" in cams_download
-    assert "domain.regionalDownloadSlice" not in cams_download
-    assert "data.sliceGrid(" not in cams_download
-    assert "WeatherForecastServerSourceConfig" not in cams_domain
+    assert "domain.regionalDownloadSlice" in cams_download
+    assert "data.sliceGrid(" in cams_download
+    assert "WeatherForecastServerSourceConfig" in cams_domain
 
 
 def test_openmeteo_raw_download_is_the_default_runtime_data_mode():
@@ -163,7 +163,6 @@ def test_cams_greenhouse_gases_are_not_region_sliced_inside_vendor():
     greenhouse_grid = grid_source.split("case .cams_global_greenhouse_gases:", 1)[1].split("case .cams_europe:", 1)[0]
     assert "RegularGrid(nx: 3600, ny: 1801, latMin: -90, lonMin: -180, dx: 0.1, dy: 0.1)" in greenhouse_grid
     assert "RegionalRegularGrid(base: base" not in greenhouse_grid
-    assert not (ROOT / "vendor" / "open-meteo" / "Sources" / "App" / "Cams" / "CamsRegionalDownload.swift").exists()
     assert "regionalSlice" not in greenhouse
     assert "data.sliceGrid(" not in greenhouse
 
