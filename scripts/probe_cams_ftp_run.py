@@ -42,15 +42,34 @@ def parse_iso_z(value: str | None) -> datetime | None:
     return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(UTC)
 
 
-def read_local_latest(data_dir: Path) -> datetime | None:
+def read_local_state(data_dir: Path) -> tuple[datetime | None, set[str]]:
+    group_ready = data_dir / "groups" / "cams" / "current" / "ready_for_processing.json"
+    if group_ready.is_file():
+        try:
+            payload = json.loads(group_ready.read_text(encoding="utf-8"))
+            if payload.get("status") == "complete":
+                run = payload.get("latest_complete_run")
+                if run:
+                    source_runs = payload.get("source_runs")
+                    return (
+                        datetime.strptime(run, "%Y%m%d%H").replace(tzinfo=UTC),
+                        set(source_runs) if isinstance(source_runs, list) else set(),
+                    )
+        except (OSError, ValueError, json.JSONDecodeError):
+            pass
+
     path = data_dir / "data_run" / "cams_global" / "latest.json"
     if not path.exists():
-        return None
+        return None, set()
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
-        return None
-    return parse_iso_z(payload.get("reference_time"))
+        return None, set()
+    return parse_iso_z(payload.get("reference_time")), set()
+
+
+def read_local_latest(data_dir: Path) -> datetime | None:
+    return read_local_state(data_dir)[0]
 
 
 def floor_to_cams_run(now: datetime) -> datetime:
@@ -58,12 +77,26 @@ def floor_to_cams_run(now: datetime) -> datetime:
     return now.replace(hour=12 if now.hour >= 12 else 0)
 
 
-def candidate_runs(now: datetime, local_latest: datetime | None, lookback_hours: int) -> list[datetime]:
+def candidate_runs(
+    now: datetime,
+    local_latest: datetime | None,
+    lookback_hours: int,
+    local_source_runs: set[str] | None = None,
+    source_run_count: int = 3,
+) -> list[datetime]:
     first = floor_to_cams_run(now)
     runs = [first - timedelta(hours=12 * offset) for offset in range((lookback_hours // 12) + 1)]
     if local_latest is None:
         return runs
-    return [run for run in runs if run > local_latest]
+    candidates = [run for run in runs if run > local_latest]
+    local_source_runs = local_source_runs or set()
+    expected = {
+        (local_latest - timedelta(hours=12 * offset)).strftime("%Y%m%d%H")
+        for offset in range(source_run_count)
+    }
+    if expected - local_source_runs and local_latest in runs:
+        candidates.append(local_latest)
+    return sorted(set(candidates), reverse=True)
 
 
 def parse_variables(value: str) -> list[str]:
@@ -155,7 +188,7 @@ def main() -> int:
     parser.add_argument("--data-dir", default="./data/point")
     parser.add_argument("--variables", default=os.environ.get("WEATHER_CAMS_VARIABLES", "pm2_5,pm10,aerosol_optical_depth,dust,carbon_monoxide,nitrogen_dioxide,ozone,sulphur_dioxide"))
     parser.add_argument("--max-forecast-hour", type=int, default=120)
-    parser.add_argument("--probe-forecast-hours", default=os.environ.get("WEATHER_CAMS_PROBE_FORECAST_HOURS"))
+    parser.add_argument("--probe-forecast-hours", default=os.environ.get("WEATHER_CAMS_PROBE_FORECAST_HOURS", "0,120"))
     parser.add_argument("--lookback-hours", type=int, default=72)
     parser.add_argument("--timeout-seconds", type=float, default=8.0)
     parser.add_argument("--workers", type=int, default=DEFAULT_CAMS_FTP_PROBE_WORKERS)
@@ -169,11 +202,11 @@ def main() -> int:
 
     variables = parse_variables(args.variables)
     forecast_hours = probe_forecast_hours(args.probe_forecast_hours, args.max_forecast_hour)
-    local_latest = read_local_latest(Path(args.data_dir))
+    local_latest, local_source_runs = read_local_state(Path(args.data_dir))
     authorization = auth_header(args.user, args.password)
     now = datetime.now(UTC)
 
-    for run in candidate_runs(now, local_latest, args.lookback_hours):
+    for run in candidate_runs(now, local_latest, args.lookback_hours, local_source_runs):
         complete, failures = run_complete(
             run=run,
             variables=variables,

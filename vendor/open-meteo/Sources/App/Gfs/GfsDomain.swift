@@ -19,11 +19,15 @@ enum WeatherForecastServerSourceConfig {
 
     static var region: (leftLon: Double, rightLon: Double, bottomLat: Double, topLat: Double) {
         (
-            leftLon: double("WEATHER_REGION_LEFT_LON", fallback: 70.0),
-            rightLon: double("WEATHER_REGION_RIGHT_LON", fallback: 140.0),
-            bottomLat: double("WEATHER_REGION_BOTTOM_LAT", fallback: 0.0),
-            topLat: double("WEATHER_REGION_TOP_LAT", fallback: 58.0)
+            leftLon: double("WEATHER_REGION_LEFT_LON", fallback: 69.0),
+            rightLon: double("WEATHER_REGION_RIGHT_LON", fallback: 141.0),
+            bottomLat: double("WEATHER_REGION_BOTTOM_LAT", fallback: -1.0),
+            topLat: double("WEATHER_REGION_TOP_LAT", fallback: 59.0)
         )
+    }
+
+    static var useNomadsRegionalDownload: Bool {
+        string("WEATHER_GFS_DOWNLOAD_MODE", fallback: "nomads-region").lowercased() == "nomads-region"
     }
 
     static var regionAreaNorthWestSouthEast: [Double] {
@@ -422,7 +426,7 @@ enum GfsDomain: String, GenericDomain, CaseIterable {
                 dx: Double(base.dx),
                 dy: Double(base.dy),
                 region: WeatherForecastServerSourceConfig.region,
-                haloCells: 2
+                haloCells: 0
             )
             return RegionalRegularGrid(base: base, x0: slice.x0, y0: slice.y0, nx: slice.nx, ny: slice.ny)
         case .gfs025_ens, .gfs025, .gfswave025, .gfswave025_ens, .gefs025_ensemble_mean, .gefswave025_ensemble_mean:
@@ -436,7 +440,7 @@ enum GfsDomain: String, GenericDomain, CaseIterable {
                     dx: Double(base.dx),
                     dy: Double(base.dy),
                     region: WeatherForecastServerSourceConfig.region,
-                    haloCells: 2
+                    haloCells: 0
                 )
                 return RegionalRegularGrid(base: base, x0: slice.x0, y0: slice.y0, nx: slice.nx, ny: slice.ny)
             }

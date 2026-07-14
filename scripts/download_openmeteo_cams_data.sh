@@ -32,8 +32,6 @@ fi
 cleanup_download_work_dirs "$DATA_DIR/download-cams_global"
 run_openmeteo download-cams cams_global \
   $(append_run_arg "$CAMS_RUN") \
-  --ftpuser "$CAMS_FTP_USER" \
-  --ftppassword "$CAMS_FTP_PASSWORD" \
   --only-variables "$CAMS_VARIABLES" \
   --concurrent "$CAMS_CONCURRENT"
 

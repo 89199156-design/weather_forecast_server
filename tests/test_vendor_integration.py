@@ -97,8 +97,10 @@ def test_upstream_record_uses_one_openmeteo_engine_baseline():
 def test_vendored_openmeteo_only_has_required_region_patches():
     domain = read_vendor("Sources/App/Gfs/GfsDomain.swift")
     download = read_vendor("Sources/App/Gfs/GfsDownload.swift")
+    regional_download = read_vendor("Sources/App/Gfs/GfsNomadsRegionalDownload.swift")
     cams_domain = read_vendor("Sources/App/Cams/CamsDomain.swift")
     cams_download = read_vendor("Sources/App/Cams/CamsDownload.swift")
+    cams_greenhouse = read_vendor("Sources/App/Cams/CamsGreenhouseGases.swift")
     curl = read_vendor("Sources/App/Helper/Download/Curl.swift")
 
     assert "WeatherForecastServerSourceConfig" in domain
@@ -113,16 +115,27 @@ def test_vendored_openmeteo_only_has_required_region_patches():
         assert token not in combined
 
     assert "downloadIndexedGrib" in download
+    assert "GfsNomadsRegionalDownload.inventoryUrl" in regional_download
+    assert "https://noaa-gfs-bdp-pds.s3.amazonaws.com/" in regional_download
+    assert '"WEATHER_NOMADS_REQUEST_DELAY_SECONDS"' in regional_download
+    assert "fallback: 10" in regional_download
+    assert "cachedFilterResponse" in regional_download
+    assert "filter_gfs_sflux.pl" in regional_download
+    assert "filter_gfs_0p25.pl" in regional_download
+    assert "filter_gfs_0p25b.pl" in regional_download
     assert "RegularGrid(nx: 1440, ny: 721, latMin: -90, lonMin: -180, dx: 0.25, dy: 0.25)" in domain
     assert "return RegionalRegularGrid(base: base" in domain
 
     assert "downloadCamsGlobalArea" not in cams_download
     assert "cams-global-atmospheric-composition-forecasts" not in cams_download
     assert "getCamsGlobalAreaApiName" not in cams_domain
-    assert "downloadCamsGlobal(application:" in cams_download
+    assert "func downloadCamsGlobal(" in cams_download
     assert "domain.regionalDownloadSlice" in cams_download
     assert "data.sliceGrid(" in cams_download
     assert "WeatherForecastServerSourceConfig" in cams_domain
+    assert 'dataset: "cams-global-greenhouse-gas-forecasts"' in cams_greenhouse
+    assert "getCamsGlobalGreenhouseGasesMeta" in cams_greenhouse
+    assert "domain.regionalDownloadSlice" in cams_greenhouse
 
 
 def test_openmeteo_raw_download_is_the_default_runtime_data_mode():
@@ -134,7 +147,7 @@ def test_openmeteo_raw_download_is_the_default_runtime_data_mode():
     assert "download-gfs gfs025" in script
 
 
-def test_cams_downloaders_remain_upstream_without_project_ads_split():
+def test_cams_download_command_keeps_ecpds_global_and_official_greenhouse_paths():
     ftp_download = read_vendor("Sources/App/Cams/CamsDownload.swift")
     configure = read_vendor("Sources/App/configure.swift")
 
@@ -144,40 +157,24 @@ def test_cams_downloaders_remain_upstream_without_project_ads_split():
     assert "func downloadCamsGlobalArea" not in ftp_download
 
     assert not (ROOT / "vendor" / "open-meteo" / "Sources" / "App" / "Cams" / "CamsDownloadAds.swift").exists()
+    assert (ROOT / "vendor" / "open-meteo" / "Sources" / "App" / "Cams" / "CamsGreenhouseGases.swift").exists()
     assert 'app.asyncCommands.use(DownloadCamsCommand(), as: "download-cams")' in configure
     assert 'DownloadCamsAdsCommand' not in configure
+    assert 'case .cams_global_greenhouse_gases:' in ftp_download
+    assert "downloadCamsGlobalGreenhouseGases(" in ftp_download
+    assert "Only cams_global and cams_global_greenhouse_gases are enabled" in ftp_download
 
 
-def test_cams_greenhouse_gases_helper_remains_upstream_download_command_extension():
-    greenhouse = read_vendor("Sources/App/Cams/CamsGreenhouseGases.swift")
-
-    assert "extension DownloadCamsCommand" in greenhouse
-    assert "extension DownloadCamsAdsCommand" not in greenhouse
-
-
-def test_cams_greenhouse_gases_are_not_region_sliced_inside_vendor():
-    domain = read_vendor("Sources/App/Cams/CamsDomain.swift")
-    greenhouse = read_vendor("Sources/App/Cams/CamsGreenhouseGases.swift")
-
-    grid_source = domain.split("var grid: any Gridable", 1)[1]
-    greenhouse_grid = grid_source.split("case .cams_global_greenhouse_gases:", 1)[1].split("case .cams_europe:", 1)[0]
-    assert "RegularGrid(nx: 3600, ny: 1801, latMin: -90, lonMin: -180, dx: 0.1, dy: 0.1)" in greenhouse_grid
-    assert "RegionalRegularGrid(base: base" not in greenhouse_grid
-    assert "regionalSlice" not in greenhouse
-    assert "data.sliceGrid(" not in greenhouse
-
-
-def test_cams_global_uses_upstream_ftp_options_not_project_env_config():
+def test_cams_global_accepts_environment_credentials_without_command_line_exposure():
     download = read_vendor("Sources/App/Cams/CamsDownload.swift")
-    global_case = download.split("case .cams_global:", 1)[1].split("case .cams_europe:", 1)[0]
 
-    assert "signature.ftpuser" in global_case
-    assert "signature.ftppassword" in global_case
-    assert "WEATHER_CAMS_FTP_USER" not in global_case
-    assert "WEATHER_CAMS_FTP_PASSWORD" not in global_case
-    assert "downloadCamsGlobal(" in global_case
-    assert "cdskey" not in global_case.lower()
-    assert "downloadCamsGlobalArea(" not in global_case
+    assert "signature.ftpuser" in download
+    assert "signature.ftppassword" in download
+    assert 'ProcessInfo.processInfo.environment["WEATHER_CAMS_FTP_USER"]' in download
+    assert 'ProcessInfo.processInfo.environment["WEATHER_CAMS_FTP_PASSWORD"]' in download
+    assert "downloadCamsGlobal(" in download
+    assert 'ProcessInfo.processInfo.environment["WEATHER_CAMS_ADS_KEY"]' in download
+    assert "downloadCamsGlobalArea(" not in download
 
 
 def test_china_aqi_is_not_patched_into_vendored_cams_reader():

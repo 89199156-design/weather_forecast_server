@@ -8,7 +8,7 @@ read_cdsapi_key() {
   for candidate in \
     "${WEATHER_CAMS_CDSAPI_RC:-}" \
     "${CDSAPI_RC:-}" \
-    "$HOME/.cdsapirc" \
+    "${HOME:-}/.cdsapirc" \
     "/home/ubuntu/.cdsapirc" \
     "/root/.cdsapirc"; do
     if [[ -z "$candidate" || ! -r "$candidate" ]]; then
@@ -32,9 +32,10 @@ if [[ -z "${WEATHER_CAMS_ADS_KEY:-}" && -z "${WEATHER_CAMS_CDS_KEY:-}" ]]; then
   WEATHER_CAMS_ADS_KEY="$(read_cdsapi_key)"
   export WEATHER_CAMS_ADS_KEY
 fi
-WEATHER_OPENMETEO_HTTP_CACHE_DIR="/app/data/http_cache/cams_ads"
+
+WEATHER_OPENMETEO_HTTP_CACHE_DIR="/app/data/http_cache/cams_greenhouse"
 export WEATHER_OPENMETEO_HTTP_CACHE_DIR
-HTTP_CACHE="/app/data/http_cache/cams_ads"
+HTTP_CACHE="/app/data/http_cache/cams_greenhouse"
 export HTTP_CACHE
 openmeteo_set_runtime_defaults
 write_sanitized_env_file
@@ -44,38 +45,27 @@ cleanup_sensitive_artifacts() {
 trap cleanup_sensitive_artifacts EXIT
 
 cleanup_openmeteo_http_cache
+prepare_openmeteo_http_cache
 
-CAMS_CONCURRENT="${WEATHER_CAMS_ADS_DOWNLOAD_CONCURRENT:-1}"
 CAMS_ADS_KEY="${WEATHER_CAMS_ADS_KEY:-${WEATHER_CAMS_CDS_KEY:-}}"
-CAMS_VARIABLES="${WEATHER_CAMS_VARIABLES:-pm2_5,pm10,aerosol_optical_depth,dust,carbon_monoxide,nitrogen_dioxide,ozone,sulphur_dioxide}"
+CAMS_CONCURRENT="${WEATHER_CAMS_GREENHOUSE_DOWNLOAD_CONCURRENT:-1}"
 CAMS_GREENHOUSE_VARIABLES="${WEATHER_CAMS_GREENHOUSE_VARIABLES:-carbon_monoxide}"
-CAMS_RUN="${WEATHER_CAMS_RUN:-}"
-DEFAULT_CAMS_GREENHOUSE_RUN=""
-if [[ -n "$CAMS_RUN" ]]; then
-  DEFAULT_CAMS_GREENHOUSE_RUN="${CAMS_RUN:0:8}00"
-fi
-CAMS_GREENHOUSE_RUN="${WEATHER_CAMS_GREENHOUSE_RUN:-$DEFAULT_CAMS_GREENHOUSE_RUN}"
+CAMS_GREENHOUSE_RUN="${WEATHER_CAMS_GREENHOUSE_RUN:-}"
 
 if [[ -z "$CAMS_ADS_KEY" ]]; then
-  printf '%s\n' "WEATHER_CAMS_ADS_KEY/WEATHER_CAMS_CDS_KEY are required for CAMS ADS/CDS download." >&2
+  printf '%s\n' "WEATHER_CAMS_ADS_KEY/WEATHER_CAMS_CDS_KEY or a readable .cdsapirc is required for CAMS greenhouse ADS download." >&2
+  exit 2
+fi
+if [[ -z "$CAMS_GREENHOUSE_RUN" ]]; then
+  printf '%s\n' "WEATHER_CAMS_GREENHOUSE_RUN is required." >&2
   exit 2
 fi
 
-cleanup_download_work_dirs \
-  "$DATA_DIR/download-cams_global" \
-  "$DATA_DIR/download-cams_global_greenhouse_gases"
-run_openmeteo download-cams-ads cams_global \
-  $(append_run_arg "$CAMS_RUN") \
-  --cdskey "$CAMS_ADS_KEY" \
-  --only-variables "$CAMS_VARIABLES" \
-  --concurrent "$CAMS_CONCURRENT"
-run_openmeteo download-cams-ads cams_global_greenhouse_gases \
-  $(append_run_arg "$CAMS_GREENHOUSE_RUN") \
-  --cdskey "$CAMS_ADS_KEY" \
+cleanup_download_work_dirs "$DATA_DIR/download-cams_global_greenhouse_gases"
+run_openmeteo download-cams cams_global_greenhouse_gases \
+  --run "$CAMS_GREENHOUSE_RUN" \
   --only-variables "$CAMS_GREENHOUSE_VARIABLES" \
   --concurrent "$CAMS_CONCURRENT"
 
-cleanup_download_work_dirs \
-  "$DATA_DIR/download-cams_global" \
-  "$DATA_DIR/download-cams_global_greenhouse_gases"
+cleanup_download_work_dirs "$DATA_DIR/download-cams_global_greenhouse_gases"
 cleanup_openmeteo_http_cache

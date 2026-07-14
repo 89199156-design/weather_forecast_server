@@ -1,0 +1,25 @@
+[Unit]
+Description=Weather native OM Rust API
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/1panel/apps/weather_om_api
+Environment=RUST_LOG=info
+ExecStart=/opt/1panel/apps/weather_om_api/bin/om-api --data-root /opt/1panel/apps/weather_forecast_server/data/om_producer --omfile-lib /opt/1panel/apps/weather_om_api/native/libomfileformat.so --bind 127.0.0.1:8088
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=15
+LimitNOFILE=65536
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+ReadOnlyPaths=/opt/1panel/apps/weather_forecast_server/data/om_producer
+
+[Install]
+WantedBy=multi-user.target

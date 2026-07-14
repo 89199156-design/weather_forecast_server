@@ -4,6 +4,7 @@ set -euo pipefail
 APP_DIR="${WEATHER_FORECAST_APP_DIR:-/opt/1panel/apps/weather_forecast_server}"
 PANEL_DB="${WEATHER_1PANEL_DB:-/opt/1panel/db/1Panel.db}"
 PANEL_DB_BACKUP_DIR="${WEATHER_1PANEL_DB_BACKUP_DIR:-/opt/1panel/db}"
+PANEL_SERVICE="${WEATHER_1PANEL_SERVICE:-1panel.service}"
 SYSTEM_CRON_FILE="${WEATHER_OPENMETEO_CRON_FILE:-/etc/cron.d/weather-openmeteo}"
 SUDO=()
 if [[ "$(id -u)" -ne 0 ]]; then
@@ -33,7 +34,7 @@ gfs_script=$(cat <<EOF
 #!/bin/bash
 set -euo pipefail
 cd $APP_DIR
-bash scripts/run_gfs_probe_and_cycle.sh
+exec nice -n 15 ionice -c 3 bash scripts/run_gfs_probe_and_cycle.sh
 EOF
 )
 
@@ -41,7 +42,7 @@ cams_ftp_script=$(cat <<EOF
 #!/bin/bash
 set -euo pipefail
 cd $APP_DIR
-bash scripts/run_cams_ftp_scheduled_cycle.sh
+exec nice -n 15 ionice -c 3 bash scripts/run_cams_ftp_scheduled_cycle.sh
 EOF
 )
 
@@ -70,7 +71,7 @@ INSERT INTO cronjobs (
   status, entry_ids, secret
 ) VALUES (
   datetime('now','localtime'), datetime('now','localtime'),
-  ?, 'shell', '*/20 * * * *', NULL, NULL, ?,
+  ?, 'shell', ?, NULL, NULL, ?,
   NULL, NULL, NULL, NULL, NULL, NULL, NULL,
   NULL, NULL, NULL, NULL, 10,
   'Enable', NULL, NULL
@@ -80,10 +81,22 @@ INSERT INTO cronjobs (
 with sqlite3.connect(panel_db) as conn:
     conn.execute("BEGIN IMMEDIATE")
     conn.execute("DELETE FROM cronjobs WHERE name LIKE 'weather_%' OR name LIKE 'openmeteo_%'")
-    conn.execute(row_sql, ("openmeteo_gfs_probe_cycle", gfs_script))
-    conn.execute(row_sql, ("openmeteo_cams_ftp_probe_cycle", cams_ftp_script))
+    # The Singapore host and 1Panel scheduler use UTC+8 local time. Probe once per
+    # upstream model cycle, after the complete forecast horizon is normally ready:
+    # GFS 00/06/12/18 UTC + 4h17m, CAMS 00/12 UTC + 8h37m.
+    conn.execute(row_sql, ("openmeteo_gfs_probe_cycle", "17 0,6,12,18 * * *", gfs_script))
+    conn.execute(row_sql, ("openmeteo_cams_ftp_probe_cycle", "37 4,16 * * *", cams_ftp_script))
     conn.commit()
 PY
+
+# 1Panel keeps cron schedules in memory. Reload it after the database
+# transaction so retired high-frequency jobs cannot continue until a later
+# machine reboot. This restarts only the control panel, not the weather API or
+# any model-production service.
+if command -v systemctl >/dev/null 2>&1 \
+  && "${SUDO[@]}" systemctl is-active --quiet "$PANEL_SERVICE"; then
+  "${SUDO[@]}" systemctl restart "$PANEL_SERVICE"
+fi
 
 printf '%s\n' "Installed 1Panel Open-Meteo cronjobs."
 printf '%s\n' "Backup: $backup_file"

@@ -11,6 +11,8 @@ from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from gfs_schedule import gfs_forecast_hours
+
 
 UTC = timezone.utc
 
@@ -28,7 +30,22 @@ def parse_iso_z(value: str | None) -> datetime | None:
     return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(UTC)
 
 
-def read_local_latest(data_dir: Path) -> datetime | None:
+def read_local_state(data_dir: Path) -> tuple[datetime | None, set[str]]:
+    group_ready = data_dir / "groups" / "gfs" / "current" / "ready_for_processing.json"
+    if group_ready.is_file():
+        try:
+            payload = json.loads(group_ready.read_text(encoding="utf-8"))
+            if payload.get("status") == "complete":
+                run = payload.get("latest_complete_run")
+                if run:
+                    source_runs = payload.get("source_runs")
+                    return (
+                        datetime.strptime(run, "%Y%m%d%H").replace(tzinfo=UTC),
+                        set(source_runs) if isinstance(source_runs, list) else set(),
+                    )
+        except (OSError, ValueError, json.JSONDecodeError):
+            pass
+
     refs: list[datetime] = []
     for domain in ("ncep_gfs013", "ncep_gfs025"):
         path = data_dir / "data_run" / domain / "latest.json"
@@ -42,8 +59,12 @@ def read_local_latest(data_dir: Path) -> datetime | None:
         if ref is not None:
             refs.append(ref)
     if not refs:
-        return None
-    return min(refs)
+        return None, set()
+    return min(refs), set()
+
+
+def read_local_latest(data_dir: Path) -> datetime | None:
+    return read_local_state(data_dir)[0]
 
 
 def floor_to_gfs_run(now: datetime) -> datetime:
@@ -51,12 +72,26 @@ def floor_to_gfs_run(now: datetime) -> datetime:
     return now.replace(hour=(now.hour // 6) * 6)
 
 
-def candidate_runs(now: datetime, local_latest: datetime | None, lookback_hours: int) -> list[datetime]:
+def candidate_runs(
+    now: datetime,
+    local_latest: datetime | None,
+    lookback_hours: int,
+    local_source_runs: set[str] | None = None,
+    source_run_count: int = 5,
+) -> list[datetime]:
     first = floor_to_gfs_run(now)
     runs = [first - timedelta(hours=6 * offset) for offset in range((lookback_hours // 6) + 1)]
     if local_latest is None:
         return runs
-    return [run for run in runs if run > local_latest]
+    candidates = [run for run in runs if run > local_latest]
+    local_source_runs = local_source_runs or set()
+    expected = {
+        (local_latest - timedelta(hours=6 * offset)).strftime("%Y%m%d%H")
+        for offset in range(source_run_count)
+    }
+    if expected - local_source_runs and local_latest in runs:
+        candidates.append(local_latest)
+    return sorted(set(candidates), reverse=True)
 
 
 def gfs_urls(run: datetime, max_forecast_hour: int) -> list[str]:
@@ -64,7 +99,11 @@ def gfs_urls(run: datetime, max_forecast_hour: int) -> list[str]:
     hh = run.strftime("%H")
     base = f"https://noaa-gfs-bdp-pds.s3.amazonaws.com/gfs.{ymd}/{hh}/atmos"
     urls: list[str] = []
-    for forecast_hour in range(max_forecast_hour + 1):
+    available_hours = set(gfs_forecast_hours(max_forecast_hour))
+    sentinel_hours = sorted(
+        available_hours.intersection({0, 5, 120, 123, max_forecast_hour})
+    )
+    for forecast_hour in sentinel_hours:
         fff = f"{forecast_hour:03d}"
         urls.append(f"{base}/gfs.t{hh}z.sfluxgrbf{fff}.grib2.idx")
         urls.append(f"{base}/gfs.t{hh}z.pgrb2.0p25.f{fff}.idx")
@@ -105,19 +144,24 @@ def run_complete(run: datetime, max_forecast_hour: int, timeout_seconds: float, 
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Probe official GFS index files and report the newest complete run.")
+    parser = argparse.ArgumentParser(description="Probe GFS boundary/sentinel index files and report the newest complete run.")
     parser.add_argument("--data-dir", default="./data/point")
-    parser.add_argument("--max-forecast-hour", type=int, default=120)
+    parser.add_argument("--max-forecast-hour", type=int, default=384)
     parser.add_argument("--lookback-hours", type=int, default=36)
     parser.add_argument("--timeout-seconds", type=float, default=8.0)
     parser.add_argument("--workers", type=int, default=16)
     args = parser.parse_args()
 
+    try:
+        gfs_forecast_hours(args.max_forecast_hour)
+    except ValueError as exc:
+        parser.error(str(exc))
+
     now = datetime.now(UTC)
     data_dir = Path(args.data_dir)
-    local_latest = read_local_latest(data_dir)
+    local_latest, local_source_runs = read_local_state(data_dir)
 
-    for run in candidate_runs(now, local_latest, args.lookback_hours):
+    for run in candidate_runs(now, local_latest, args.lookback_hours, local_source_runs):
         complete, failures = run_complete(run, args.max_forecast_hour, args.timeout_seconds, args.workers)
         if complete:
             print(f"READY {run.strftime('%Y%m%d%H')} {run.strftime('%Y-%m-%dT%H:00:00Z')}")

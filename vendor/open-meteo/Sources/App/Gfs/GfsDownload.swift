@@ -152,7 +152,9 @@ struct GfsDownload: AsyncCommand {
         var landmask: Array2D?
         let curl = Curl(logger: logger, client: application.dedicatedHttpClient)
         var grib2d = GribArray2D(nx: grid.nx, ny: grid.ny)
-        let elevationMessages = try await curl.downloadIndexedGrib(url: url, variables: ElevationVariable.allCases)
+        let elevationMessages = WeatherForecastServerSourceConfig.useNomadsRegionalDownload
+            ? try await curl.downloadNomadsRegionalGfs(url: url, variables: ElevationVariable.allCases)
+            : try await curl.downloadIndexedGrib(url: url, variables: ElevationVariable.allCases)
         for (variable, message) in elevationMessages {
             if let regional = try GfsRegionalDownload.decodeRegional(message: message, domain: domain) {
                 grib2d = regional
@@ -328,7 +330,9 @@ struct GfsDownload: AsyncCommand {
                 /// Keep variables in memory. Precip + Frozen percent to calculate snowfall
                 let inMemory = VariablePerMemberStorage<GfsSurfaceVariable>()
                 
-                let gribMessages = try await curl.downloadIndexedGrib(url: url, variables: variables, errorOnMissing: !skipMissing)
+                let gribMessages = WeatherForecastServerSourceConfig.useNomadsRegionalDownload
+                    ? try await curl.downloadNomadsRegionalGfs(url: url, variables: variables, errorOnMissing: !skipMissing)
+                    : try await curl.downloadIndexedGrib(url: url, variables: variables, errorOnMissing: !skipMissing)
 
                 for (variable, message) in gribMessages {
                     if skipMissing {
@@ -503,6 +507,15 @@ private enum GfsRegionalDownload {
         guard let slice = slice(domain: domain) else {
             return nil
         }
+        let messageNx = message.get(attribute: "Nx")?.toInt()
+        let messageNy = message.get(attribute: "Ny")?.toInt()
+        if messageNx == slice.nx, messageNy == slice.ny {
+            return try message.to2D(
+                nx: slice.nx,
+                ny: slice.ny,
+                shift180LongitudeAndFlipLatitudeIfRequired: true
+            )
+        }
         var full = try message.to2D(nx: slice.fullNx, ny: slice.fullNy, shift180LongitudeAndFlipLatitudeIfRequired: false)
         full.array.shift180LongitudeAndFlipLatitude()
 
@@ -525,7 +538,7 @@ private enum GfsRegionalDownload {
                 dx: Double(dx),
                 dy: Double(dy),
                 region: WeatherForecastServerSourceConfig.region,
-                haloCells: 2
+                haloCells: 0
             )
             return Slice(fullNx: 3072, fullNy: 1536, x0: slice.x0, y0: slice.y0, nx: slice.nx, ny: slice.ny)
         case .gfs025:
@@ -537,7 +550,7 @@ private enum GfsRegionalDownload {
                 dx: 0.25,
                 dy: 0.25,
                 region: WeatherForecastServerSourceConfig.region,
-                haloCells: 2
+                haloCells: 0
             )
             return Slice(fullNx: 1440, fullNy: 721, x0: slice.x0, y0: slice.y0, nx: slice.nx, ny: slice.ny)
         default:

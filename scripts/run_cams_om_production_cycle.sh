@@ -1,0 +1,175 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+APP_DIR="${WEATHER_FORECAST_APP_DIR:-/opt/1panel/apps/weather_forecast_server}"
+source "$APP_DIR/scripts/openmeteo_runtime_common.sh"
+load_weather_env
+RUN="${1:-${WEATHER_CAMS_RUN:-}}"
+if [[ -z "$RUN" ]]; then
+  printf '%s\n' "Usage: run_cams_om_production_cycle.sh YYYYMMDDHH" >&2
+  exit 2
+fi
+LOG_DIR="${WEATHER_OPENMETEO_BUILD_LOG_DIR:-/opt/1panel/apps/weather/logs}"
+LOCK_FILE="${WEATHER_OPENMETEO_CAMS_FTP_LOCK_FILE:-/tmp/weather_openmeteo_cams_ftp_cycle.lock}"
+GLOBAL_LOCK_FILE="${WEATHER_OPENMETEO_GLOBAL_LOCK_FILE:-/tmp/weather_openmeteo_production.lock}"
+PRODUCER_ROOT="${WEATHER_OM_PRODUCER_ROOT:-$APP_DIR/data/om_producer}"
+KEEP_COVERAGES="${WEATHER_OM_CAMS_KEEP_COVERAGES:-1}"
+SOURCE_RUN_COUNT="${WEATHER_CAMS_REQUIRED_SOURCE_RUN_COUNT:-3}"
+MAX_FORECAST_HOUR="${WEATHER_CAMS_REQUIRED_MAX_FORECAST_HOUR:-120}"
+GREENHOUSE_SOURCE_RUN_COUNT="${WEATHER_CAMS_GREENHOUSE_SOURCE_RUN_COUNT:-3}"
+GREENHOUSE_MAX_FORECAST_HOUR="${WEATHER_CAMS_GREENHOUSE_MAX_FORECAST_HOUR:-120}"
+COVERAGE_REVISION="${WEATHER_CAMS_COVERAGE_REVISION:-greenhouse-v1}"
+LOCAL_UTC_OFFSET_HOURS="${WEATHER_CAMS_LOCAL_UTC_OFFSET_HOURS:-8}"
+CAMS_STORAGE_LEFT_LON="${WEATHER_CAMS_STORAGE_LEFT_LON:-69}"
+CAMS_STORAGE_RIGHT_LON="${WEATHER_CAMS_STORAGE_RIGHT_LON:-141}"
+CAMS_STORAGE_BOTTOM_LAT="${WEATHER_CAMS_STORAGE_BOTTOM_LAT:--1}"
+CAMS_STORAGE_TOP_LAT="${WEATHER_CAMS_STORAGE_TOP_LAT:-59}"
+
+export WEATHER_REGION_LEFT_LON="$CAMS_STORAGE_LEFT_LON"
+export WEATHER_REGION_RIGHT_LON="$CAMS_STORAGE_RIGHT_LON"
+export WEATHER_REGION_BOTTOM_LAT="$CAMS_STORAGE_BOTTOM_LAT"
+export WEATHER_REGION_TOP_LAT="$CAMS_STORAGE_TOP_LAT"
+
+mkdir -p "$LOG_DIR" "$PRODUCER_ROOT/staging"
+
+{
+  flock -n 9 || {
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_OM] previous job still running, skip."
+    exit 0
+  }
+
+  exec 8>"$GLOBAL_LOCK_FILE"
+  flock -n 8 || {
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_OM] another Open-Meteo production cycle is running, skip."
+    exit 0
+  }
+
+  cd "$APP_DIR"
+  read -r SOURCE_RUNS PUBLIC_START_UTC PUBLIC_END_UTC PUBLIC_HOURS LOCAL_DAY_START_UTC < <(
+    python3 scripts/model_source_run_plan.py \
+      --run "$RUN" \
+      --cadence-hours 12 \
+      --source-run-count "$SOURCE_RUN_COUNT" \
+      --historical-max-forecast-hour "$MAX_FORECAST_HOUR" \
+      --latest-max-forecast-hour "$MAX_FORECAST_HOUR" \
+      --local-utc-offset-hours "$LOCAL_UTC_OFFSET_HOURS" \
+      --format fields
+  )
+  GREENHOUSE_SOURCE_RUNS="$(python3 - "$RUN" "$GREENHOUSE_SOURCE_RUN_COUNT" <<'PY'
+from datetime import datetime, timedelta, timezone
+import sys
+
+run = datetime.strptime(sys.argv[1], "%Y%m%d%H").replace(tzinfo=timezone.utc)
+count = int(sys.argv[2])
+if count != 3:
+    raise SystemExit("CAMS greenhouse must retain exactly three daily runs")
+latest = run.replace(hour=0)
+print(",".join(
+    (latest - timedelta(days=offset)).strftime("%Y%m%d00")
+    for offset in range(count - 1, -1, -1)
+))
+PY
+)"
+  STAGING_DIR="$PRODUCER_ROOT/staging/cams_${RUN}_$$"
+  cleanup_staging() {
+    if [[ -n "${STAGING_DIR:-}" && "$STAGING_DIR" == "$PRODUCER_ROOT/staging/"* ]]; then
+      rm -rf -- "$STAGING_DIR"
+    fi
+  }
+  trap cleanup_staging EXIT
+  SEED_JSON="$(python3 scripts/seed_native_om_staging.py \
+    --output-root "$PRODUCER_ROOT" \
+    --staging-dir "$STAGING_DIR" \
+    --group cams \
+    --source-runs "$SOURCE_RUNS")"
+  REUSED_SOURCE_RUNS="$(python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)["reused_source_runs"]))' <<<"$SEED_JSON")"
+  prepare_openmeteo_staging_permissions "$STAGING_DIR"
+  export WEATHER_OPENMETEO_DATA_DIR="$STAGING_DIR"
+
+  IFS=',' read -ra PLANNED_SOURCE_RUNS <<< "$SOURCE_RUNS"
+  for SOURCE_RUN in "${PLANNED_SOURCE_RUNS[@]:0:${#PLANNED_SOURCE_RUNS[@]}-1}"; do
+    if [[ ",$REUSED_SOURCE_RUNS," == *",$SOURCE_RUN,"* ]]; then
+      echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_OM] reuse history run=$SOURCE_RUN"
+      continue
+    fi
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_OM] history run=$SOURCE_RUN horizon=$MAX_FORECAST_HOUR"
+    WEATHER_CAMS_RUN="$SOURCE_RUN" \
+    WEATHER_CAMS_MAX_FORECAST_HOUR="$MAX_FORECAST_HOUR" \
+      bash scripts/download_openmeteo_cams_data.sh
+
+    python3 scripts/validate_openmeteo_latest_run.py \
+      --data-dir "$STAGING_DIR" \
+      --run "$SOURCE_RUN" \
+      --domains cams_global \
+      --min-frames "$((MAX_FORECAST_HOUR + 1))"
+  done
+
+  if [[ ",$REUSED_SOURCE_RUNS," == *",$RUN,"* ]]; then
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_OM] reuse latest run=$RUN"
+  else
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_OM] latest run=$RUN horizon=$MAX_FORECAST_HOUR"
+    WEATHER_CAMS_RUN="$RUN" \
+    WEATHER_CAMS_MAX_FORECAST_HOUR="$MAX_FORECAST_HOUR" \
+      bash scripts/download_openmeteo_cams_data.sh
+  fi
+
+  python3 scripts/validate_openmeteo_latest_run.py \
+    --data-dir "$STAGING_DIR" \
+    --run "$RUN" \
+    --domains cams_global \
+    --min-frames "$((MAX_FORECAST_HOUR + 1))"
+
+  IFS=',' read -ra PLANNED_GREENHOUSE_RUNS <<< "$GREENHOUSE_SOURCE_RUNS"
+  for GREENHOUSE_RUN in "${PLANNED_GREENHOUSE_RUNS[@]}"; do
+    GREENHOUSE_RUN_DIR="$STAGING_DIR/data_run/cams_global_greenhouse_gases/${GREENHOUSE_RUN:0:4}/${GREENHOUSE_RUN:4:2}/${GREENHOUSE_RUN:6:2}/${GREENHOUSE_RUN:8:2}00Z"
+    if [[ -s "$GREENHOUSE_RUN_DIR/meta.json" && -s "$GREENHOUSE_RUN_DIR/carbon_monoxide.om" ]]; then
+      echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_OM] reuse greenhouse run=$GREENHOUSE_RUN"
+      continue
+    fi
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_OM] greenhouse run=$GREENHOUSE_RUN horizon=$GREENHOUSE_MAX_FORECAST_HOUR"
+    WEATHER_CAMS_GREENHOUSE_RUN="$GREENHOUSE_RUN" \
+      bash scripts/download_openmeteo_cams_greenhouse_data.sh
+  done
+
+  # A repair may download an older missing run while reusing the newest run.
+  # Restore latest.json from the newest retained run with an atomic replacement;
+  # never truncate the hard-linked file inherited from the current coverage.
+  GREENHOUSE_LATEST_RUN="${PLANNED_GREENHOUSE_RUNS[-1]}"
+  GREENHOUSE_LATEST_DIR="$STAGING_DIR/data_run/cams_global_greenhouse_gases/${GREENHOUSE_LATEST_RUN:0:4}/${GREENHOUSE_LATEST_RUN:4:2}/${GREENHOUSE_LATEST_RUN:6:2}/${GREENHOUSE_LATEST_RUN:8:2}00Z"
+  GREENHOUSE_LATEST_JSON="$STAGING_DIR/data_run/cams_global_greenhouse_gases/latest.json"
+  cp "$GREENHOUSE_LATEST_DIR/meta.json" "$GREENHOUSE_LATEST_JSON.tmp.$$"
+  mv -f "$GREENHOUSE_LATEST_JSON.tmp.$$" "$GREENHOUSE_LATEST_JSON"
+
+  python3 scripts/validate_openmeteo_latest_run.py \
+    --data-dir "$STAGING_DIR" \
+    --run "$GREENHOUSE_LATEST_RUN" \
+    --domains cams_global_greenhouse_gases \
+    --min-frames "$((GREENHOUSE_MAX_FORECAST_HOUR / 3 + 1))"
+
+  python3 scripts/prune_native_om_runs.py \
+    --data-dir "$STAGING_DIR" \
+    --domains cams_global \
+    --retained-runs "$SOURCE_RUNS"
+
+  python3 scripts/prune_native_om_runs.py \
+    --data-dir "$STAGING_DIR" \
+    --domains cams_global_greenhouse_gases \
+    --retained-runs "$GREENHOUSE_SOURCE_RUNS"
+
+  python3 scripts/publish_native_cams_coverage.py \
+    --staging-dir "$STAGING_DIR" \
+    --output-root "$PRODUCER_ROOT" \
+    --run "$RUN" \
+    --source-runs "$SOURCE_RUNS" \
+    --greenhouse-source-runs "$GREENHOUSE_SOURCE_RUNS" \
+    --latest-max-forecast-hour "$MAX_FORECAST_HOUR" \
+    --public-start-utc "$PUBLIC_START_UTC" \
+    --public-end-utc "$PUBLIC_END_UTC" \
+    --public-hours "$PUBLIC_HOURS" \
+    --local-day-start-utc "$LOCAL_DAY_START_UTC" \
+    --keep-coverages "$KEEP_COVERAGES" \
+    --coverage-revision "$COVERAGE_REVISION"
+
+  trap - EXIT
+  echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_OM] completed run=$RUN sources=$SOURCE_RUNS greenhouse_sources=$GREENHOUSE_SOURCE_RUNS"
+} 9>"$LOCK_FILE" >> "$LOG_DIR/openmeteo_cams_om_cycle.log" 2>&1

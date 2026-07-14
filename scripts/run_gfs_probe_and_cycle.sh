@@ -2,6 +2,8 @@
 set -euo pipefail
 
 APP_DIR="${WEATHER_FORECAST_APP_DIR:-/opt/1panel/apps/weather_forecast_server}"
+source "$APP_DIR/scripts/openmeteo_runtime_common.sh"
+load_weather_env
 LOG_DIR="${WEATHER_OPENMETEO_BUILD_LOG_DIR:-/opt/1panel/apps/weather/logs}"
 LOCK_FILE="${WEATHER_OPENMETEO_GFS_PROBE_LOCK_FILE:-/tmp/weather_openmeteo_gfs_probe.lock}"
 CYCLE_LOCK_FILE="${WEATHER_OPENMETEO_GFS_LOCK_FILE:-/tmp/weather_openmeteo_gfs_cycle.lock}"
@@ -34,8 +36,8 @@ mkdir -p "$LOG_DIR"
     }
   } 7>"$GLOBAL_LOCK_FILE"
 
-  data_dir="${WEATHER_OPENMETEO_DATA_DIR:-$APP_DIR/data/point}"
-  max_hour="${WEATHER_GFS_MAX_FORECAST_HOUR:-120}"
+  data_dir="${WEATHER_OM_PRODUCER_ROOT:-$APP_DIR/data/om_producer}"
+  max_hour="${WEATHER_GFS_MAX_FORECAST_HOUR:-384}"
   probe_output=""
   if ! probe_output="$(python3 scripts/probe_gfs_official_run.py --data-dir "$data_dir" --max-forecast-hour "$max_hour" 2>&1)"; then
     echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_GFS_PROBE] $probe_output"
@@ -51,5 +53,5 @@ mkdir -p "$LOG_DIR"
   set -- $ready_line
   run="$2"
   echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_GFS_PROBE] complete official run=$run"
-  WEATHER_GFS_RUN="$run" bash scripts/run_gfs_production_cycle.sh "$run"
+  WEATHER_GFS_RUN="$run" bash scripts/run_native_model_pipeline.sh gfs "$run"
 } 9>"$LOCK_FILE" >> "$LOG_DIR/openmeteo_gfs_probe.log" 2>&1

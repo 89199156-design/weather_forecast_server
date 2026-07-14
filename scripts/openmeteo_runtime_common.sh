@@ -42,19 +42,69 @@ load_weather_env() {
   restore_weather_env_overrides
 }
 
-default_image_tag() {
-  git -C "$APP_DIR" rev-parse --short HEAD 2>/dev/null || printf '%s' latest
-}
-
 is_truthy() {
   local value="${1:-}"
   value="${value,,}"
   [[ "$value" == "1" || "$value" == "true" || "$value" == "yes" || "$value" == "on" ]]
 }
 
+resolve_openmeteo_cpu_limit() {
+  local requested="${1:-1.5}"
+  local online_cpus
+
+  online_cpus="$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || printf '1\n')"
+  awk -v requested="$requested" -v online="$online_cpus" 'BEGIN {
+    if (requested !~ /^[0-9]+([.][0-9]+)?$/ || requested + 0 <= 0) {
+      print "WEATHER_OPENMETEO_CPU_LIMIT must be a positive number" > "/dev/stderr"
+      exit 2
+    }
+    if (online !~ /^[0-9]+$/ || online + 0 < 1) {
+      online = 1
+    }
+    safe = online - 0.5
+    if (safe < 0.5) {
+      safe = 0.5
+    }
+    effective = requested + 0
+    if (effective > safe) {
+      effective = safe
+    }
+    printf "%g\n", effective
+  }'
+}
+
+prepare_openmeteo_staging_permissions() {
+  local staging_dir="${1:?staging directory is required}"
+  local producer_root="${WEATHER_OM_PRODUCER_ROOT:-$APP_DIR/data/om_producer}"
+  local owner_uid="${WEATHER_OPENMETEO_UID:-999}"
+  local owner_gid="${WEATHER_OPENMETEO_GID:-999}"
+
+  case "$staging_dir" in
+    "$producer_root/staging/"*) ;;
+    *)
+      printf '%s\n' "Refusing to change directory ownership outside producer staging: $staging_dir" >&2
+      return 2
+      ;;
+  esac
+  if [[ "$(id -u)" -ne 0 ]]; then
+    printf '%s\n' "Producer staging permissions must be prepared as root: $staging_dir" >&2
+    return 2
+  fi
+
+  # copytree(..., copy_function=os.link) creates fresh directories owned by
+  # the producer process while the linked OM files retain the container UID.
+  # Change directories only, so the container can create its atomic temporary
+  # files without chowning or modifying the immutable current coverage.
+  find "$staging_dir" -type d -exec chown "$owner_uid:$owner_gid" {} +
+}
+
 openmeteo_set_runtime_defaults() {
   IMAGE_NAME="${WEATHER_OPENMETEO_IMAGE:-weather-forecast-openmeteo}"
-  IMAGE_TAG="${WEATHER_OPENMETEO_TAG:-$(default_image_tag)}"
+  IMAGE_TAG="${WEATHER_OPENMETEO_TAG:-}"
+  if [[ -z "$IMAGE_TAG" ]]; then
+    printf '%s\n' "WEATHER_OPENMETEO_TAG must be the exact immutable native-* image tag." >&2
+    return 2
+  fi
   DATA_DIR="${WEATHER_OPENMETEO_DATA_DIR:-$APP_DIR/data/point}"
   OPENMETEO_UID="${WEATHER_OPENMETEO_UID:-999}"
   OPENMETEO_GID="${WEATHER_OPENMETEO_GID:-999}"
@@ -65,6 +115,9 @@ openmeteo_set_runtime_defaults() {
   DEM_PRESEED_ENABLED="${WEATHER_DEM_PRESEED_ENABLED:-false}"
   DEM_PRESEED_BASE_URL="${WEATHER_DEM_PRESEED_BASE_URL:-}"
   DEM_PRESEED_CONCURRENT="${WEATHER_DEM_PRESEED_CONCURRENT:-4}"
+  OPENMETEO_CPU_LIMIT="$(resolve_openmeteo_cpu_limit "${WEATHER_OPENMETEO_CPU_LIMIT:-1.5}")"
+  OPENMETEO_CPU_SHARES="${WEATHER_OPENMETEO_CPU_SHARES:-256}"
+  OPENMETEO_BLKIO_WEIGHT="${WEATHER_OPENMETEO_BLKIO_WEIGHT:-100}"
 
   cd "$APP_DIR"
   mkdir -p "$DATA_DIR"
@@ -93,6 +146,9 @@ write_sanitized_env_file() {
 
 run_openmeteo() {
   docker run --rm \
+    --cpus "$OPENMETEO_CPU_LIMIT" \
+    --cpu-shares "$OPENMETEO_CPU_SHARES" \
+    --blkio-weight "$OPENMETEO_BLKIO_WEIGHT" \
     --env-file "$SANITIZED_ENV_FILE" \
     --volume "$DATA_DIR:/app/data" \
     "$IMAGE_NAME:$IMAGE_TAG" \
@@ -243,7 +299,15 @@ cleanup_openmeteo_http_cache() {
     local cache_dir_host
     cache_dir_host="$(host_http_cache_dir)"
     if [[ -n "${cache_dir_host:-}" && "$cache_dir_host" == "$DATA_DIR"/* ]]; then
-      rm -rf "$cache_dir_host"
+      if [[ -d "$cache_dir_host" ]]; then
+        local cache_entries=()
+        shopt -s dotglob nullglob
+        cache_entries=("$cache_dir_host"/*)
+        shopt -u dotglob nullglob
+        if [[ "${#cache_entries[@]}" -gt 0 ]]; then
+          rm -rf -- "${cache_entries[@]}"
+        fi
+      fi
     fi
   fi
 }
@@ -261,5 +325,9 @@ prepare_openmeteo_http_cache() {
   mkdir -p "$cache_dir_host"
   if [[ "$(id -u)" -eq 0 ]]; then
     chown -R "$OPENMETEO_UID:$OPENMETEO_GID" "$cache_dir_host"
+  else
+    # The cache contains only disposable public source downloads. The host
+    # scheduler and the fixed container UID both need to recreate/clear it.
+    chmod 0777 "$cache_dir_host"
   fi
 }

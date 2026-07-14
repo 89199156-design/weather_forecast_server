@@ -2,6 +2,8 @@
 set -euo pipefail
 
 APP_DIR="${WEATHER_FORECAST_APP_DIR:-/opt/1panel/apps/weather_forecast_server}"
+source "$APP_DIR/scripts/openmeteo_runtime_common.sh"
+load_weather_env
 LOG_DIR="${WEATHER_OPENMETEO_BUILD_LOG_DIR:-/opt/1panel/apps/weather/logs}"
 LOCK_FILE="${WEATHER_OPENMETEO_CAMS_FTP_SCHEDULE_LOCK_FILE:-/tmp/weather_openmeteo_cams_ftp_schedule.lock}"
 CYCLE_LOCK_FILE="${WEATHER_OPENMETEO_CAMS_FTP_LOCK_FILE:-/tmp/weather_openmeteo_cams_ftp_cycle.lock}"
@@ -16,9 +18,6 @@ mkdir -p "$LOG_DIR"
   }
 
   cd "$APP_DIR"
-  source scripts/openmeteo_runtime_common.sh
-  load_weather_env
-
   if [[ "${WEATHER_GIT_PULL:-false}" == "true" ]]; then
     git pull --ff-only
   fi
@@ -30,7 +29,7 @@ mkdir -p "$LOG_DIR"
     }
   } 7>"$GLOBAL_LOCK_FILE"
 
-  data_dir="${WEATHER_OPENMETEO_DATA_DIR:-$APP_DIR/data/point}"
+  data_dir="${WEATHER_OM_PRODUCER_ROOT:-$APP_DIR/data/om_producer}"
   {
     flock -n 8 || {
       echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_FTP_SCHEDULE] CAMS FTP/ECPDS production cycle already running, skip probe."
@@ -52,5 +51,5 @@ mkdir -p "$LOG_DIR"
   run="$2"
 
   echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_FTP_SCHEDULE] start run=$run"
-  WEATHER_CAMS_RUN="$run" bash scripts/run_cams_ftp_production_cycle.sh "$run"
+  WEATHER_CAMS_RUN="$run" bash scripts/run_native_model_pipeline.sh cams "$run"
 } 9>"$LOCK_FILE" >> "$LOG_DIR/openmeteo_cams_ftp_schedule.log" 2>&1
