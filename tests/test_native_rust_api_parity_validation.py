@@ -16,6 +16,10 @@ class NativeRustApiParityValidationTests(unittest.TestCase):
         self.assertIn("compare_shanghai_singapore_daily.py", source)
         self.assertIn("shanghai-singapore-2000-all-hours.json", source)
         self.assertIn("shanghai-singapore-2000x3-daily.json", source)
+        self.assertIn(
+            '--hourly-acceptance-report "$REPORT_ROOT/shanghai-singapore-2000-all-hours.json"',
+            source,
+        )
         self.assertIn("compare_model_run_identities.py", source)
         self.assertIn("singapore-model-run-identity.json", source)
         self.assertIn("WEATHER_OM_RUN_IDENTITY_REPORT", source)

@@ -80,6 +80,7 @@ python3 "$APP_DIR/scripts/compare_shanghai_singapore_daily.py" \
   --gfs-run "$GFS_RUN" \
   --cams-run "$CAMS_RUN" \
   --run-identity-report "$RUN_IDENTITY_REPORT" \
+  --hourly-acceptance-report "$REPORT_ROOT/shanghai-singapore-2000-all-hours.json" \
   --output-report "$REPORT_ROOT/shanghai-singapore-2000x3-daily.json"
 nice -n 15 ionice -c 3 python3 "$APP_DIR/scripts/compare_webp_inventories.py" inventory \
   --output-root "$WEBP_OUTPUT_ROOT" \
