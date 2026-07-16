@@ -56,19 +56,23 @@ generation and one API reload event after the OM cycle returns successfully.
 
 GFS keeps five consecutive source runs in one staging database:
 
-1. The four runs before the newest run contribute forecast hours `0...5`.
+1. The three oldest runs contribute forecast hours `0...5`.
    Each history member is a strict single-batch window; it never retains
    `f006` or substitutes an older cycle at the next run's `f000` boundary.
-2. The newest complete run is retained through 384h and extends the forecast.
+2. The immediately previous and newest runs are both retained through 384h.
+   At query time the previous complete run is the same-valid-time fallback
+   for a null value in the newest run.
+3. The newest complete run extends the forecast through 384h.
    The 24-hour prefix always reaches UTC+8 local-day midnight for a 6-hour GFS
    cycle.
 
 Already published source runs are hard-linked into staging. In a normal cycle,
-the three oldest history runs are reused only after their exact `0...5h`
-metadata and OM frame dimensions validate. The immediately previous run is
-re-imported at `0...5h` to replace its former full-run file, and the latest full
-run is imported last. First start or a detected missing/overlapping `0...6h` file
-imports every affected history run oldest first. This relies on the upstream
+the first two short runs and the previous newest complete run are reused after
+their exact role-specific metadata and OM frame dimensions validate. The run
+that rolls from the previous-complete position into the third short position is
+re-imported at `0...5h`, and the new latest complete run is imported through
+`f384`: exactly two downloads in the healthy rollover case. A cold start or a
+gap imports every missing or invalid member with its required horizon. This relies on the upstream
 full-run writer opening the run file with `overwrite: true` and a temporary
 atomic replacement. Re-importing the immediately previous run with six
 forecast times therefore replaces its old full-horizon `data_run` file with
@@ -153,7 +157,8 @@ full run; first start or a missing run downloads the missing members of the
 three-run window. Before publication, both producers delete `data_run` run
 directories outside their retained window and remove `download-*` plus
 `http_cache`. GFS publication additionally proves from every `meta.json` and
-OM file that the four historical runs contain exactly `0...5h`; CAMS proves all three runs
+OM file that the three historical runs contain exactly `0...5h` and both complete runs
+contain the official `0...384h` schedule; CAMS proves all three runs
 contain `0...120h`.
 
 The publisher validates both the batch time metadata and each OM file's actual
@@ -351,7 +356,8 @@ only boundary/sentinel NOAA `.idx` files (`0,5,120,123,384h`) for `gfs013`
 sflux, `gfs025` pgrb2, and `gfs025` pgrb2b. The actual import and publication
 validators still require the complete real hourly/3-hourly schedule. Only after a newer run is
 complete does the GFS producer hard-link the previous coverage into staging,
-re-import the previous run at `0...5h`, import the latest run through 384h,
+re-import the former previous-complete run at `0...5h`, retain the old latest
+run through 384h, and import the new latest run through 384h,
 validate the five-run rolling database, and publish a native OM coverage. On
 first start, after a gap, or when legacy history overlaps through `f006`, it imports the
 affected older `0...5h` runs from

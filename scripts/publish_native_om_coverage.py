@@ -138,7 +138,7 @@ def gfs_stored_frame_counts(domain: str, variables: list[str], schedule_count: i
     }
 
 
-def validate_gfs_window(args: argparse.Namespace) -> list[str]:
+def validate_gfs_window(args: argparse.Namespace) -> tuple[list[str], list[int]]:
     latest = parse_compact_run(args.latest_run)
     source_runs = parse_source_runs(args.source_runs)
     if len(source_runs) != 5:
@@ -150,6 +150,11 @@ def validate_gfs_window(args: argparse.Namespace) -> list[str]:
         raise ValueError("latest run must be the final source run")
     if any(right - left != timedelta(hours=6) for left, right in zip(parsed_runs, parsed_runs[1:])):
         raise ValueError("GFS source runs must be five consecutive 6-hour cycles")
+    if args.full_run_count != 2:
+        raise ValueError("GFS coverage must contain exactly two complete source runs")
+    short_run_count = len(source_runs) - args.full_run_count
+    if short_run_count != 3:
+        raise ValueError("GFS coverage must contain exactly three short source runs")
     gfs_forecast_hours(args.latest_max_forecast_hour)
     if args.latest_max_forecast_hour != 384:
         raise ValueError("latest GFS run must contain the complete 0...384h horizon")
@@ -174,7 +179,11 @@ def validate_gfs_window(args: argparse.Namespace) -> list[str]:
     local_day_start = parse_iso_time(args.local_day_start_utc)
     if not public_start <= local_day_start <= latest:
         raise ValueError("local_day_start_utc is outside the retained GFS history")
-    return source_runs
+    source_run_max_forecast_hours = (
+        [args.historical_max_forecast_hour] * short_run_count
+        + [args.latest_max_forecast_hour] * args.full_run_count
+    )
+    return source_runs, source_run_max_forecast_hours
 
 
 def read_latest(staging: Path, domain: str, expected_run: str) -> dict[str, Any]:
@@ -335,6 +344,9 @@ def promote_or_reuse_coverage(
         "public_hours",
         "historical_max_forecast_hour",
         "latest_max_forecast_hour",
+        "short_run_count",
+        "full_run_count",
+        "source_run_max_forecast_hours",
     )
     for field in identity_fields:
         if existing.get(field) != coverage_manifest.get(field):
@@ -394,7 +406,7 @@ def publish_gfs_coverage(args: argparse.Namespace) -> dict[str, Any]:
     ensure_staging_is_scoped(staging, output_root)
     if not staging.is_dir():
         raise ValueError(f"staging directory does not exist: {staging}")
-    source_runs = validate_gfs_window(args)
+    source_runs, source_run_max_forecast_hours = validate_gfs_window(args)
     if args.keep_coverages < 1:
         raise ValueError("keep_coverages must be positive")
     if args.public_hours < args.min_public_hours:
@@ -405,19 +417,13 @@ def publish_gfs_coverage(args: argparse.Namespace) -> dict[str, Any]:
     required_by_domain = required_variables_by_domain(args)
     for domain in GFS_DOMAINS:
         read_latest(staging, domain, args.latest_run)
-    for run in source_runs[:-1]:
+    for run, max_forecast_hour in zip(source_runs, source_run_max_forecast_hours):
         validate_gfs_retained_run(
             staging,
             run,
-            args.historical_max_forecast_hour,
+            max_forecast_hour,
             required_by_domain,
         )
-    validate_gfs_retained_run(
-        staging,
-        source_runs[-1],
-        args.latest_max_forecast_hour,
-        required_by_domain,
-    )
 
     domain_grids = gfs_domain_grids(
         getattr(args, "left_lon", 70.0),
@@ -454,6 +460,9 @@ def publish_gfs_coverage(args: argparse.Namespace) -> dict[str, Any]:
         "source_runs": source_runs,
         "historical_max_forecast_hour": args.historical_max_forecast_hour,
         "latest_max_forecast_hour": args.latest_max_forecast_hour,
+        "short_run_count": len(source_runs) - args.full_run_count,
+        "full_run_count": args.full_run_count,
+        "source_run_max_forecast_hours": source_run_max_forecast_hours,
         "public_start_utc": args.public_start_utc,
         "local_day_start_utc": args.local_day_start_utc,
         "public_end_utc": args.public_end_utc,
@@ -484,6 +493,11 @@ def publish_gfs_coverage(args: argparse.Namespace) -> dict[str, Any]:
         "coverage_id": coverage_id,
         "latest_complete_run": args.latest_run,
         "source_runs": source_runs,
+        "historical_max_forecast_hour": args.historical_max_forecast_hour,
+        "latest_max_forecast_hour": args.latest_max_forecast_hour,
+        "short_run_count": len(source_runs) - args.full_run_count,
+        "full_run_count": args.full_run_count,
+        "source_run_max_forecast_hours": source_run_max_forecast_hours,
         "public_start_utc": args.public_start_utc,
         "local_day_start_utc": args.local_day_start_utc,
         "public_end_utc": args.public_end_utc,
@@ -537,6 +551,7 @@ def main() -> int:
     parser.add_argument("--output-root", required=True)
     parser.add_argument("--latest-run", required=True)
     parser.add_argument("--source-runs", required=True)
+    parser.add_argument("--full-run-count", type=int, default=2)
     parser.add_argument("--historical-max-forecast-hour", type=int, required=True)
     parser.add_argument("--latest-max-forecast-hour", type=int, required=True)
     parser.add_argument("--public-start-utc", required=True)

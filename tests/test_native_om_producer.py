@@ -65,6 +65,7 @@ def make_staging(output_root: Path, run: str) -> Path:
         historical_max_forecast_hour=5,
         latest_max_forecast_hour=384,
         local_utc_offset_hours=8,
+        full_run_count=2,
     )
     for domain in ("ncep_gfs013", "ncep_gfs025"):
         (staging / domain / "temperature_2m").mkdir(parents=True)
@@ -80,14 +81,14 @@ def make_staging(output_root: Path, run: str) -> Path:
             ),
             encoding="utf-8",
         )
-        for source_run in plan.source_runs:
+        for source_index, source_run in enumerate(plan.source_runs):
             base = datetime.strptime(source_run, "%Y%m%d%H").replace(tzinfo=timezone.utc)
             forecast_hours = (
                 list(range(6))
-                if source_run != run
+                if source_index < 3
                 else list(range(121)) + list(range(123, 385, 3))
             )
-            stored_frames = 6 if source_run != run else 209
+            stored_frames = 6 if source_index < 3 else 209
             run_dir = staging / "data_run" / domain / base.strftime("%Y/%m/%d/%H00Z")
             run_dir.mkdir(parents=True, exist_ok=True)
             write_fake_om(run_dir / "temperature_2m.om", (2, 3, stored_frames))
@@ -115,6 +116,7 @@ def publisher_args(output_root: Path, staging: Path, run: str) -> argparse.Names
         historical_max_forecast_hour=5,
         latest_max_forecast_hour=384,
         local_utc_offset_hours=8,
+        full_run_count=2,
     )
     return argparse.Namespace(
         group="gfs",
@@ -122,6 +124,7 @@ def publisher_args(output_root: Path, staging: Path, run: str) -> argparse.Names
         output_root=str(output_root),
         latest_run=run,
         source_runs=",".join(plan.source_runs),
+        full_run_count=2,
         historical_max_forecast_hour=5,
         latest_max_forecast_hour=384,
         public_start_utc=plan.public_start_utc,
@@ -251,6 +254,11 @@ class NativeOmProducerTests(unittest.TestCase):
                 ["2026071200", "2026071206", "2026071212", "2026071218", "2026071300"],
             )
             self.assertEqual(ready["public_hours"], 408)
+            self.assertEqual(ready["short_run_count"], 3)
+            self.assertEqual(ready["full_run_count"], 2)
+            self.assertEqual(
+                ready["source_run_max_forecast_hours"], [5, 5, 5, 384, 384]
+            )
             self.assertEqual(
                 ready["coverage_path"], "coverages/gfs/gfs_native_2026071300"
             )
@@ -340,14 +348,14 @@ class NativeOmProducerTests(unittest.TestCase):
             output_root = Path(directory) / "producer"
             first = make_staging(output_root, "2026071300")
             first_args = publisher_args(output_root, first, "2026071300")
-            first_args.coverage_revision = "single-batch-f5-v1"
+            first_args.coverage_revision = "three-short-two-full-v1"
             publisher.publish_gfs_coverage(first_args)
 
             coverage = (
                 output_root
                 / "coverages"
                 / "gfs"
-                / "gfs_native_2026071300_single-batch-f5-v1"
+                / "gfs_native_2026071300_three-short-two-full-v1"
             )
             manifest_path = coverage / "coverage.json"
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -356,7 +364,7 @@ class NativeOmProducerTests(unittest.TestCase):
 
             retry = make_staging(output_root, "2026071300")
             retry_args = publisher_args(output_root, retry, "2026071300")
-            retry_args.coverage_revision = "single-batch-f5-v1"
+            retry_args.coverage_revision = "three-short-two-full-v1"
             with self.assertRaisesRegex(
                 ValueError, "identity mismatch for historical_max_forecast_hour"
             ):
@@ -409,6 +417,7 @@ class NativeOmProducerTests(unittest.TestCase):
                 historical_max_forecast_hour=5,
                 latest_max_forecast_hour=291,
                 local_utc_offset_hours=8,
+                full_run_count=2,
             )
             args.latest_max_forecast_hour = 291
             args.public_end_utc = short_plan.public_end_utc
@@ -437,7 +446,7 @@ class NativeOmProducerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             output_root = Path(directory) / "producer"
             staging = make_staging(output_root, "2026071300")
-            previous = datetime(2026, 7, 12, 18, tzinfo=timezone.utc)
+            previous = datetime(2026, 7, 12, 12, tzinfo=timezone.utc)
             meta_path = (
                 staging
                 / "data_run"
@@ -461,7 +470,7 @@ class NativeOmProducerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             output_root = Path(directory) / "producer"
             staging = make_staging(output_root, "2026071300")
-            previous = datetime(2026, 7, 12, 18, tzinfo=timezone.utc)
+            previous = datetime(2026, 7, 12, 12, tzinfo=timezone.utc)
             run_dir = (
                 staging
                 / "data_run"
@@ -479,7 +488,7 @@ class NativeOmProducerTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "forecast hours 0...5"):
                 publisher.validate_gfs_retained_run(
                     staging,
-                    "2026071218",
+                    "2026071212",
                     5,
                     {
                         "ncep_gfs013": {"temperature_2m"},
@@ -600,8 +609,9 @@ class NativeOmProducerTests(unittest.TestCase):
             producer.index('WEATHER_GFS_RUN="$RUN"'),
         )
         self.assertIn('HISTORY_MAX_FORECAST_HOUR="${WEATHER_GFS_REQUIRED_HISTORY_FORECAST_HOUR:-5}"', producer)
+        self.assertIn('FULL_RUN_COUNT="${WEATHER_GFS_REQUIRED_FULL_RUN_COUNT:-2}"', producer)
         self.assertIn("validate_staged_gfs_run", producer)
-        self.assertIn('validate_staged_gfs_run "$SOURCE_RUN" "$HISTORY_MAX_FORECAST_HOUR"', producer)
+        self.assertIn('validate_staged_gfs_run "$SOURCE_RUN" "$SOURCE_MAX_FORECAST_HOUR"', producer)
         self.assertIn('validate_staged_gfs_run "$RUN" "$LATEST_MAX_FORECAST_HOUR"', producer)
         self.assertIn('restore_latest_metadata "$RUN"', producer)
         self.assertIn("reuse validated latest run=$RUN", producer)
@@ -611,7 +621,8 @@ class NativeOmProducerTests(unittest.TestCase):
         self.assertIn('"$(dirname -- "$RESUME_SOURCE")" != "$RESUME_ROOT"', producer)
         self.assertIn("seed_native_om_staging.py", producer)
         self.assertIn('SEEDED_LATEST_RUN="$(python3 -c', producer)
-        self.assertIn('"$SOURCE_RUN" != "$SEEDED_LATEST_RUN"', producer)
+        self.assertNotIn('"$SOURCE_RUN" != "$SEEDED_LATEST_RUN"', producer)
+        self.assertIn('--full-run-count "$FULL_RUN_COUNT"', producer)
         self.assertIn("prune_native_om_runs.py", producer)
         self.assertIn("publish_native_om_coverage.py", producer)
         self.assertNotIn("build_openmeteo_gfs_layers.sh", producer)

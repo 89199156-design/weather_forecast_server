@@ -394,8 +394,8 @@ def test_gfs_repair_mode_can_refresh_reused_surface_runs_without_gfs025():
     assert '--coverage-revision "$COVERAGE_REVISION"' in cycle
     assert 'merge_native_run_metadata.py' in cycle
     assert '! is_truthy "$FORCE_REUSED_DOWNLOAD"' in cycle
-    assert 'WEATHER_OM_GFS_SAME_RUN_COVERAGE_REVISION:-single-batch-f5-v1' in cycle
-    assert 'validate_staged_gfs_run "$SOURCE_RUN" "$HISTORY_MAX_FORECAST_HOUR"' in cycle
+    assert 'WEATHER_OM_GFS_SAME_RUN_COVERAGE_REVISION:-three-short-two-full-v1' in cycle
+    assert 'validate_staged_gfs_run "$SOURCE_RUN" "$SOURCE_MAX_FORECAST_HOUR"' in cycle
     assert 'restore_latest_metadata "$RUN"' in cycle
 
 
@@ -403,7 +403,9 @@ def test_singapore_config_uses_shanghai_22_level_pressure_contract():
     config = (ROOT / "config" / "singapore.example.env").read_text(encoding="utf-8")
 
     assert "WEATHER_GFS_REQUIRED_HISTORY_FORECAST_HOUR=5" in config
-    assert "WEATHER_OM_GFS_SAME_RUN_COVERAGE_REVISION=single-batch-f5-v1" in config
+    assert "WEATHER_GFS_REQUIRED_SOURCE_RUN_COUNT=5" in config
+    assert "WEATHER_GFS_REQUIRED_FULL_RUN_COUNT=2" in config
+    assert "WEATHER_OM_GFS_SAME_RUN_COVERAGE_REVISION=three-short-two-full-v1" in config
     assert "WEATHER_GFS_UPPER_LEVELS=1000,975,950,925,900,850,800,750,700,650,600,550,500,450,400,350,300,250,200,150,100,50" in config
     assert (
         "WEATHER_GFS_UPPER_LEVEL_VARIABLES="

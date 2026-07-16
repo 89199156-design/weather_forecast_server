@@ -17,9 +17,10 @@ RESUME_STAGING="${WEATHER_OM_GFS_RESUME_STAGING:-}"
 FORCE_REUSED_DOWNLOAD="${WEATHER_OM_GFS_FORCE_REUSED_DOWNLOAD:-false}"
 REPAIR_SURFACE_ONLY="${WEATHER_OM_GFS_REPAIR_SURFACE_ONLY:-false}"
 COVERAGE_REVISION="${WEATHER_OM_GFS_COVERAGE_REVISION:-}"
-SAME_RUN_COVERAGE_REVISION="${WEATHER_OM_GFS_SAME_RUN_COVERAGE_REVISION:-single-batch-f5-v1}"
+SAME_RUN_COVERAGE_REVISION="${WEATHER_OM_GFS_SAME_RUN_COVERAGE_REVISION:-three-short-two-full-v1}"
 LATEST_MAX_FORECAST_HOUR="${WEATHER_GFS_REQUIRED_MAX_FORECAST_HOUR:-384}"
 SOURCE_RUN_COUNT="${WEATHER_GFS_REQUIRED_SOURCE_RUN_COUNT:-5}"
+FULL_RUN_COUNT="${WEATHER_GFS_REQUIRED_FULL_RUN_COUNT:-2}"
 HISTORY_MAX_FORECAST_HOUR="${WEATHER_GFS_REQUIRED_HISTORY_FORECAST_HOUR:-5}"
 LOCAL_UTC_OFFSET_HOURS="${WEATHER_GFS_LOCAL_UTC_OFFSET_HOURS:-8}"
 MIN_PUBLIC_HOURS="${WEATHER_GFS_MIN_PUBLIC_HOURS:-300}"
@@ -64,6 +65,7 @@ mkdir -p "$LOG_DIR" "$PRODUCER_ROOT/staging"
       --historical-max-forecast-hour "$HISTORY_MAX_FORECAST_HOUR" \
       --local-utc-offset-hours "$LOCAL_UTC_OFFSET_HOURS" \
       --latest-max-forecast-hour "$LATEST_MAX_FORECAST_HOUR" \
+      --full-run-count "$FULL_RUN_COUNT" \
       --format fields
   )
 
@@ -186,28 +188,40 @@ PY
       --latest "$STAGING_DIR/data_run/ncep_gfs013/latest.json"
   }
   IFS=',' read -ra PLANNED_SOURCE_RUNS <<< "$SOURCE_RUNS"
-  for SOURCE_RUN in "${PLANNED_SOURCE_RUNS[@]:0:${#PLANNED_SOURCE_RUNS[@]}-1}"; do
+  SHORT_RUN_COUNT=$((${#PLANNED_SOURCE_RUNS[@]} - FULL_RUN_COUNT))
+  if (( FULL_RUN_COUNT != 2 || SHORT_RUN_COUNT != 3 )); then
+    echo "GFS production requires exactly three short runs and two complete runs" >&2
+    exit 1
+  fi
+  for ((SOURCE_INDEX = 0; SOURCE_INDEX < ${#PLANNED_SOURCE_RUNS[@]} - 1; SOURCE_INDEX++)); do
+    SOURCE_RUN="${PLANNED_SOURCE_RUNS[$SOURCE_INDEX]}"
+    SOURCE_MAX_FORECAST_HOUR="$HISTORY_MAX_FORECAST_HOUR"
+    SOURCE_ROLE="short-history"
+    if (( SOURCE_INDEX >= SHORT_RUN_COUNT )); then
+      SOURCE_MAX_FORECAST_HOUR="$LATEST_MAX_FORECAST_HOUR"
+      SOURCE_ROLE="previous-complete"
+    fi
     if ! is_truthy "$FORCE_REUSED_DOWNLOAD" \
-      && [[ "$SOURCE_RUN" != "$SEEDED_LATEST_RUN" && ",$REUSED_SOURCE_RUNS," == *",$SOURCE_RUN,"* ]]; then
-      if validate_staged_gfs_run "$SOURCE_RUN" "$HISTORY_MAX_FORECAST_HOUR"; then
-        echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_GFS_OM] reuse validated history run=$SOURCE_RUN"
+      && [[ ",$REUSED_SOURCE_RUNS," == *",$SOURCE_RUN,"* ]]; then
+      if validate_staged_gfs_run "$SOURCE_RUN" "$SOURCE_MAX_FORECAST_HOUR"; then
+        echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_GFS_OM] reuse validated role=$SOURCE_ROLE run=$SOURCE_RUN horizon=$SOURCE_MAX_FORECAST_HOUR"
         continue
       fi
-      echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_GFS_OM] repair invalid history run=$SOURCE_RUN horizon=$HISTORY_MAX_FORECAST_HOUR"
+      echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_GFS_OM] repair invalid role=$SOURCE_ROLE run=$SOURCE_RUN horizon=$SOURCE_MAX_FORECAST_HOUR"
     fi
-    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_GFS_OM] history run=$SOURCE_RUN horizon=$HISTORY_MAX_FORECAST_HOUR"
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_GFS_OM] download role=$SOURCE_ROLE run=$SOURCE_RUN horizon=$SOURCE_MAX_FORECAST_HOUR"
     if is_truthy "$REPAIR_SURFACE_ONLY"; then
       preserve_run_metadata "$SOURCE_RUN"
     fi
     WEATHER_GFS_RUN="$SOURCE_RUN" \
-    WEATHER_GFS_MAX_FORECAST_HOUR="$HISTORY_MAX_FORECAST_HOUR" \
+    WEATHER_GFS_MAX_FORECAST_HOUR="$SOURCE_MAX_FORECAST_HOUR" \
       bash scripts/download_openmeteo_gfs_data.sh
 
     if is_truthy "$REPAIR_SURFACE_ONLY"; then
       merge_run_metadata "$SOURCE_RUN"
     fi
 
-    validate_staged_gfs_run "$SOURCE_RUN" "$HISTORY_MAX_FORECAST_HOUR"
+    validate_staged_gfs_run "$SOURCE_RUN" "$SOURCE_MAX_FORECAST_HOUR"
   done
 
   REUSE_LATEST=false
@@ -242,9 +256,10 @@ PY
     --required-gfs-pressure-levels "$GFS_UPPER_LEVELS" \
     --required-gfs-pressure-variables "$GFS_UPPER_LEVEL_VARIABLES"
 
-  for SOURCE_RUN in "${PLANNED_SOURCE_RUNS[@]}"; do
+  for ((SOURCE_INDEX = 0; SOURCE_INDEX < ${#PLANNED_SOURCE_RUNS[@]}; SOURCE_INDEX++)); do
+    SOURCE_RUN="${PLANNED_SOURCE_RUNS[$SOURCE_INDEX]}"
     SOURCE_MAX_FORECAST_HOUR="$HISTORY_MAX_FORECAST_HOUR"
-    if [[ "$SOURCE_RUN" == "$RUN" ]]; then
+    if (( SOURCE_INDEX >= SHORT_RUN_COUNT )); then
       SOURCE_MAX_FORECAST_HOUR="$LATEST_MAX_FORECAST_HOUR"
     fi
     validate_staged_gfs_run "$SOURCE_RUN" "$SOURCE_MAX_FORECAST_HOUR"
@@ -270,6 +285,7 @@ PY
     --output-root "$PRODUCER_ROOT" \
     --latest-run "$RUN" \
     --source-runs "$SOURCE_RUNS" \
+    --full-run-count "$FULL_RUN_COUNT" \
     --historical-max-forecast-hour "$HISTORY_MAX_FORECAST_HOUR" \
     --latest-max-forecast-hour "$LATEST_MAX_FORECAST_HOUR" \
     --public-start-utc "$PUBLIC_START_UTC" \

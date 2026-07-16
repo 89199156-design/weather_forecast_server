@@ -18,6 +18,8 @@ class SourceRunPlan:
     source_runs: tuple[str, ...]
     historical_max_forecast_hour: int
     latest_max_forecast_hour: int
+    full_run_count: int
+    source_run_max_forecast_hours: tuple[int, ...]
     local_day_start_utc: str
     public_start_utc: str
     public_end_utc: str
@@ -49,6 +51,7 @@ def plan_source_runs(
     historical_max_forecast_hour: int,
     latest_max_forecast_hour: int,
     local_utc_offset_hours: int,
+    full_run_count: int = 1,
 ) -> SourceRunPlan:
     latest = parse_run(latest_run)
     if cadence_hours <= 0 or 24 % cadence_hours:
@@ -61,10 +64,17 @@ def plan_source_runs(
         raise ValueError("historical horizon must bridge at least one run cadence")
     if latest_max_forecast_hour < 0:
         raise ValueError("latest horizon must not be negative")
+    if full_run_count < 1 or full_run_count > source_run_count:
+        raise ValueError("full_run_count must be between 1 and source_run_count")
 
     runs = tuple(
         compact(latest - timedelta(hours=cadence_hours * offset))
         for offset in reversed(range(source_run_count))
+    )
+    short_run_count = source_run_count - full_run_count
+    horizons = tuple(
+        historical_max_forecast_hour if index < short_run_count else latest_max_forecast_hour
+        for index in range(source_run_count)
     )
     oldest = parse_run(runs[0])
     local_day_start = local_midnight_utc(latest, local_utc_offset_hours)
@@ -80,6 +90,8 @@ def plan_source_runs(
         source_runs=runs,
         historical_max_forecast_hour=historical_max_forecast_hour,
         latest_max_forecast_hour=latest_max_forecast_hour,
+        full_run_count=full_run_count,
+        source_run_max_forecast_hours=horizons,
         local_day_start_utc=iso_z(local_day_start),
         public_start_utc=iso_z(public_start),
         public_end_utc=iso_z(public_end),
@@ -94,6 +106,7 @@ def main() -> int:
     parser.add_argument("--source-run-count", type=int, required=True)
     parser.add_argument("--historical-max-forecast-hour", type=int, required=True)
     parser.add_argument("--latest-max-forecast-hour", type=int, required=True)
+    parser.add_argument("--full-run-count", type=int, default=1)
     parser.add_argument("--local-utc-offset-hours", type=int, default=8)
     parser.add_argument("--format", choices=("json", "fields", "imports"), default="json")
     args = parser.parse_args()
@@ -106,6 +119,7 @@ def main() -> int:
             historical_max_forecast_hour=args.historical_max_forecast_hour,
             latest_max_forecast_hour=args.latest_max_forecast_hour,
             local_utc_offset_hours=args.local_utc_offset_hours,
+            full_run_count=args.full_run_count,
         )
     except ValueError as exc:
         parser.error(str(exc))
@@ -119,9 +133,8 @@ def main() -> int:
             plan.local_day_start_utc,
         )
     elif args.format == "imports":
-        for run in plan.source_runs[:-1]:
-            print(run, plan.historical_max_forecast_hour)
-        print(plan.source_runs[-1], plan.latest_max_forecast_hour)
+        for run, horizon in zip(plan.source_runs, plan.source_run_max_forecast_hours):
+            print(run, horizon)
     else:
         print(json.dumps(asdict(plan), ensure_ascii=False, sort_keys=True))
     return 0

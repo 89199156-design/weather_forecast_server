@@ -94,6 +94,11 @@ def validate_coverage_contract(producer_root: Path, min_public_hours: int = 300)
         "coverage_id",
         "latest_complete_run",
         "source_runs",
+        "historical_max_forecast_hour",
+        "latest_max_forecast_hour",
+        "short_run_count",
+        "full_run_count",
+        "source_run_max_forecast_hours",
         "public_start_utc",
         "local_day_start_utc",
         "public_end_utc",
@@ -195,6 +200,15 @@ def validate_coverage_contract(producer_root: Path, min_public_hours: int = 300)
         raise ValueError(f"historical GFS horizon must be 5h, got {historical_max}")
     if public_end != latest + timedelta(hours=latest_max):
         raise ValueError("public end is not latest GFS run + 384h")
+    if manifest.get("short_run_count") != 3:
+        raise ValueError("GFS coverage must contain exactly three short source runs")
+    if manifest.get("full_run_count") != 2:
+        raise ValueError("GFS coverage must contain exactly two complete source runs")
+    source_run_max_forecast_hours = manifest.get("source_run_max_forecast_hours")
+    if source_run_max_forecast_hours != [5, 5, 5, 384, 384]:
+        raise ValueError(
+            "GFS source-run horizons must be three 0...5h runs followed by two 0...384h runs"
+        )
 
     expected_domains = ("ncep_gfs013", "ncep_gfs025")
     for domain in expected_domains:
@@ -205,20 +219,22 @@ def validate_coverage_contract(producer_root: Path, min_public_hours: int = 300)
         expected_reference = latest.strftime("%Y-%m-%dT%H:00:00Z")
         if latest_metadata.get("reference_time") != expected_reference:
             raise ValueError(f"{domain} latest metadata has the wrong reference_time")
-        for source_run in source_runs[:-1]:
+        for source_run, max_forecast_hour in zip(
+            source_runs, source_run_max_forecast_hours
+        ):
             validate_run_metadata(
                 coverage,
                 domain,
                 source_run,
-                gfs_forecast_hours(historical_max),
+                gfs_forecast_hours(max_forecast_hour),
             )
-        validate_run_metadata(coverage, domain, source_runs[-1], gfs_forecast_hours(384))
 
     return {
         "producer_root": str(producer_root),
         "coverage_path": str(coverage),
         "coverage_id": marker["coverage_id"],
         "source_runs": source_runs,
+        "source_run_max_forecast_hours": source_run_max_forecast_hours,
         "latest": latest,
         "public_start": public_start,
         "local_day_start": local_day_start,

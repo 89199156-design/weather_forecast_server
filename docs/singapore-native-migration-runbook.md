@@ -17,9 +17,9 @@ snapshots and the previous API container remain available for rollback.
   data, inspect local processes, call the client API, or rebuild an API index.
 - A source run already present in the complete group marker is a no-op. The
   same GFS/CAMS run must not be regenerated merely because the probe ran again.
-- GFS keeps five runs: four strict `f000...f005` single-batch histories plus
-  the latest official `f000...f384`. No older `f006` value is mixed into the
-  next run's `f000`.
+- GFS keeps five runs: three strict `f000...f005` histories followed by the
+  previous and latest complete official `f000...f384` runs. No older `f006`
+  value is mixed into the next run's `f000`.
 - CAMS keeps three complete runs through `f120`.
 - Failure preserves the previous immutable OM/API/WebP snapshots.
 
@@ -101,13 +101,15 @@ and CAMS. Run the real Singapore GFS/CAMS pipelines manually for those exact
 latest runs. Do not allow scheduled jobs to start a newer batch during this
 same-run comparison stage.
 
-The GFS cycle validates seeded history before reuse, repairs overlapping
-`f000...f006` histories to strict `f000...f005`, and reduces the immediately
-previous full run to those six forecast times. It reuses a validated same-batch latest full
-horizon, restores both domain `latest.json` files after any history repair,
+The GFS cycle validates every seeded run against its assigned role before
+reuse. During a healthy rollover it reuses two short runs and the old latest
+complete run, reduces the former previous-complete run to strict
+`f000...f005`, and downloads the new latest complete run. It therefore performs
+two downloads; a cold start downloads all five missing roles. It restores both
+domain `latest.json` files after any history repair,
 validates every required surface and 22-level pressure file, and removes
 raw/cache data after successful publication. If no explicit revision is set,
-same-run repair publishes the distinct `single-batch-f5-v1` coverage rather than
+same-run repair publishes the distinct `three-short-two-full-v1` coverage rather than
 colliding with the existing immutable coverage. The CAMS cycle imports missing members of the latest
 three-run window, validates the mixed 121/41-frame variable contract, and then
 removes raw/cache data.

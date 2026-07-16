@@ -41,6 +41,9 @@ def make_coverage(root: Path) -> Path:
         "public_hours": 408,
         "historical_max_forecast_hour": 5,
         "latest_max_forecast_hour": 384,
+        "short_run_count": 3,
+        "full_run_count": 2,
+        "source_run_max_forecast_hours": [5, 5, 5, 384, 384],
         "domain_grids": gfs_domain_grids(),
         "static_sources": {
             "copernicus_dem90": {
@@ -62,11 +65,11 @@ def make_coverage(root: Path) -> Path:
             coverage / "data_run" / domain / "latest.json",
             {"reference_time": "2026-07-13T00:00:00Z", "valid_times": ["2026-07-13T00:00Z"]},
         )
-        for source_run in manifest["source_runs"]:
+        for source_index, source_run in enumerate(manifest["source_runs"]):
             base = datetime.strptime(source_run, "%Y%m%d%H").replace(tzinfo=timezone.utc)
             forecast_hours = (
                 list(range(6))
-                if source_run != manifest["latest_complete_run"]
+                if source_index < manifest["short_run_count"]
                 else list(range(121)) + list(range(123, 385, 3))
             )
             run_dir = coverage / "data_run" / domain / base.strftime("%Y/%m/%d/%H00Z")
@@ -84,8 +87,6 @@ def make_coverage(root: Path) -> Path:
                 },
             )
     marker = dict(manifest)
-    marker.pop("historical_max_forecast_hour")
-    marker.pop("latest_max_forecast_hour")
     marker["coverage_path"] = "coverages/gfs/gfs_native_2026071300"
     write_json(root / "groups" / "gfs" / "current" / "ready_for_processing.json", marker)
     current = root / "current"
@@ -126,6 +127,12 @@ class ValidateNativeOmCoverageTests(unittest.TestCase):
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             manifest["historical_max_forecast_hour"] = 6
             write_json(manifest_path, manifest)
+            marker_path = (
+                root / "groups" / "gfs" / "current" / "ready_for_processing.json"
+            )
+            marker = json.loads(marker_path.read_text(encoding="utf-8"))
+            marker["historical_max_forecast_hour"] = 6
+            write_json(marker_path, marker)
 
             with self.assertRaisesRegex(ValueError, "historical GFS horizon must be 5h"):
                 validate_coverage_contract(root)
