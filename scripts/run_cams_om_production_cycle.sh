@@ -63,7 +63,11 @@ run = datetime.strptime(sys.argv[1], "%Y%m%d%H").replace(tzinfo=timezone.utc)
 count = int(sys.argv[2])
 if count != 3:
     raise SystemExit("CAMS greenhouse must retain exactly three daily runs")
-latest = run.replace(hour=0)
+# The Open-Meteo CAMS release pairs the current CAMS cycle with the latest
+# greenhouse cycle that is publishable in the same release. The greenhouse
+# product trails the CAMS cycle by two UTC days. Retain that current run plus
+# its two preceding daily runs so null fallback never consumes future data.
+latest = run.replace(hour=0) - timedelta(days=2)
 print(",".join(
     (latest - timedelta(days=offset)).strftime("%Y%m%d00")
     for offset in range(count - 1, -1, -1)

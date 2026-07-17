@@ -47,7 +47,7 @@ def write_json(path: Path, payload: dict) -> None:
 def make_cams_coverage(root: Path) -> Path:
     coverage = root / "coverages" / "cams" / "cams_native_2026071312"
     source_runs = ["2026071212", "2026071300", "2026071312"]
-    greenhouse_source_runs = ["2026071100", "2026071200", "2026071300"]
+    greenhouse_source_runs = ["2026070900", "2026071000", "2026071100"]
     manifest = {
         "status": "complete",
         "runtime_format": "openmeteo-native-v1",
@@ -122,7 +122,7 @@ class ValidateNativeCamsCoverageTests(unittest.TestCase):
             self.assertEqual(contract["source_runs"], ["2026071212", "2026071300", "2026071312"])
             self.assertEqual(
                 contract["greenhouse_source_runs"],
-                ["2026071100", "2026071200", "2026071300"],
+                ["2026070900", "2026071000", "2026071100"],
             )
 
     def test_rejects_missing_historical_cams_run(self):

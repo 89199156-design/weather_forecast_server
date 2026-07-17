@@ -84,9 +84,11 @@ def publish_cams_coverage(args: argparse.Namespace) -> dict[str, Any]:
         for left, right in zip(parsed_greenhouse_runs, parsed_greenhouse_runs[1:])
     ):
         raise ValueError("CAMS greenhouse source runs must be three consecutive daily cycles")
-    expected_greenhouse_latest = parsed_runs[-1].replace(hour=0)
+    expected_greenhouse_latest = parsed_runs[-1].replace(hour=0) - timedelta(days=2)
     if parsed_greenhouse_runs[-1] != expected_greenhouse_latest:
-        raise ValueError("latest CAMS greenhouse run must be the latest CAMS run's 00 UTC day")
+        raise ValueError(
+            "latest CAMS greenhouse run must match the official two-day release lag"
+        )
     public_start = parse_time(args.public_start_utc)
     public_end = parse_time(args.public_end_utc)
     public_hours = int((public_end - public_start).total_seconds() // 3600)

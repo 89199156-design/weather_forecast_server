@@ -96,8 +96,12 @@ def validate_cams_contract(producer_root: Path) -> dict[str, Any]:
         for left, right in zip(parsed_greenhouse_runs, parsed_greenhouse_runs[1:])
     ):
         raise ValueError("CAMS greenhouse source runs are not consecutive daily cycles")
-    if parsed_greenhouse_runs[-1] != parsed_runs[-1].replace(hour=0):
-        raise ValueError("latest CAMS greenhouse source run does not match CAMS day")
+    if parsed_greenhouse_runs[-1] != (
+        parsed_runs[-1].replace(hour=0) - timedelta(days=2)
+    ):
+        raise ValueError(
+            "latest CAMS greenhouse source run does not match the official two-day release lag"
+        )
     public_start = parse_utc(str(marker.get("public_start_utc")))
     public_end = parse_utc(str(marker.get("public_end_utc")))
     public_hours = int((public_end - public_start).total_seconds() // 3600)

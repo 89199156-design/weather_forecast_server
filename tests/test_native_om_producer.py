@@ -187,7 +187,7 @@ def make_cams_staging(output_root: Path, run: str) -> Path:
     )
     greenhouse_domain.mkdir(parents=True)
     (greenhouse_domain / "chunk.om").write_bytes(b"greenhouse")
-    greenhouse_latest_base = base_latest.replace(hour=0)
+    greenhouse_latest_base = base_latest.replace(hour=0) - timedelta(days=2)
     greenhouse_latest = (
         staging / "data_run" / "cams_global_greenhouse_gases" / "latest.json"
     )
@@ -755,7 +755,7 @@ resolve_openmeteo_cpu_limit 2.5
                     output_root=str(output_root),
                     run="2026071300",
                     source_runs="2026071200,2026071212,2026071300",
-                    greenhouse_source_runs="2026071100,2026071200,2026071300",
+                    greenhouse_source_runs="2026070900,2026071000,2026071100",
                     latest_max_forecast_hour=120,
                     public_start_utc="2026-07-12T00:00:00Z",
                     public_end_utc="2026-07-18T00:00:00Z",
@@ -786,7 +786,7 @@ resolve_openmeteo_cpu_limit 2.5
             )
             self.assertEqual(
                 ready["greenhouse_source_runs"],
-                ["2026071100", "2026071200", "2026071300"],
+                ["2026070900", "2026071000", "2026071100"],
             )
             self.assertTrue((output_root / "current" / "cams").is_symlink())
 
@@ -806,6 +806,7 @@ resolve_openmeteo_cpu_limit 2.5
         self.assertIn("prune_native_om_runs.py", producer)
         self.assertIn("download_openmeteo_cams_greenhouse_data.sh", producer)
         self.assertIn('GREENHOUSE_SOURCE_RUN_COUNT="${WEATHER_CAMS_GREENHOUSE_SOURCE_RUN_COUNT:-3}"', producer)
+        self.assertIn("run.replace(hour=0) - timedelta(days=2)", producer)
         self.assertIn('GREENHOUSE_LATEST_JSON.tmp.$$"', producer)
         self.assertIn('mv -f "$GREENHOUSE_LATEST_JSON.tmp.$$" "$GREENHOUSE_LATEST_JSON"', producer)
         self.assertNotIn("build_openmeteo_cams_layers.sh", producer)
