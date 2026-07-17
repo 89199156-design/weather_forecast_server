@@ -1,6 +1,7 @@
 from pathlib import Path
 import importlib.util
 import os
+import re
 import subprocess
 import sys
 
@@ -486,8 +487,16 @@ def test_singapore_config_enables_temporary_openmeteo_http_cache():
         assert "trap cleanup_download_artifacts EXIT" not in script
         assert "cleanup_download_artifacts()" not in script
         trap_index = script.index("trap cleanup_sensitive_artifacts EXIT")
-        start_cleanup_index = script.index("\ncleanup_openmeteo_http_cache\n", trap_index)
-        first_download_index = script.index("run_openmeteo")
+        start_cleanup_index = next(
+            match.start()
+            for match in re.finditer(r"(?m)^\s*cleanup_openmeteo_http_cache\s*$", script)
+            if match.start() > trap_index
+        )
+        first_download_index = (
+            script.index("run_openmeteo download-gfs gfs013")
+            if script is gfs_script
+            else script.index("run_openmeteo download-cams cams_global")
+        )
         assert trap_index < start_cleanup_index < first_download_index
         success_cleanup_index = script.rindex("\ncleanup_openmeteo_http_cache\n")
         assert first_download_index < success_cleanup_index
@@ -518,10 +527,18 @@ def test_downloaders_clean_source_cache_only_at_start_and_after_success():
             assert len(cleanup_calls) >= 4
         else:
             assert len(cleanup_calls) == 2
-        first_run = script.index("run_openmeteo")
+        first_run = (
+            script.index("run_openmeteo download-gfs gfs013")
+            if name == "gfs"
+            else script.index("run_openmeteo download-cams cams_global")
+        )
         last_run = script.rindex("run_openmeteo")
-        first_cleanup = script.index("\ncleanup_openmeteo_http_cache\n")
-        last_cleanup = script.rindex("\ncleanup_openmeteo_http_cache\n")
+        cleanup_positions = [
+            match.start()
+            for match in re.finditer(r"(?m)^\s*cleanup_openmeteo_http_cache\s*$", script)
+        ]
+        first_cleanup = cleanup_positions[0]
+        last_cleanup = cleanup_positions[-1]
         assert first_cleanup < first_run
         assert last_run < last_cleanup
         if name != "gfs":

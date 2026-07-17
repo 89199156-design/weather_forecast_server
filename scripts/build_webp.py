@@ -185,9 +185,9 @@ DEFAULT_LAYER_DEFINITIONS: tuple[LayerDefinition, ...] = (
         ("surface_pressure",),
         "sp",
         "Pa",
-        1.0,
-        (50000.0, 115000.0),
-        vmin=50000.0,
+        0.5,
+        (30000.0, 115000.0),
+        vmin=30000.0,
         api_multiplier=100.0,
     ),
     LayerDefinition("uv_index", "uv_index", ("uv_index",), "uv_index", "index", 100.0, (0.0, 100.0)),
@@ -197,7 +197,7 @@ CAMS_LAYER_DEFINITIONS: tuple[LayerDefinition, ...] = (
     LayerDefinition("pm2_5", "pm2_5", ("pm2_5",), "pm2_5", "ug/m3", 10.0, (0.0, 6000.0)),
     LayerDefinition("pm10", "pm10", ("pm10",), "pm10", "ug/m3", 10.0, (0.0, 6000.0)),
     LayerDefinition("aerosol_optical_depth", "aerosol_optical_depth", ("aerosol_optical_depth",), "aod", "1", 1000.0, (0.0, 65.0)),
-    LayerDefinition("dust", "dust", ("dust",), "dust", "ug/m3", 10.0, (0.0, 6000.0)),
+    LayerDefinition("dust", "dust", ("dust",), "dust", "ug/m3", 1.0, (0.0, 65535.0)),
 )
 
 
@@ -530,6 +530,40 @@ def build_layer_api_params(
         raise ValueError(f"unknown layer scope: {scope}")
     params.update(dict(layer_api_options_for_scope(scope) if api_options is None else api_options))
     return params
+
+
+def build_export_request_payload(
+    *,
+    scope: str,
+    grid: RegionGrid,
+    variables: Sequence[str],
+    model: str | None,
+    domain: str | None,
+    start_hour: str,
+    end_hour: str,
+    run: str | None = None,
+    chunk_size: int = 50,
+) -> dict[str, Any]:
+    """Describe the immutable HTTP inputs used by the legacy export tool."""
+    if scope == "gfs":
+        selected_model = model or DEFAULT_LAYER_MODEL
+    elif scope == "cams":
+        selected_model = domain or DEFAULT_CAMS_DOMAIN
+    else:
+        raise ValueError(f"unknown layer scope: {scope}")
+    return {
+        "scope": scope,
+        "model": selected_model,
+        "run": run,
+        "start_hour": start_hour,
+        "end_hour": end_hour,
+        "variables": list(variables),
+        "chunk_size": chunk_size,
+        "width": grid.width,
+        "height": grid.height,
+        "latitudes": grid.latitude_values,
+        "longitudes": grid.longitude_values,
+    }
 
 
 def fetch_forecast_chunk(
@@ -993,4 +1027,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
