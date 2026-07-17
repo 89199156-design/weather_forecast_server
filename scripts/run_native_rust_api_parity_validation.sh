@@ -5,6 +5,7 @@ APP_DIR="${WEATHER_FORECAST_APP_DIR:-/opt/1panel/apps/weather_forecast_server}"
 PRODUCER_ROOT="${WEATHER_OM_PRODUCER_ROOT:-$APP_DIR/data/om_producer}"
 SHANGHAI_URL="${WEATHER_SHANGHAI_OM_API_URL:-}"
 SINGAPORE_URL="${WEATHER_SINGAPORE_OM_API_URL:-http://127.0.0.1:8088}"
+API_PID="${WEATHER_OM_API_PID:-}"
 RUN_IDENTITY_REPORT="${WEATHER_OM_RUN_IDENTITY_REPORT:-}"
 SHANGHAI_WEBP_INVENTORY="${WEATHER_SHANGHAI_WEBP_INVENTORY:-}"
 REPORT_ROOT="${WEATHER_OM_PARITY_REPORT_ROOT:-$PRODUCER_ROOT/reports}"
@@ -16,6 +17,10 @@ if [[ -z "$SHANGHAI_URL" ]]; then
 fi
 if [[ -z "$RUN_IDENTITY_REPORT" || ! -f "$RUN_IDENTITY_REPORT" ]]; then
   printf '%s\n' "WEATHER_OM_RUN_IDENTITY_REPORT must point to a passed Shanghai/Singapore identity report." >&2
+  exit 2
+fi
+if [[ ! "$API_PID" =~ ^[1-9][0-9]*$ || ! -d "/proc/$API_PID/fd" ]]; then
+  printf '%s\n' "WEATHER_OM_API_PID must identify the running Singapore API process." >&2
   exit 2
 fi
 if [[ -z "$SHANGHAI_WEBP_INVENTORY" || ! -f "$SHANGHAI_WEBP_INVENTORY" ]]; then
@@ -66,6 +71,7 @@ python3 "$APP_DIR/scripts/validate_native_cams_coverage.py" \
   --output-report "$REPORT_ROOT/cams_native_candidate.json"
 python3 "$APP_DIR/scripts/compare_model_run_identities.py" inventory \
   --data-root "$PRODUCER_ROOT" \
+  --process-pid "$API_PID" \
   --output "$REPORT_ROOT/singapore-model-run-identity.json"
 python3 "$APP_DIR/scripts/compare_shanghai_singapore_api.py" \
   --shanghai-url "$SHANGHAI_URL" \

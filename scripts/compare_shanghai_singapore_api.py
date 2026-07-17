@@ -30,25 +30,18 @@ from typing import Any
 
 
 PRESSURE_LEVELS = (1000, 975, 950, 925, 900, 850, 800, 750, 700, 650, 600, 550, 500, 450, 400, 350, 300, 250, 200, 150, 100, 50)
-GFS_DIRECT_SURFACE = (
+GFS_PUBLIC_SURFACE = (
     "temperature_2m", "cloud_cover", "cloud_cover_low", "cloud_cover_mid",
     "cloud_cover_high", "pressure_msl", "relative_humidity_2m",
-    "precipitation", "wind_v_component_10m", "wind_u_component_10m",
-    "snow_depth", "showers", "snowfall_water_equivalent", "uv_index",
-    "uv_index_clear_sky",
-    "boundary_layer_height", "shortwave_radiation", "latent_heat_flux",
-    "categorical_freezing_rain", "wind_gusts_10m", "cape", "lifted_index",
-    "convective_inhibition", "visibility",
-)
-GFS_DERIVED_SURFACE = (
+    "precipitation", "snow_depth", "showers", "snowfall_water_equivalent",
+    "uv_index", "uv_index_clear_sky", "wind_gusts_10m", "cape", "visibility",
     "dew_point_2m", "apparent_temperature", "surface_pressure", "weather_code", "rain", "snowfall",
     "wind_speed_10m", "wind_direction_10m",
 )
 GFS_SINGLE_BATCH_F000_MISSING = frozenset({
     "cloud_cover", "cloud_cover_low", "cloud_cover_mid", "cloud_cover_high",
     "precipitation", "showers", "snowfall_water_equivalent",
-    "uv_index", "uv_index_clear_sky", "latent_heat_flux",
-    "shortwave_radiation", "categorical_freezing_rain",
+    "uv_index", "uv_index_clear_sky",
     # These derived fields require at least one of the missing official f000
     # inputs above. Singapore intentionally does not retain the previous
     # cycle's f006 as a cross-batch fallback.
@@ -59,22 +52,14 @@ GFS_SINGLE_BATCH_F000_REASON = (
     "while_singapore_keeps_strict_f000_to_f005_history_batches"
 )
 GFS_PRESSURE_FAMILIES = (
-    "temperature", "wind_u_component", "wind_v_component",
-    "geopotential_height", "cloud_cover", "relative_humidity",
-    "vertical_velocity",
+    "temperature", "relative_humidity", "dew_point", "cloud_cover",
+    "wind_speed", "wind_direction", "geopotential_height", "vertical_velocity",
 )
 CAMS_DIRECT = (
     "pm2_5", "pm10", "aerosol_optical_depth", "dust", "carbon_monoxide",
     "nitrogen_dioxide", "ozone", "sulphur_dioxide",
 )
 CAMS_DERIVED = (
-    "european_aqi", "european_aqi_pm2_5", "european_aqi_pm10",
-    "european_aqi_no2", "european_aqi_o3", "european_aqi_so2",
-    "european_aqi_nitrogen_dioxide", "european_aqi_ozone",
-    "european_aqi_sulphur_dioxide", "us_aqi", "us_aqi_pm2_5",
-    "us_aqi_pm10", "us_aqi_no2", "us_aqi_o3", "us_aqi_so2", "us_aqi_co",
-    "us_aqi_nitrogen_dioxide", "us_aqi_ozone", "us_aqi_sulphur_dioxide",
-    "us_aqi_carbon_monoxide",
     "chinese_aqi", "chinese_aqi_pm2_5", "chinese_aqi_pm10", "chinese_aqi_no2",
     "chinese_aqi_o3", "chinese_aqi_so2", "chinese_aqi_co",
     "chinese_aqi_nitrogen_dioxide", "chinese_aqi_ozone",
@@ -88,30 +73,15 @@ CAMS_DERIVED = (
 # dependency is backed by a three-hourly source.
 CAMS_HOURLY_DIRECT_SOURCE = frozenset({
     "pm2_5", "pm10", "aerosol_optical_depth",
-    "european_aqi_pm2_5", "european_aqi_pm10",
-    "us_aqi_pm2_5", "us_aqi_pm10",
     "chinese_aqi_pm2_5", "chinese_aqi_pm10",
 })
 CAMS_THREE_HOURLY_DIRECT_SOURCE = frozenset({
     "dust", "carbon_monoxide", "nitrogen_dioxide", "ozone", "sulphur_dioxide",
-    "european_aqi", "european_aqi_no2", "european_aqi_o3", "european_aqi_so2",
-    "european_aqi_nitrogen_dioxide", "european_aqi_ozone",
-    "european_aqi_sulphur_dioxide",
-    "us_aqi", "us_aqi_no2", "us_aqi_o3", "us_aqi_so2", "us_aqi_co",
-    "us_aqi_nitrogen_dioxide", "us_aqi_ozone", "us_aqi_sulphur_dioxide",
-    "us_aqi_carbon_monoxide",
     "chinese_aqi", "chinese_aqi_no2", "chinese_aqi_o3", "chinese_aqi_so2",
     "chinese_aqi_co", "chinese_aqi_nitrogen_dioxide", "chinese_aqi_ozone",
     "chinese_aqi_sulphur_dioxide", "chinese_aqi_carbon_monoxide",
 })
-CAMS_EXPECTED_SEMANTIC_DIFFERENCE_VARIABLES = frozenset({
-    # These fields use an 8/24-hour window that contains Shanghai's locally
-    # interpolated ml137 values. Singapore intentionally evaluates the same
-    # formulas from direct hourly source values, so equality is not expected
-    # even when the output timestamp itself is run-aligned.
-    "us_aqi", "us_aqi_o3", "us_aqi_ozone", "us_aqi_so2",
-    "us_aqi_sulphur_dioxide", "us_aqi_co", "us_aqi_carbon_monoxide",
-})
+CAMS_EXPECTED_SEMANTIC_DIFFERENCE_VARIABLES = frozenset()
 CAMS_ROLLING_WINDOW_WAIVER_REASON = (
     "rolling_window_depends_on_shanghai_interpolated_ml137_hours_while_"
     "singapore_uses_direct_hourly_source_values"
@@ -122,8 +92,7 @@ if (
     CAMS_HOURLY_DIRECT_SOURCE & CAMS_THREE_HOURLY_DIRECT_SOURCE
     or (CAMS_HOURLY_DIRECT_SOURCE | CAMS_THREE_HOURLY_DIRECT_SOURCE)
     != _CAMS_VARIABLE_CONTRACT
-    or not CAMS_EXPECTED_SEMANTIC_DIFFERENCE_VARIABLES
-    <= CAMS_THREE_HOURLY_DIRECT_SOURCE
+    or not CAMS_EXPECTED_SEMANTIC_DIFFERENCE_VARIABLES <= CAMS_THREE_HOURLY_DIRECT_SOURCE
 ):
     raise RuntimeError("every CAMS variable must have one explicit source/waiver semantic")
 
@@ -131,7 +100,7 @@ if (
 def variables_for_scope(scope: str) -> list[str]:
     if scope == "gfs":
         pressure = [f"{family}_{level}hPa" for family in GFS_PRESSURE_FAMILIES for level in PRESSURE_LEVELS]
-        return list(dict.fromkeys((*GFS_DIRECT_SURFACE, *GFS_DERIVED_SURFACE, *pressure)))
+        return list(dict.fromkeys((*GFS_PUBLIC_SURFACE, *pressure)))
     if scope == "cams":
         return list(dict.fromkeys((*CAMS_DIRECT, *CAMS_DERIVED)))
     raise ValueError(f"unsupported scope: {scope}")
@@ -150,7 +119,14 @@ def direct_source_cadence_hours(scope: str, variable: str) -> int:
     raise ValueError(f"CAMS variable has no direct-source cadence contract: {variable}")
 
 
-def direct_source_hour_indices(scope: str, variable: str, run: str, hours: int) -> list[int]:
+def direct_source_hour_indices(
+    scope: str,
+    variable: str,
+    run: str,
+    hours: int,
+    *,
+    start: datetime | None = None,
+) -> list[int]:
     """Return response indexes that represent direct (not interpolated) input."""
     if hours <= 0:
         raise ValueError("hours must be positive")
@@ -159,7 +135,7 @@ def direct_source_hour_indices(scope: str, variable: str, run: str, hours: int) 
         return list(range(hours))
 
     source_run = parse_run(run)
-    start = comparison_start(scope, run)
+    start = start or comparison_start(scope, run)
     offset_seconds = int((start - source_run).total_seconds())
     if offset_seconds % 3600 != 0:
         raise ValueError("comparison window is not aligned to an exact source hour")
@@ -167,10 +143,17 @@ def direct_source_hour_indices(scope: str, variable: str, run: str, hours: int) 
     return [index for index in range(hours) if (offset_hours + index) % cadence == 0]
 
 
-def strict_comparison_hour_indices(scope: str, variable: str, run: str, hours: int) -> list[int]:
+def strict_comparison_hour_indices(
+    scope: str,
+    variable: str,
+    run: str,
+    hours: int,
+    *,
+    start: datetime | None = None,
+) -> list[int]:
     if scope == "cams" and variable in CAMS_EXPECTED_SEMANTIC_DIFFERENCE_VARIABLES:
         return []
-    return direct_source_hour_indices(scope, variable, run, hours)
+    return direct_source_hour_indices(scope, variable, run, hours, start=start)
 
 
 def expected_semantic_difference_summary(
@@ -651,6 +634,42 @@ def validate_payload(
             raise ValueError(f"point {index} invalid series length: {','.join(bad_lengths[:5])}")
 
 
+def preflight_public_variable_contracts(
+    shanghai_url: str,
+    singapore_url: str,
+    point: dict[str, float],
+    gfs_run: str,
+    cams_run: str,
+    gfs_start: datetime,
+    variable_batch_size: int,
+    timeout: float,
+) -> int:
+    """Reject unsupported public fields before starting the 2,000-point gate."""
+    requests = 0
+    for scope, run, start in (
+        ("gfs", gfs_run, gfs_start),
+        ("cams", cams_run, comparison_start("cams", cams_run)),
+    ):
+        for variables in chunks(variables_for_scope(scope), variable_batch_size):
+            path = request_path(scope, [point], variables, run, 1, start=start)
+            for endpoint, base_url in (
+                ("shanghai", shanghai_url),
+                ("singapore", singapore_url),
+            ):
+                payload = fetch(base_url, path, timeout)
+                validate_payload(
+                    payload,
+                    scope,
+                    1,
+                    variables,
+                    run,
+                    1,
+                    start=start,
+                )
+                requests += 1
+    return requests
+
+
 def validate_run_identity_report(
     path: Path,
     gfs_run: str,
@@ -661,6 +680,8 @@ def validate_run_identity_report(
     matched = report.get("matched_latest_runs") or {}
     if report.get("passed") is not True or report.get("same_source_runs") is not True:
         raise ValueError("model run identity report did not pass")
+    if report.get("live_snapshot_verified") is not True:
+        raise ValueError("model run identity report does not prove the live API snapshots")
     if matched.get("gfs") != gfs_run or matched.get("cams") != cams_run:
         raise ValueError("model run identity report does not match requested GFS/CAMS runs")
     timestamps = [report.get("compared_at"), *((report.get("inventory_collected_at") or {}).values())]
@@ -696,7 +717,7 @@ def compare_job_unthrottled(
     )
     hour_indices_by_variable = {
         variable: strict_comparison_hour_indices(
-            job["scope"], variable, job["run"], job["hours"]
+            job["scope"], variable, job["run"], job["hours"], start=start
         )
         for variable in job["variables"]
     }
@@ -734,7 +755,7 @@ def compare_job_unthrottled(
     values_per_point = sum(len(indices) for indices in hour_indices_by_variable.values())
     excluded_values_per_point = sum(
         job["hours"] - len(direct_source_hour_indices(
-            job["scope"], variable, job["run"], job["hours"]
+            job["scope"], variable, job["run"], job["hours"], start=start
         ))
         for variable in job["variables"]
         if variable not in waived_variables
@@ -803,6 +824,7 @@ def main() -> int:
     parser.add_argument("--seed", type=int, default=20260713)
     parser.add_argument("--point-batch-size", type=int, default=50)
     parser.add_argument("--variable-batch-size", type=int, default=50)
+    parser.add_argument("--hour-batch-size", type=int, default=48)
     parser.add_argument("--workers", type=int, default=1)
     parser.add_argument("--request-pause", type=float, default=0.2)
     parser.add_argument("--timeout", type=float, default=120.0)
@@ -815,6 +837,8 @@ def main() -> int:
         parser.error("--hours must be positive")
     if args.workers <= 0:
         parser.error("--workers must be positive")
+    if args.hour_batch_size <= 0:
+        parser.error("--hour-batch-size must be positive")
     if args.request_pause < 0:
         parser.error("--request-pause must not be negative")
     try:
@@ -847,19 +871,40 @@ def main() -> int:
         "gfs": gfs_hours,
         "cams": args.hours or full_hours_for_scope("cams", args.cams_run),
     }
+    try:
+        preflight_requests = preflight_public_variable_contracts(
+            args.shanghai_url,
+            args.singapore_url,
+            points[0],
+            args.gfs_run,
+            args.cams_run,
+            gfs_start,
+            args.variable_batch_size,
+            args.timeout,
+        )
+    except (OSError, ValueError, urllib.error.URLError, json.JSONDecodeError) as exc:
+        parser.error(f"public variable preflight failed: {exc}")
     jobs: list[dict[str, Any]] = []
     for scope, run in (("gfs", args.gfs_run), ("cams", args.cams_run)):
         parse_run(run)
-        for point_index, point_group in enumerate(chunks(points, args.point_batch_size)):
-            for variable_index, variable_group in enumerate(chunks(variables_for_scope(scope), args.variable_batch_size)):
-                job = {
-                    "job_id": f"{scope}-p{point_index:04d}-v{variable_index:03d}",
-                    "scope": scope, "run": run, "hours": scope_hours[scope],
-                    "points": point_group, "variables": variable_group,
-                }
-                if scope == "gfs":
-                    job["start"] = gfs_start
-                jobs.append(job)
+        scope_start = gfs_start if scope == "gfs" else comparison_start(scope, run)
+        for hour_offset in range(0, scope_hours[scope], args.hour_batch_size):
+            job_hours = min(args.hour_batch_size, scope_hours[scope] - hour_offset)
+            job_start = scope_start + timedelta(hours=hour_offset)
+            for point_index, point_group in enumerate(chunks(points, args.point_batch_size)):
+                for variable_index, variable_group in enumerate(chunks(variables_for_scope(scope), args.variable_batch_size)):
+                    jobs.append({
+                        "job_id": (
+                            f"{scope}-h{hour_offset:04d}-p{point_index:04d}-"
+                            f"v{variable_index:03d}"
+                        ),
+                        "scope": scope,
+                        "run": run,
+                        "start": job_start,
+                        "hours": job_hours,
+                        "points": point_group,
+                        "variables": variable_group,
+                    })
 
     results: list[dict[str, Any]] = []
     errors: list[dict[str, str]] = []
@@ -948,7 +993,9 @@ def main() -> int:
         "gfs_hours": scope_hours["gfs"],
         "cams_hours": scope_hours["cams"],
         "shared_gfs_window": shared_gfs_window,
+        "public_variable_preflight_requests": preflight_requests,
         "workers": args.workers,
+        "hour_batch_size": args.hour_batch_size,
         "request_pause": args.request_pause,
         "seed": args.seed,
         "bounds": list(args.bounds),

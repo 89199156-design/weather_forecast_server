@@ -135,9 +135,19 @@ present and the report must have `passed=true`.
 
 Use SSH tunnels to both real API services without exposing a new public port.
 Run the parity launcher with the passed run-identity report. The mandatory gate
+requires both APIs' open coverage files to match their on-disk publication
+markers; matching marker text alone is rejected. This prevents a process that
+still holds deleted files from an older immutable snapshot from being labelled
+as the newer run during acceptance. The mandatory gate
 uses 2,000 reproducible points and the complete published hourly horizon: GFS
 from the Shanghai local-day start through `f384`, and CAMS from `f000` through
-`f120`. It compares 186 GFS variables and 39 CAMS/AQI variables. A second gate
+`f120`. It compares all fields shared by the two public APIs: 200 GFS variables
+(24 surface/derived fields plus eight families at all 22 pressure levels) and
+19 CAMS/Chinese-AQI variables. A preflight checks every public variable batch
+against both APIs before the 2,000-point run. The complete axis is requested
+in contiguous 48-hour blocks so Shanghai never has to materialize every point,
+field and forecast hour in one oversized response; the report still requires
+the union of all blocks to cover the complete shared horizon. A second gate
 compares all 61 supported GFS daily fields and 11 CAMS Chinese-AQI daily fields
 for three consecutive `Asia/Shanghai` calendar days. Only
 `generationtime_ms` is excluded. Both validators use one worker and an

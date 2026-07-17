@@ -9,6 +9,8 @@ class NativeRustApiParityValidationTests(unittest.TestCase):
     def test_runner_uses_real_service_and_enforces_full_acceptance_gate(self):
         source = (ROOT / "scripts" / "run_native_rust_api_parity_validation.sh").read_text(encoding="utf-8")
         self.assertIn("WEATHER_SINGAPORE_OM_API_URL", source)
+        self.assertIn("WEATHER_OM_API_PID", source)
+        self.assertIn('--process-pid "$API_PID"', source)
         self.assertIn("http://127.0.0.1:8088", source)
         self.assertIn("validate_native_om_coverage.py", source)
         self.assertIn("validate_native_cams_coverage.py", source)

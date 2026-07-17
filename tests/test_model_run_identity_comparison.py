@@ -32,7 +32,11 @@ class ModelRunIdentityComparisonTests(unittest.TestCase):
                 write_marker(shanghai, group, run, native=False)
                 write_marker(singapore, group, run, native=True)
 
-            report = compare_identities(build_identity(shanghai), build_identity(singapore))
+            left = build_identity(shanghai)
+            right = build_identity(singapore)
+            left["live_snapshot"] = {"marker_matches_live_snapshot": True}
+            right["live_snapshot"] = {"marker_matches_live_snapshot": True}
+            report = compare_identities(left, right)
 
             self.assertTrue(report["passed"])
             self.assertEqual(report["matched_latest_runs"]["gfs"], "2026071300")
@@ -44,7 +48,24 @@ class ModelRunIdentityComparisonTests(unittest.TestCase):
         report = compare_identities(left, right)
 
         self.assertFalse(report["passed"])
-        self.assertEqual(report["mismatches"][0]["group"], "gfs")
+        self.assertTrue(any(item.get("group") == "gfs" for item in report["mismatches"]))
+
+    def test_matching_marker_names_without_live_snapshot_fail_closed(self):
+        identity = {
+            "groups": {
+                "gfs": {"latest_complete_run": "2026071300"},
+                "cams": {"latest_complete_run": "2026071212"},
+            }
+        }
+
+        report = compare_identities(identity, identity)
+
+        self.assertFalse(report["passed"])
+        self.assertFalse(report["live_snapshot_verified"])
+        self.assertEqual(
+            [item["endpoint"] for item in report["mismatches"][:2]],
+            ["shanghai", "singapore"],
+        )
 
 
 if __name__ == "__main__":
