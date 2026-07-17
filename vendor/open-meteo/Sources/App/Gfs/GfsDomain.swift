@@ -27,7 +27,7 @@ enum WeatherForecastServerSourceConfig {
     }
 
     static var useNomadsRegionalDownload: Bool {
-        string("WEATHER_GFS_DOWNLOAD_MODE", fallback: "nomads-region").lowercased() == "nomads-region"
+        string("WEATHER_GFS_DOWNLOAD_MODE", fallback: "s3-range-region").lowercased() == "nomads-region"
     }
 
     static var regionAreaNorthWestSouthEast: [Double] {

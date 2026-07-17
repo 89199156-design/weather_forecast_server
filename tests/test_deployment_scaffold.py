@@ -1027,8 +1027,10 @@ def test_gfs_probe_cycle_uses_official_indices_before_gfs_only_production():
     assert "pgrb2.0p25.f{fff}.idx" in probe
     assert "pgrb2b.0p25.f{fff}.idx" in probe
     assert "WEATHER_GFS_DOWNLOAD_MODE" in download
-    assert 'GFS_DOWNLOAD_MODE:-nomads-region' in download
+    assert 'GFS_DOWNLOAD_MODE:-s3-range-region' in download
+    assert '"s3-range-region" || "$GFS_DOWNLOAD_MODE" == "aws-global"' in download
     assert 'GFS_DOWNLOAD_SOURCE_ARGS=(--download-from-aws)' in download
+    assert 'WEATHER_GFS_DOWNLOAD_MODE:-s3-range-region' in production
     assert "datetime.now(UTC)" in probe
     assert "scripts/probe_gfs_official_run.py" in cycle
     assert "CYCLE_LOCK_FILE" in cycle

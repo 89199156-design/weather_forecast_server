@@ -38,9 +38,9 @@ GFS_UPPER_LEVELS="${WEATHER_GFS_UPPER_LEVELS:-1000,975,950,925,900,850,800,750,7
 GFS_UPPER_LEVEL_VARIABLES="${WEATHER_GFS_UPPER_LEVEL_VARIABLES:-temperature,wind_u_component,wind_v_component,geopotential_height,cloud_cover,relative_humidity,vertical_velocity}"
 GFS_UPPER_LEVEL_CONCURRENT="${WEATHER_GFS_UPPER_LEVEL_DOWNLOAD_CONCURRENT:-4}"
 GFS_RUN="${WEATHER_GFS_RUN:-}"
-GFS_DOWNLOAD_MODE="${WEATHER_GFS_DOWNLOAD_MODE:-nomads-region}"
+GFS_DOWNLOAD_MODE="${WEATHER_GFS_DOWNLOAD_MODE:-s3-range-region}"
 GFS_DOWNLOAD_SOURCE_ARGS=()
-if [[ "$GFS_DOWNLOAD_MODE" == "aws-global" ]]; then
+if [[ "$GFS_DOWNLOAD_MODE" == "s3-range-region" || "$GFS_DOWNLOAD_MODE" == "aws-global" ]]; then
   GFS_DOWNLOAD_SOURCE_ARGS=(--download-from-aws)
 elif [[ "$GFS_DOWNLOAD_MODE" != "nomads-region" ]]; then
   printf '%s\n' "Unsupported WEATHER_GFS_DOWNLOAD_MODE: $GFS_DOWNLOAD_MODE" >&2

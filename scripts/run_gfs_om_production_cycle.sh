@@ -35,7 +35,7 @@ GFS_STORAGE_TOP_LAT="${WEATHER_GFS_STORAGE_TOP_LAT:-59}"
 # The producer keeps a one-degree storage halo around the public 70-140E,
 # 0-58N service area. Do not inherit older generic region/pressure settings:
 # the downloader and validator must always use the same production contract.
-export WEATHER_GFS_DOWNLOAD_MODE="${WEATHER_GFS_DOWNLOAD_MODE:-nomads-region}"
+export WEATHER_GFS_DOWNLOAD_MODE="${WEATHER_GFS_DOWNLOAD_MODE:-s3-range-region}"
 export WEATHER_REGION_LEFT_LON="$GFS_STORAGE_LEFT_LON"
 export WEATHER_REGION_RIGHT_LON="$GFS_STORAGE_RIGHT_LON"
 export WEATHER_REGION_BOTTOM_LAT="$GFS_STORAGE_BOTTOM_LAT"
