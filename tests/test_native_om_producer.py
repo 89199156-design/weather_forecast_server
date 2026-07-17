@@ -806,6 +806,7 @@ resolve_openmeteo_cpu_limit 2.5
         self.assertIn("prune_native_om_runs.py", producer)
         self.assertIn("download_openmeteo_cams_greenhouse_data.sh", producer)
         self.assertIn('GREENHOUSE_SOURCE_RUN_COUNT="${WEATHER_CAMS_GREENHOUSE_SOURCE_RUN_COUNT:-3}"', producer)
+        self.assertIn('WEATHER_CAMS_COVERAGE_REVISION:-greenhouse-d2-v2', producer)
         self.assertIn("run.replace(hour=0) - timedelta(days=2)", producer)
         self.assertIn('GREENHOUSE_LATEST_JSON.tmp.$$"', producer)
         self.assertIn('mv -f "$GREENHOUSE_LATEST_JSON.tmp.$$" "$GREENHOUSE_LATEST_JSON"', producer)
