@@ -18,6 +18,7 @@ trap cleanup_sensitive_artifacts EXIT
 GFS_SKIP_GFS013="${WEATHER_GFS_SKIP_GFS013:-false}"
 GFS_SKIP_GFS025="${WEATHER_GFS_SKIP_GFS025:-false}"
 GFS_SKIP_GFS025_UPPER_LEVELS="${WEATHER_GFS_SKIP_GFS025_UPPER_LEVELS:-false}"
+GFS_ENFORCE_COMPLETE_SURFACE_VARIABLES="${WEATHER_GFS_ENFORCE_COMPLETE_SURFACE_VARIABLES:-true}"
 GFS_PRESERVE_HTTP_CACHE="${WEATHER_GFS_PRESERVE_HTTP_CACHE:-false}"
 if ! is_truthy "$GFS_PRESERVE_HTTP_CACHE"; then
   cleanup_openmeteo_http_cache
@@ -42,26 +43,28 @@ ensure_csv_variable() {
 # Older private environments may still carry the former WebP-only allowlists.
 # Always restore every official GFS input required by the public API while
 # retaining explicitly configured ordering and any additional variables.
-for variable in \
-  temperature_2m surface_temperature cloud_cover cloud_cover_low cloud_cover_mid \
-  cloud_cover_high pressure_msl relative_humidity_2m precipitation \
-  wind_v_component_10m wind_u_component_10m snow_depth showers \
-  frozen_precipitation_percent uv_index uv_index_clear_sky boundary_layer_height \
-  shortwave_radiation latent_heat_flux sensible_heat_flux diffuse_radiation \
-  total_column_integrated_water_vapour soil_temperature_0_to_10cm \
-  soil_temperature_10_to_40cm soil_temperature_40_to_100cm \
-  soil_temperature_100_to_200cm soil_moisture_0_to_10cm \
-  soil_moisture_10_to_40cm soil_moisture_40_to_100cm \
-  soil_moisture_100_to_200cm; do
-  ensure_csv_variable GFS013_SURFACE_VARIABLES "$variable"
-done
-for variable in \
-  pressure_msl categorical_freezing_rain temperature_80m temperature_100m \
-  wind_v_component_80m wind_u_component_80m wind_v_component_100m \
-  wind_u_component_100m wind_gusts_10m freezing_level_height cape lifted_index \
-  convective_inhibition visibility; do
-  ensure_csv_variable GFS025_SURFACE_VARIABLES "$variable"
-done
+if is_truthy "$GFS_ENFORCE_COMPLETE_SURFACE_VARIABLES"; then
+  for variable in \
+    temperature_2m surface_temperature cloud_cover cloud_cover_low cloud_cover_mid \
+    cloud_cover_high pressure_msl relative_humidity_2m precipitation \
+    wind_v_component_10m wind_u_component_10m snow_depth showers \
+    frozen_precipitation_percent uv_index uv_index_clear_sky boundary_layer_height \
+    shortwave_radiation latent_heat_flux sensible_heat_flux diffuse_radiation \
+    total_column_integrated_water_vapour soil_temperature_0_to_10cm \
+    soil_temperature_10_to_40cm soil_temperature_40_to_100cm \
+    soil_temperature_100_to_200cm soil_moisture_0_to_10cm \
+    soil_moisture_10_to_40cm soil_moisture_40_to_100cm \
+    soil_moisture_100_to_200cm; do
+    ensure_csv_variable GFS013_SURFACE_VARIABLES "$variable"
+  done
+  for variable in \
+    pressure_msl categorical_freezing_rain temperature_80m temperature_100m \
+    wind_v_component_80m wind_u_component_80m wind_v_component_100m \
+    wind_u_component_100m wind_gusts_10m freezing_level_height cape lifted_index \
+    convective_inhibition visibility; do
+    ensure_csv_variable GFS025_SURFACE_VARIABLES "$variable"
+  done
+fi
 GFS_UPPER_LEVELS="${WEATHER_GFS_UPPER_LEVELS:-1000,975,950,925,900,850,800,750,700,650,600,550,500,450,400,350,300,250,200,150,100,50}"
 GFS_UPPER_LEVEL_VARIABLES="${WEATHER_GFS_UPPER_LEVEL_VARIABLES:-temperature,wind_u_component,wind_v_component,geopotential_height,cloud_cover,relative_humidity,vertical_velocity}"
 GFS_UPPER_LEVEL_CONCURRENT="${WEATHER_GFS_UPPER_LEVEL_DOWNLOAD_CONCURRENT:-4}"

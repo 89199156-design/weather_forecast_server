@@ -354,6 +354,8 @@ def test_gfs_surface_download_uses_complete_official_api_input_allowlists():
     assert f"WEATHER_GFS025_SURFACE_VARIABLES={gfs025_default}" in config
     assert "ensure_csv_variable GFS013_SURFACE_VARIABLES" in script
     assert "ensure_csv_variable GFS025_SURFACE_VARIABLES" in script
+    assert 'GFS_ENFORCE_COMPLETE_SURFACE_VARIABLES="${WEATHER_GFS_ENFORCE_COMPLETE_SURFACE_VARIABLES:-true}"' in script
+    assert 'if is_truthy "$GFS_ENFORCE_COMPLETE_SURFACE_VARIABLES"; then' in script
     assert 'GFS_SKIP_GFS025="${WEATHER_GFS_SKIP_GFS025:-false}"' in script
     assert 'if is_truthy "$GFS_SKIP_GFS025"; then' in script
 
