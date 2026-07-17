@@ -37,6 +37,7 @@ GFS025_SURFACE_VARIABLES="${WEATHER_GFS025_SURFACE_VARIABLES:-pressure_msl,categ
 GFS_UPPER_LEVELS="${WEATHER_GFS_UPPER_LEVELS:-1000,975,950,925,900,850,800,750,700,650,600,550,500,450,400,350,300,250,200,150,100,50}"
 GFS_UPPER_LEVEL_VARIABLES="${WEATHER_GFS_UPPER_LEVEL_VARIABLES:-temperature,wind_u_component,wind_v_component,geopotential_height,cloud_cover,relative_humidity,vertical_velocity}"
 GFS_UPPER_LEVEL_CONCURRENT="${WEATHER_GFS_UPPER_LEVEL_DOWNLOAD_CONCURRENT:-4}"
+GFS_UPPER_LEVEL_BATCH_SIZE="${WEATHER_GFS_UPPER_LEVEL_BATCH_SIZE:-4}"
 GFS_RUN="${WEATHER_GFS_RUN:-}"
 GFS_DOWNLOAD_MODE="${WEATHER_GFS_DOWNLOAD_MODE:-s3-range-region}"
 GFS_DOWNLOAD_SOURCE_ARGS=()
@@ -53,6 +54,7 @@ join_by_comma() {
 }
 
 gfs025_upper_level_only_variables() {
+  local requested_levels="${1:-$GFS_UPPER_LEVELS}"
   local IFS=","
   local family
   local level
@@ -60,7 +62,7 @@ gfs025_upper_level_only_variables() {
   local variables=()
   local only_variables=()
 
-  read -ra levels <<< "$GFS_UPPER_LEVELS"
+  read -ra levels <<< "$requested_levels"
   read -ra variables <<< "$GFS_UPPER_LEVEL_VARIABLES"
 
   for family in "${variables[@]}"; do
@@ -86,21 +88,34 @@ gfs025_upper_level_only_variables() {
 
 download_gfs025_upper_level_variables() {
   local GFS025_UPPER_LEVEL_ONLY_VARIABLES
+  local start
+  local batch_levels
+  local levels=()
 
-  GFS025_UPPER_LEVEL_ONLY_VARIABLES="$(gfs025_upper_level_only_variables)"
-  if [[ -z "$GFS025_UPPER_LEVEL_ONLY_VARIABLES" ]]; then
-    return
+  if ! [[ "$GFS_UPPER_LEVEL_BATCH_SIZE" =~ ^[1-9][0-9]*$ ]]; then
+    printf '%s\n' "WEATHER_GFS_UPPER_LEVEL_BATCH_SIZE must be a positive integer" >&2
+    exit 2
   fi
+  IFS=',' read -ra levels <<< "$GFS_UPPER_LEVELS"
 
-  run_openmeteo download-gfs gfs025 \
-    "${GFS_DOWNLOAD_SOURCE_ARGS[@]}" \
-    --only-variables "$GFS025_UPPER_LEVEL_ONLY_VARIABLES" \
-    $(append_run_arg "$GFS_RUN") \
-    --max-forecast-hour "$GFS_MAX_FORECAST_HOUR" \
-    --concurrent "$GFS_UPPER_LEVEL_CONCURRENT"
+  for ((start = 0; start < ${#levels[@]}; start += GFS_UPPER_LEVEL_BATCH_SIZE)); do
+    batch_levels="$(join_by_comma "${levels[@]:start:GFS_UPPER_LEVEL_BATCH_SIZE}")"
+    GFS025_UPPER_LEVEL_ONLY_VARIABLES="$(gfs025_upper_level_only_variables "$batch_levels")"
+    if [[ -z "$GFS025_UPPER_LEVEL_ONLY_VARIABLES" ]]; then
+      continue
+    fi
 
-  cleanup_download_work_dirs "$DATA_DIR/download-ncep_gfs025"
-  cleanup_openmeteo_http_cache
+    echo "Downloading GFS upper-level batch levels=$batch_levels run=$GFS_RUN"
+    run_openmeteo download-gfs gfs025 \
+      "${GFS_DOWNLOAD_SOURCE_ARGS[@]}" \
+      --only-variables "$GFS025_UPPER_LEVEL_ONLY_VARIABLES" \
+      $(append_run_arg "$GFS_RUN") \
+      --max-forecast-hour "$GFS_MAX_FORECAST_HOUR" \
+      --concurrent "$GFS_UPPER_LEVEL_CONCURRENT"
+
+    cleanup_download_work_dirs "$DATA_DIR/download-ncep_gfs025"
+    cleanup_openmeteo_http_cache
+  done
 }
 
 require_dem_source
