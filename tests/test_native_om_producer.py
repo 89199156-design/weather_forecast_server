@@ -168,7 +168,7 @@ def make_cams_staging(output_root: Path, run: str) -> Path:
         run_dir = staging / "data_run" / "cams_global" / base.strftime("%Y/%m/%d/%H00Z")
         run_dir.mkdir(parents=True, exist_ok=True)
         write_fake_om(run_dir / "pm2_5.om", (2, 3, 121))
-        write_fake_om(run_dir / "dust.om", (2, 3, 41))
+        write_fake_om(run_dir / "dust.om", (2, 3, 121))
         (run_dir / "meta.json").write_text(
             json.dumps(
                 {
@@ -788,6 +788,7 @@ resolve_openmeteo_cpu_limit 2.5
                 ready["greenhouse_source_runs"],
                 ["2026070900", "2026071000", "2026071100"],
             )
+            self.assertEqual(ready["latest_max_forecast_hour"], 120)
             self.assertTrue((output_root / "current" / "cams").is_symlink())
 
         producer = (ROOT / "scripts" / "run_cams_om_production_cycle.sh").read_text(

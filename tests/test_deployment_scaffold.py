@@ -829,7 +829,7 @@ def test_cams_global_uses_ecpds_and_greenhouse_uses_official_ads():
     assert "getCamsGlobalAreaApiName" not in cams_domain
 
 
-def test_cams_ftp_concurrent_option_drives_file_downloads():
+def test_cams_ftp_concurrent_option_drives_hourly_file_downloads():
     cams_download = (ROOT / "vendor" / "open-meteo" / "Sources" / "App" / "Cams" / "CamsDownload.swift").read_text(
         encoding="utf-8"
     )
@@ -839,7 +839,8 @@ def test_cams_ftp_concurrent_option_drives_file_downloads():
     assert "func downloadCamsGlobal(" in cams_download
     assert "concurrent: Int" in download_function
     assert "jobs.foreachConcurrent" in download_function
-    assert "hour % 3 != 0" in download_function
+    assert "hour % 3 != 0" not in download_function
+    assert "meta.isMultiLevel &&" not in download_function
     assert "curl.download(url: job.remoteFile, toFile: job.tempNc" in download_function
     assert r'"\(domain.downloadDirectory)/temp.nc"' not in cams_download
     assert r'temp_\(hour.zeroPadded(len: 3))_\(meta.gribname).nc' in cams_download
@@ -1130,7 +1131,10 @@ def test_gfs_probe_cycle_starts_latest_ready_run_after_newer_not_ready(tmp_path)
         encoding="utf-8",
     )
     (bin_dir / "flock").write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
-    (bin_dir / "python3").write_text("#!/usr/bin/env bash\npython \"$@\"\n", encoding="utf-8")
+    (bin_dir / "python3").write_text(
+        f"#!/usr/bin/env bash\n{sys.executable} \"$@\"\n",
+        encoding="utf-8",
+    )
 
     run_file = tmp_path / "production-run.txt"
     env = os.environ.copy()
@@ -1140,6 +1144,7 @@ def test_gfs_probe_cycle_starts_latest_ready_run_after_newer_not_ready(tmp_path)
             "WEATHER_OPENMETEO_BUILD_LOG_DIR": str(log_dir),
             "WEATHER_OPENMETEO_GFS_PROBE_LOCK_FILE": str(tmp_path / "probe.lock"),
             "WEATHER_OPENMETEO_GFS_LOCK_FILE": str(tmp_path / "cycle.lock"),
+            "WEATHER_OPENMETEO_GLOBAL_LOCK_FILE": str(tmp_path / "global.lock"),
             "WEATHER_TEST_PRODUCTION_RUN_FILE": str(run_file),
             "PATH": f"{bin_dir}{os.pathsep}{env.get('PATH', '')}",
         }
@@ -1162,7 +1167,11 @@ def test_openmeteo_cron_installer_installs_1panel_jobs_only_for_gfs_and_cams_ftp
     script = (ROOT / "scripts" / "install_openmeteo_cron.sh").read_text(encoding="utf-8")
 
     assert "PANEL_DB=" in script
-    assert "DELETE FROM cronjobs WHERE name LIKE 'weather_%' OR name LIKE 'openmeteo_%'" in script
+    assert "DELETE FROM cronjobs" in script
+    assert "name LIKE 'weather_%'" in script
+    assert "name LIKE 'openmeteo_%'" in script
+    assert "OM_GFS_WEBP_BUILD" in script
+    assert "OM_CAMS_WEBP_BUILD" in script
     assert "openmeteo_gfs_probe_cycle" in script
     assert "openmeteo_cams_ftp_probe_cycle" in script
     assert '"17 0,6,12,18 * * *"' in script
@@ -1278,6 +1287,13 @@ def test_cams_native_production_contract_keeps_three_complete_regional_runs():
     assert 'WEATHER_CAMS_STORAGE_BOTTOM_LAT:--1' in production
     assert 'WEATHER_CAMS_STORAGE_TOP_LAT:-59' in production
     assert 'export WEATHER_REGION_LEFT_LON="$CAMS_STORAGE_LEFT_LON"' in production
+    assert "validate_staged_cams_run" in production
+    assert "reuse validated history" in production
+    assert "reuse validated latest" in production
+    assert "{variable: 121 for variable in meta[\"variables\"]}" in production
+    assert "validate_staged_greenhouse_run" in production
+    assert "{variable: 41 for variable in meta[\"variables\"]}" in production
+    assert 'restore_cams_latest_metadata "$RUN"' in production
 
 
 def test_openmeteo_production_cycles_share_global_lock():

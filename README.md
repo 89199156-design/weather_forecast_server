@@ -25,7 +25,7 @@ availability for the corresponding modified version.
 
 See [LICENSE](LICENSE) and [UPSTREAM.md](UPSTREAM.md).
 
-The isolated deployment and acceptance sequence is documented in
+The production deployment and acceptance sequence is documented in
 [`docs/singapore-native-migration-runbook.md`](docs/singapore-native-migration-runbook.md).
 
 ## Current Scope
@@ -39,8 +39,8 @@ The implementation order is:
 2. Configure Open-Meteo raw source ingestion with only the required
    region/variable boundary patches.
 3. Publish immutable native Open-Meteo coverages with atomic group markers.
-4. Add a native-runtime reader/manifest adapter, then let the shared Rust API
-   and WebP repositories consume those coverages.
+4. Build the Rust API and WebP renderer from this same repository and let their
+   native-runtime adapter consume those coverages.
 5. Deploy to Singapore and remove old satellite code/tasks there.
 6. Validate exactly 2,000 reproducible random regional points over every
    published GFS/CAMS hour and three consecutive daily aggregation dates
@@ -163,11 +163,10 @@ contain `0...120h`.
 
 The publisher validates both the batch time metadata and each OM file's actual
 stored time dimension. GFS latest-run metadata/files use the official 209-frame
-source axis (`0...120` hourly, then `123...384` every three hours). CAMS batch
-metadata is the 121-hour union, while real variable files are mixed: PM2.5,
-PM10 and aerosol optical depth store 121 hourly frames; dust, CO, NO2, O3 and
-SO2 store 41 three-hourly frames. Rust maps each file independently and only
-interpolates the sparse variables at query/render time.
+source axis (`0...120` hourly, then `123...384` every three hours). Every CAMS
+main forecast variable stores all 121 direct hourly frames; no local 3-hour
+interpolation is used. The separate official greenhouse product keeps its
+native 41-frame, three-hour schedule and two-day release lag.
 
 Each coverage marker also records `domain_grids` for every runtime domain. The
 contract contains the actual cropped `nx`, `ny`, `lat_min`, `lon_min`, `dx`,
@@ -175,14 +174,11 @@ contract contains the actual cropped `nx`, `ny`, `lat_min`, `lon_min`, `dx`,
 vendored Swift domains. Rust consumers must use this contract; cropped runtime
 dimensions must not be interpreted as the original global grid dimensions.
 
-The current Shanghai Rust repositories read `.omranges` entries shaped as one
-2D spatial array per variable and valid time. Native Open-Meteo runtime files
-are time-series chunks, so they are not path-compatible with that reader even
-though both use the OM file format. Do not point the Shanghai service directly
-at `current/gfs`. The Rust integration must first add a native-runtime backend
-or a deterministic manifest adapter that preserves the recorded regional grid
-and time index. Weather formulas remain in the existing, baseline-locked Rust
-implementation; the adapter only changes storage access.
+The Shanghai Rust API/WebP implementation is copied into `om_api` and
+`om_webp` in this repository. Its native-runtime backend preserves the recorded
+regional grid, source-run and time indexes while reading the Swift-produced OM
+files. Weather formulas remain baseline-locked; storage adaptation never
+compensates for a producer value error.
 
 Rust WebP remains a fixed 121-frame product for both GFS and CAMS: one file per
 hour from the latest run at 0h through 120h. The longer 408h GFS and 144h CAMS
@@ -230,6 +226,7 @@ python3 scripts/compare_shanghai_singapore_daily.py \
   --gfs-run YYYYMMDDHH \
   --cams-run YYYYMMDDHH \
   --run-identity-report /tmp/shanghai-singapore-run-identity.json \
+  --hourly-acceptance-report data/validation/shanghai-singapore-2000-all-hours.json \
   --output-report data/validation/shanghai-singapore-2000x3-daily.json
 ```
 
@@ -249,10 +246,12 @@ all-hour and three-day comparisons:
 ```bash
 WEATHER_SHANGHAI_OM_API_URL=http://SHANGHAI_API \
 WEATHER_OM_RUN_IDENTITY_REPORT=/tmp/shanghai-singapore-run-identity.json \
+WEATHER_OM_API_PID="$(systemctl show weather-om-api.service --property=MainPID --value)" \
+WEATHER_SHANGHAI_WEBP_INVENTORY=/tmp/shanghai-webp-inventory.json \
 bash scripts/run_native_rust_api_parity_validation.sh
 ```
 
-WebP parity is a separate exact-byte gate. Generate one read-only inventory on
+WebP parity is a separate byte gate. Generate one read-only inventory on
 each server (run with low CPU/I/O priority), copy only the two small inventory
 JSON files to the validation workstation, and compare them there:
 
@@ -268,10 +267,13 @@ python3 scripts/compare_webp_inventories.py compare \
 ```
 
 The strict gate requires 2,178 GFS files (18 layers x 121 hours) and 484 CAMS
-files (4 layers x 121 hours), 2,662 WebP files in total. Runs and normalized
-manifests must match and every corresponding WebP SHA-256 must be identical.
-`--allow-reduced-test` is diagnostic only and cannot satisfy production
-acceptance.
+files (4 layers x 121 hours), 2,662 WebP files in total. Runs, normalized
+manifests and file paths must match. Every GFS frame, every PM2.5/PM10/AOD
+frame, and the 41 direct CAMS dust frames at f000/f003/.../f120 must have the
+same SHA-256. The 80 Shanghai-interpolated CAMS dust hours remain mandatory
+inventory entries but are explicitly excluded from byte equality because
+Singapore uses direct hourly source values. `--allow-reduced-test` is
+diagnostic only and cannot satisfy production acceptance.
 
 ## Legacy Layer Export
 

@@ -58,6 +58,7 @@ def validate_cams_contract(producer_root: Path) -> dict[str, Any]:
         "latest_complete_run",
         "source_runs",
         "greenhouse_source_runs",
+        "latest_max_forecast_hour",
         "public_start_utc",
         "local_day_start_utc",
         "public_end_utc",
@@ -79,6 +80,8 @@ def validate_cams_contract(producer_root: Path) -> dict[str, Any]:
     if not isinstance(source_runs, list) or len(source_runs) != 3:
         raise ValueError("CAMS coverage must retain exactly three source runs")
     parsed_runs = [parse_compact_run(str(run)) for run in source_runs]
+    if any(run.hour not in (0, 12) for run in parsed_runs):
+        raise ValueError("CAMS source runs are not official 00/12 UTC cycles")
     if any(right - left != timedelta(hours=12) for left, right in zip(parsed_runs, parsed_runs[1:])):
         raise ValueError("CAMS source runs are not consecutive 12-hour cycles")
     if source_runs[-1] != marker.get("latest_complete_run"):
@@ -116,6 +119,8 @@ def validate_cams_contract(producer_root: Path) -> dict[str, Any]:
         raise ValueError("CAMS local-day start is outside retained history")
     if public_end != parsed_runs[-1] + timedelta(hours=120):
         raise ValueError("CAMS public end is not latest run + 120h")
+    if marker.get("latest_max_forecast_hour") != 120:
+        raise ValueError("CAMS latest_max_forecast_hour is not 120")
     for domain in ("cams_global", "cams_global_greenhouse_gases"):
         grid = marker.get("domain_grids", {}).get(domain)
         if not isinstance(grid, dict) or not all(
@@ -135,14 +140,36 @@ def validate_cams_contract(producer_root: Path) -> dict[str, Any]:
         if not (coverage / domain).is_dir():
             raise ValueError(f"missing {domain} runtime domain")
     for source_run in source_runs:
-        validate_run_metadata(coverage, "cams_global", source_run, list(range(121)))
+        run_meta = validate_run_metadata(
+            coverage,
+            "cams_global",
+            source_run,
+            list(range(121)),
+        )
+        validate_run_metadata(
+            coverage,
+            "cams_global",
+            source_run,
+            list(range(121)),
+            {variable: 121 for variable in run_meta["variables"]},
+        )
     for source_run in greenhouse_source_runs:
+        run_meta = validate_run_metadata(
+            coverage,
+            "cams_global_greenhouse_gases",
+            source_run,
+            list(range(0, 121, 3)),
+        )
+        if "carbon_monoxide" not in run_meta["variables"]:
+            raise ValueError(
+                f"cams_global_greenhouse_gases run {source_run} is missing carbon_monoxide"
+            )
         validate_run_metadata(
             coverage,
             "cams_global_greenhouse_gases",
             source_run,
             list(range(0, 121, 3)),
-            {"carbon_monoxide": 41},
+            {variable: 41 for variable in run_meta["variables"]},
         )
     return {
         "coverage_id": marker["coverage_id"],

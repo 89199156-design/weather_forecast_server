@@ -1,5 +1,7 @@
 /.build/
 /.swiftpm/
+/om_api/target/
+/om_webp/target/
 /.venv/
 /venv/
 /data/

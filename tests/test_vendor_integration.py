@@ -87,6 +87,7 @@ def test_upstream_record_uses_one_openmeteo_engine_baseline():
     upstream = (ROOT / "UPSTREAM.md").read_text(encoding="utf-8")
 
     assert "`4efb9c49fb4a3718ed385fb22580d2e0fc56bdb2`" in upstream
+    assert "`6059e2bd7e009b765caadd6a619002af3fd9ee21`" in upstream
     assert "GFS JSON/CSV writer behavior baseline" not in upstream
     assert "GFS weather-code API behavior baseline" not in upstream
     assert "Active local shared engine baseline" not in upstream
@@ -109,6 +110,8 @@ def test_vendored_openmeteo_only_has_required_region_patches():
     assert "WEATHER_REGION_LEFT_LON" in domain
     assert "GfsRegionalDownload" in download
     assert "decodeRegional" in download
+    assert "multiplyAdd(domain: domain, dtSeconds: dtSeconds)" in download
+    assert "let dtSeconds = previousHour == 0 ? domain.dtSeconds" in download
 
     combined = "\n".join((domain, download, curl))
     for token in ("WEATHER_GFS_FILTER", "GfsController", "weather_code", "calculateThunderstormProbability"):

@@ -1,0 +1,7548 @@
+use crate::dem::read_dem90;
+use crate::manifest::{ArrayMetadata, BundleEntry, EntryKey, ProductSnapshot};
+use crate::official::{build_v3_array_metadata_blob, BundleRangeReader, OfficialDecoder};
+use crate::snapshot::OmDataSnapshot;
+use crate::solar::{
+    backwards_direct_normal_irradiance, backwards_sunshine_duration, backwards_to_instant_factor,
+    extra_terrestrial_radiation_backwards, is_day,
+};
+use anyhow::{anyhow, bail, Context, Result};
+use chrono::{DateTime, Duration, FixedOffset, NaiveDate, NaiveDateTime, Offset, TimeZone, Utc};
+use chrono_tz::Tz;
+use serde::{Deserialize, Serialize};
+use std::cell::RefCell;
+use std::collections::{BTreeMap, HashMap};
+use std::fs::File;
+use std::os::unix::fs::FileExt;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex, OnceLock};
+
+const GFS013_STATIC_ELEVATION_PATH: &str = "static/ncep_gfs013/HSURF.om";
+const GFS013_STATIC_DIMENSIONS: &[u64] = &[1536, 3072];
+const GFS013_STATIC_CHUNKS: &[u64] = &[20, 20];
+const GFS013_STATIC_LUT_OFFSET: u64 = 1_439_999;
+const GFS013_STATIC_LUT_SIZE: u64 = 15_438;
+const GFS013_STATIC_FILE_SIZE: u64 = 1_455_544;
+const GFS025_STATIC_ELEVATION_PATH: &str = "static/ncep_gfs025/HSURF.om";
+const GFS025_STATIC_DIMENSIONS: &[u64] = &[721, 1440];
+const GFS025_STATIC_CHUNKS: &[u64] = &[20, 20];
+const GFS025_STATIC_LUT_OFFSET: u64 = 404_885;
+const GFS025_STATIC_LUT_SIZE: u64 = 3_444;
+const GFS025_STATIC_FILE_SIZE: u64 = 408_440;
+type GfsElevationCache = HashMap<(PathBuf, u64, u64), f32>;
+static GFS_ELEVATION_CACHE: OnceLock<Mutex<GfsElevationCache>> = OnceLock::new();
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GridSelectionMode {
+    Land,
+    Sea,
+    Nearest,
+}
+
+impl GridSelectionMode {
+    fn parse(value: Option<&str>) -> Result<Self> {
+        match value.unwrap_or("land").trim().to_ascii_lowercase().as_str() {
+            "land" | "" => Ok(Self::Land),
+            "sea" => Ok(Self::Sea),
+            "nearest" => Ok(Self::Nearest),
+            value => bail!("unsupported cell_selection: {value}"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ModelSampling {
+    latitude: f64,
+    longitude: f64,
+    model_elevation: f32,
+    target_elevation: f32,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct RequestSampling {
+    gfs013: Option<ModelSampling>,
+    gfs025: Option<ModelSampling>,
+    response_elevation: f32,
+}
+
+thread_local! {
+    static REQUEST_SAMPLING: RefCell<Option<RequestSampling>> = const { RefCell::new(None) };
+}
+
+fn with_request_sampling<T>(
+    sampling: RequestSampling,
+    operation: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    let previous = REQUEST_SAMPLING.with(|current| current.replace(Some(sampling)));
+    let result = operation();
+    REQUEST_SAMPLING.with(|current| current.replace(previous));
+    result
+}
+
+fn current_product_sampling(product: &str) -> Option<ModelSampling> {
+    REQUEST_SAMPLING.with(|current| {
+        current
+            .borrow()
+            .as_ref()
+            .and_then(|sampling| match product {
+                "gfs013_surface" => sampling.gfs013,
+                "gfs025" | "gfs_pressure_profile" => sampling.gfs025,
+                _ => None,
+            })
+    })
+}
+
+pub const OPENMETEO_UPSTREAM_BASELINE: &str = "4efb9c49fb4a3718ed385fb22580d2e0fc56bdb2";
+pub const OPENMETEO_IMAGE_BASELINE: &str = "weather-forecast-openmeteo:9849315";
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PointQuery {
+    pub latitude: String,
+    pub longitude: String,
+    #[serde(default)]
+    pub hourly: Option<String>,
+    #[serde(default)]
+    pub daily: Option<String>,
+    #[serde(default)]
+    pub start_hour: Option<String>,
+    #[serde(default)]
+    pub end_hour: Option<String>,
+    #[serde(default)]
+    pub start_date: Option<String>,
+    #[serde(default)]
+    pub end_date: Option<String>,
+    #[serde(default)]
+    pub forecast_hours: Option<usize>,
+    #[serde(default)]
+    pub past_days: Option<usize>,
+    #[serde(default)]
+    pub forecast_days: Option<usize>,
+    #[serde(default)]
+    pub timezone: Option<String>,
+    #[serde(default)]
+    pub cell_selection: Option<String>,
+    #[serde(default)]
+    pub elevation: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct RouteQuery {
+    pub points: Vec<RoutePoint>,
+    pub hourly: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct RoutePoint {
+    pub latitude: f64,
+    pub longitude: f64,
+    #[serde(default)]
+    pub time: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ForecastResponse {
+    pub latitude: f64,
+    pub longitude: f64,
+    pub generationtime_ms: f64,
+    pub utc_offset_seconds: i32,
+    pub timezone: String,
+    pub timezone_abbreviation: String,
+    pub elevation: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub location_id: Option<usize>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub hourly_units: BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub hourly: BTreeMap<String, serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub daily_units: Option<BTreeMap<String, String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub daily: Option<BTreeMap<String, serde_json::Value>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RouteResponse {
+    pub generationtime_ms: f64,
+    pub points: Vec<RoutePointResponse>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RoutePointResponse {
+    pub latitude: f64,
+    pub longitude: f64,
+    pub time: Option<DateTime<Utc>>,
+    pub hourly_units: BTreeMap<String, String>,
+    pub hourly: BTreeMap<String, serde_json::Value>,
+}
+
+pub fn parse_csv_f64(value: &str, name: &str) -> Result<Vec<f64>> {
+    value
+        .split(',')
+        .filter(|item| !item.trim().is_empty())
+        .map(|item| {
+            item.trim()
+                .parse::<f64>()
+                .with_context(|| format!("invalid {} value: {}", name, item))
+        })
+        .collect()
+}
+
+pub fn parse_variables(value: Option<&str>) -> Vec<String> {
+    value
+        .unwrap_or("temperature_2m")
+        .split(',')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RawProductPoint {
+    pub product: String,
+    pub variable: String,
+    pub valid_time_utc: DateTime<Utc>,
+    pub source_run: String,
+    pub forecast_hour: i64,
+    pub native_grid: bool,
+    pub grid_dt_seconds: Option<i64>,
+    pub source_interval_seconds: Option<i64>,
+    pub value: Option<f32>,
+}
+
+/// Decode one exact stored OM entry without interpolation, derivation,
+/// elevation correction or cross-run fallback. This is intentionally not
+/// exposed by the HTTP API; it is used by the production parity audit tool to
+/// distinguish producer differences from API adapter differences.
+pub fn read_raw_product_point(
+    snapshot: &OmDataSnapshot,
+    decoder: Option<&OfficialDecoder>,
+    product_name: &str,
+    variable: &str,
+    valid_time_utc: DateTime<Utc>,
+    source_run: Option<&str>,
+    latitude: f64,
+    longitude: f64,
+) -> Result<RawProductPoint> {
+    for product in snapshot.product_snapshots(product_name) {
+        let Some(entry) = product.entries.get(&EntryKey {
+            variable: variable.to_string(),
+            valid_time_utc,
+        }) else {
+            continue;
+        };
+        if source_run.is_some_and(|source_run| entry.source_run != source_run) {
+            continue;
+        }
+        let previous_time = product
+            .entries
+            .values()
+            .filter(|candidate| {
+                candidate.variable == entry.variable
+                    && candidate.source_run == entry.source_run
+                    && candidate.valid_time_utc < entry.valid_time_utc
+            })
+            .map(|candidate| candidate.valid_time_utc)
+            .max();
+        let source_interval_seconds = previous_time
+            .map(|previous| (entry.valid_time_utc - previous).num_seconds())
+            .or_else(|| entry.native_grid.as_ref().map(|grid| grid.dt_seconds));
+        let value = read_entry_value(&product, entry, decoder, latitude, longitude)?;
+        return Ok(RawProductPoint {
+            product: product_name.to_string(),
+            variable: variable.to_string(),
+            valid_time_utc,
+            source_run: entry.source_run.clone(),
+            forecast_hour: entry.forecast_hour,
+            native_grid: entry.native_grid.is_some(),
+            grid_dt_seconds: entry.native_grid.as_ref().map(|grid| grid.dt_seconds),
+            source_interval_seconds,
+            value: value.is_finite().then_some(value),
+        });
+    }
+    bail!(
+        "exact stored OM entry is not available: product={} variable={} time={} source_run={}",
+        product_name,
+        variable,
+        valid_time_utc,
+        source_run.unwrap_or("any")
+    )
+}
+
+const PUBLIC_PRESSURE_LEVELS: &[u16] = &[
+    50, 100, 150, 200, 250, 300, 350, 400, 450, 500, 550, 600, 650, 700, 750, 800, 850, 900, 925,
+    950, 975, 1000,
+];
+
+fn is_public_pressure_variable(variable: &str) -> bool {
+    let Some((name, level_text)) = variable.rsplit_once('_') else {
+        return false;
+    };
+    let Some(level) = level_text
+        .strip_suffix("hPa")
+        .and_then(|value| value.parse::<u16>().ok())
+    else {
+        return false;
+    };
+    PUBLIC_PRESSURE_LEVELS.contains(&level)
+        && matches!(
+            name,
+            "temperature"
+                | "relative_humidity"
+                | "relativehumidity"
+                | "dew_point"
+                | "dewpoint"
+                | "cloud_cover"
+                | "cloudcover"
+                | "wind_speed"
+                | "windspeed"
+                | "wind_direction"
+                | "winddirection"
+                | "geopotential_height"
+                | "vertical_velocity"
+        )
+}
+
+fn is_public_hourly_variable(variable: &str) -> bool {
+    matches!(
+        variable,
+        "temperature_2m"
+            | "apparent_temperature"
+            | "relative_humidity_2m"
+            | "relativehumidity_2m"
+            | "dew_point_2m"
+            | "dewpoint_2m"
+            | "wet_bulb_temperature_2m"
+            | "surface_temperature"
+            | "soil_temperature_0_to_10cm"
+            | "soil_temperature_10_to_40cm"
+            | "soil_temperature_40_to_100cm"
+            | "soil_temperature_100_to_200cm"
+            | "soil_moisture_0_to_10cm"
+            | "soil_moisture_10_to_40cm"
+            | "soil_moisture_40_to_100cm"
+            | "soil_moisture_100_to_200cm"
+            | "pressure_msl"
+            | "surface_pressure"
+            | "visibility"
+            | "weather_code"
+            | "weathercode"
+            | "is_day"
+            | "precipitation"
+            | "rain"
+            | "showers"
+            | "snowfall"
+            | "snowfall_water_equivalent"
+            | "snow_depth"
+            | "cloud_cover"
+            | "cloudcover"
+            | "cloud_cover_low"
+            | "cloudcover_low"
+            | "cloud_cover_mid"
+            | "cloudcover_mid"
+            | "cloud_cover_high"
+            | "cloudcover_high"
+            | "freezing_level_height"
+            | "temperature_80m"
+            | "temperature_100m"
+            | "temperature_120m"
+            | "wind_speed_10m"
+            | "windspeed_10m"
+            | "wind_direction_10m"
+            | "winddirection_10m"
+            | "wind_gusts_10m"
+            | "wind_speed_80m"
+            | "windspeed_80m"
+            | "wind_direction_80m"
+            | "winddirection_80m"
+            | "wind_speed_100m"
+            | "windspeed_100m"
+            | "wind_direction_100m"
+            | "winddirection_100m"
+            | "wind_speed_120m"
+            | "windspeed_120m"
+            | "wind_direction_120m"
+            | "winddirection_120m"
+            | "cape"
+            | "uv_index"
+            | "uv_index_clear_sky"
+            | "sunshine_duration"
+            | "aerosol_optical_depth"
+            | "pm2_5"
+            | "pm10"
+            | "dust"
+            | "carbon_monoxide"
+            | "nitrogen_dioxide"
+            | "ozone"
+            | "sulphur_dioxide"
+            | "chinese_aqi"
+            | "chinese_aqi_pm2_5"
+            | "chinese_aqi_pm10"
+            | "chinese_aqi_no2"
+            | "chinese_aqi_nitrogen_dioxide"
+            | "chinese_aqi_o3"
+            | "chinese_aqi_ozone"
+            | "chinese_aqi_so2"
+            | "chinese_aqi_sulphur_dioxide"
+            | "chinese_aqi_co"
+            | "chinese_aqi_carbon_monoxide"
+    ) || is_public_pressure_variable(variable)
+}
+
+fn validate_public_hourly_variables(variables: &[String]) -> Result<()> {
+    for variable in variables {
+        if !is_public_hourly_variable(variable) {
+            bail!("unsupported public hourly variable: {variable}");
+        }
+    }
+    Ok(())
+}
+
+pub fn parse_hour(value: Option<&str>) -> Result<Option<DateTime<Utc>>> {
+    value
+        .map(|text| {
+            DateTime::parse_from_rfc3339(
+                if text.ends_with('Z') {
+                    text.to_string()
+                } else {
+                    format!("{text}:00Z")
+                }
+                .as_str(),
+            )
+            .or_else(|_| DateTime::parse_from_rfc3339(text))
+            .map(|dt| dt.with_timezone(&Utc))
+            .with_context(|| format!("invalid hour: {text}"))
+        })
+        .transpose()
+}
+
+#[derive(Debug, Clone)]
+struct QueryTimezone {
+    offset: FixedOffset,
+    identifier: String,
+    abbreviation: String,
+}
+
+fn parse_query_timezones(
+    value: Option<&str>,
+    coordinate_count: usize,
+) -> Result<Vec<QueryTimezone>> {
+    let requested = value
+        .unwrap_or("GMT")
+        .split(',')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(parse_query_timezone)
+        .collect::<Result<Vec<_>>>()?;
+    if requested.len() == 1 {
+        return Ok(vec![requested[0].clone(); coordinate_count]);
+    }
+    if requested.len() != coordinate_count {
+        bail!("timezone and coordinates must have the same number of elements");
+    }
+    Ok(requested)
+}
+
+fn parse_query_timezone(value: &str) -> Result<QueryTimezone> {
+    if value.eq_ignore_ascii_case("auto") {
+        bail!("timezone=auto requires the official coordinate timezone database and is not enabled; provide an explicit IANA timezone");
+    }
+    if value.eq_ignore_ascii_case("GMT") || value.eq_ignore_ascii_case("UTC") {
+        return Ok(QueryTimezone {
+            offset: FixedOffset::east_opt(0).expect("valid GMT offset"),
+            identifier: "GMT".to_string(),
+            abbreviation: "GMT".to_string(),
+        });
+    }
+    let timezone = value
+        .parse::<Tz>()
+        .with_context(|| format!("invalid timezone: {value}"))?;
+    let local_now = Utc::now().with_timezone(&timezone);
+    Ok(QueryTimezone {
+        offset: local_now.offset().fix(),
+        identifier: timezone.name().to_string(),
+        abbreviation: local_now.format("%Z").to_string(),
+    })
+}
+
+fn parse_hour_with_timezone(
+    value: Option<&str>,
+    timezone: &QueryTimezone,
+) -> Result<Option<DateTime<Utc>>> {
+    value
+        .map(|text| {
+            if text.ends_with('Z') || DateTime::parse_from_rfc3339(text).is_ok() {
+                return parse_hour(Some(text)).map(|value| value.expect("value is present"));
+            }
+            let local = NaiveDateTime::parse_from_str(text, "%Y-%m-%dT%H:%M")
+                .or_else(|_| NaiveDateTime::parse_from_str(text, "%Y-%m-%dT%H:%M:%S"))
+                .with_context(|| format!("invalid hour: {text}"))?;
+            timezone
+                .offset
+                .from_local_datetime(&local)
+                .single()
+                .map(|value| value.with_timezone(&Utc))
+                .with_context(|| format!("invalid local hour: {text}"))
+        })
+        .transpose()
+}
+
+fn apply_response_timezone(
+    response: &mut ForecastResponse,
+    timezone: &QueryTimezone,
+) -> Result<()> {
+    response.utc_offset_seconds = timezone.offset.local_minus_utc();
+    response.timezone = timezone.identifier.clone();
+    response.timezone_abbreviation = timezone.abbreviation.clone();
+    let Some(serde_json::Value::Array(times)) = response.hourly.get_mut("time") else {
+        return Ok(());
+    };
+    for value in times {
+        let text = value
+            .as_str()
+            .context("hourly time must be an ISO-8601 string")?;
+        let utc = NaiveDateTime::parse_from_str(text, "%Y-%m-%dT%H:%M")
+            .with_context(|| format!("invalid hourly response time: {text}"))?
+            .and_utc();
+        *value = serde_json::Value::String(
+            utc.with_timezone(&timezone.offset)
+                .format("%Y-%m-%dT%H:%M")
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+pub fn forecast_for_query(
+    snapshot: &OmDataSnapshot,
+    decoder: Option<&OfficialDecoder>,
+    query: &PointQuery,
+) -> Result<serde_json::Value> {
+    let latitudes = parse_csv_f64(&query.latitude, "latitude")?;
+    let longitudes = parse_csv_f64(&query.longitude, "longitude")?;
+    if latitudes.len() != longitudes.len() {
+        bail!("latitude and longitude count must match");
+    }
+    let elevations = parse_query_elevations(query.elevation.as_deref(), latitudes.len())?;
+    let cell_selection = GridSelectionMode::parse(query.cell_selection.as_deref())?;
+    let daily_variables = query
+        .daily
+        .as_deref()
+        .map(|value| parse_variables(Some(value)))
+        .unwrap_or_default();
+    let variables = if query.hourly.is_none() && !daily_variables.is_empty() {
+        Vec::new()
+    } else {
+        parse_variables(query.hourly.as_deref())
+    };
+    validate_public_hourly_variables(&variables)?;
+    let timezones = parse_query_timezones(query.timezone.as_deref(), latitudes.len())?;
+    let daily_has_air_quality = daily_variables
+        .iter()
+        .any(|variable| is_chinese_air_quality_daily_variable(variable));
+    let daily_is_air_quality = !daily_variables.is_empty()
+        && daily_variables
+            .iter()
+            .all(|variable| is_chinese_air_quality_daily_variable(variable));
+    let has_gfs_weather = variables
+        .iter()
+        .any(|variable| !is_air_quality_variable(variable))
+        || (!daily_variables.is_empty() && !daily_is_air_quality);
+    let has_air_quality = variables
+        .iter()
+        .any(|variable| is_air_quality_variable(variable))
+        || daily_is_air_quality;
+
+    if daily_has_air_quality && !daily_is_air_quality {
+        bail!("daily weather and Chinese air-quality variables cannot be mixed in one request");
+    }
+
+    let mut responses = Vec::new();
+    for index in 0..latitudes.len() {
+        let latitude = latitudes[index];
+        let longitude = longitudes[index];
+        let timezone = &timezones[index];
+        let start = parse_hour_with_timezone(query.start_hour.as_deref(), &timezone)?;
+        let end = parse_hour_with_timezone(query.end_hour.as_deref(), &timezone)?;
+        let sampling = match decoder {
+            Some(_) => Some(resolve_request_sampling(
+                snapshot,
+                decoder,
+                latitude,
+                longitude,
+                elevations[index],
+                cell_selection,
+            )?),
+            None => {
+                let explicit_selection = query
+                    .cell_selection
+                    .as_deref()
+                    .map(str::trim)
+                    .unwrap_or_default();
+                if !explicit_selection.is_empty()
+                    && !explicit_selection.eq_ignore_ascii_case("nearest")
+                {
+                    bail!("cell_selection={explicit_selection} requires DEM/static grid selection data");
+                }
+                None
+            }
+        };
+        let build_response = || {
+            let mut response = point_forecast(
+                snapshot,
+                decoder,
+                latitude,
+                longitude,
+                &variables,
+                start,
+                end,
+                query.forecast_hours,
+            )?;
+            apply_response_timezone(&mut response, &timezone)?;
+            if daily_is_air_quality {
+                attach_daily_chinese_air_quality(
+                    &mut response,
+                    snapshot,
+                    decoder,
+                    latitude,
+                    longitude,
+                    &daily_variables,
+                    query.start_date.as_deref(),
+                    query.end_date.as_deref(),
+                )?;
+            } else if !daily_variables.is_empty() {
+                attach_daily_weather(
+                    &mut response,
+                    snapshot,
+                    decoder,
+                    latitude,
+                    longitude,
+                    &daily_variables,
+                    query.start_date.as_deref(),
+                    query.end_date.as_deref(),
+                    query.past_days,
+                    query.forecast_days,
+                    &timezone,
+                )?;
+            }
+            if has_gfs_weather {
+                if let Some(sampling) = sampling {
+                    if let Some(model) = sampling.gfs013 {
+                        response.latitude = model.latitude;
+                        response.longitude = model.longitude;
+                        response.elevation = Some(sampling.response_elevation as f64);
+                    }
+                }
+            } else if has_air_quality {
+                if let Some(sampling) = sampling {
+                    if let Some((model_latitude, model_longitude)) =
+                        air_quality_model_location(snapshot, latitude, longitude)?
+                    {
+                        response.latitude = model_latitude;
+                        response.longitude = model_longitude;
+                        response.elevation = Some(sampling.response_elevation as f64);
+                    }
+                }
+            }
+            Ok(response)
+        };
+        let mut response = match sampling {
+            Some(sampling) => with_request_sampling(sampling, build_response)?,
+            None => build_response()?,
+        };
+        if index != 0 {
+            response.location_id = Some(index);
+        }
+        responses.push(response);
+    }
+
+    if responses.len() == 1 {
+        Ok(serde_json::to_value(responses.remove(0))?)
+    } else {
+        Ok(serde_json::to_value(responses)?)
+    }
+}
+
+fn parse_query_elevations(
+    value: Option<&str>,
+    coordinate_count: usize,
+) -> Result<Vec<Option<f32>>> {
+    let Some(value) = value else {
+        return Ok(vec![None; coordinate_count]);
+    };
+    let values = value
+        .split(',')
+        .filter(|item| !item.trim().is_empty())
+        .map(|item| {
+            item.trim()
+                .parse::<f32>()
+                .with_context(|| format!("invalid elevation value: {item}"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    if values.len() != coordinate_count {
+        bail!("elevation and coordinates must have the same number of elements");
+    }
+    Ok(values.into_iter().map(Some).collect())
+}
+
+pub fn route_forecast(
+    snapshot: &OmDataSnapshot,
+    decoder: Option<&OfficialDecoder>,
+    query: &RouteQuery,
+) -> Result<RouteResponse> {
+    if query.points.is_empty() {
+        bail!("points must not be empty");
+    }
+    if query.hourly.is_empty() {
+        bail!("hourly must not be empty");
+    }
+    validate_public_hourly_variables(&query.hourly)?;
+    let started = std::time::Instant::now();
+    let mut points = Vec::with_capacity(query.points.len());
+    for point in &query.points {
+        let start = point.time;
+        let response = point_forecast(
+            snapshot,
+            decoder,
+            point.latitude,
+            point.longitude,
+            &query.hourly,
+            start,
+            start,
+            Some(1),
+        )?;
+        points.push(RoutePointResponse {
+            latitude: point.latitude,
+            longitude: point.longitude,
+            time: point.time,
+            hourly_units: response.hourly_units,
+            hourly: response.hourly,
+        });
+    }
+    Ok(RouteResponse {
+        generationtime_ms: started.elapsed().as_secs_f64() * 1000.0,
+        points,
+    })
+}
+
+pub fn point_forecast(
+    snapshot: &OmDataSnapshot,
+    decoder: Option<&OfficialDecoder>,
+    latitude: f64,
+    longitude: f64,
+    variables: &[String],
+    start: Option<DateTime<Utc>>,
+    end: Option<DateTime<Utc>>,
+    limit: Option<usize>,
+) -> Result<ForecastResponse> {
+    validate_coordinate(latitude, longitude)?;
+    let started = std::time::Instant::now();
+    let mut hourly_units = BTreeMap::new();
+    let mut hourly = BTreeMap::new();
+    if !variables.is_empty() {
+        let times = select_times(snapshot, variables, start, end, limit)?;
+        hourly_units.insert("time".to_string(), "iso8601".to_string());
+        hourly.insert(
+            "time".to_string(),
+            serde_json::to_value(
+                times
+                    .iter()
+                    .map(|time| time.format("%Y-%m-%dT%H:%M").to_string())
+                    .collect::<Vec<String>>(),
+            )?,
+        );
+
+        for variable in variables {
+            let fast_values = if let Some(decoder) = decoder {
+                match read_variable_point_series(
+                    snapshot, decoder, variable, &times, latitude, longitude,
+                ) {
+                    Ok(values) => values,
+                    Err(error) if error.to_string().contains("variable/time is not available") => {
+                        None
+                    }
+                    Err(error) => return Err(error),
+                }
+            } else {
+                None
+            };
+            let values = if let Some(values) = fast_values {
+                values
+            } else {
+                let mut values = Vec::with_capacity(times.len());
+                for time in &times {
+                    match read_variable_value(
+                        snapshot, decoder, variable, *time, latitude, longitude,
+                    ) {
+                        Ok(value) => values.push(value),
+                        Err(error)
+                            if error.to_string().contains("variable/time is not available") =>
+                        {
+                            values.push(f32::NAN)
+                        }
+                        Err(error) => return Err(error),
+                    }
+                }
+                values
+            };
+            hourly_units.insert(variable.clone(), unit_for_variable(variable).to_string());
+            hourly.insert(variable.clone(), json_array_for_variable(variable, values));
+        }
+    }
+
+    Ok(ForecastResponse {
+        latitude,
+        longitude,
+        generationtime_ms: started.elapsed().as_secs_f64() * 1000.0,
+        utc_offset_seconds: 0,
+        timezone: "GMT".to_string(),
+        timezone_abbreviation: "GMT".to_string(),
+        elevation: None,
+        location_id: None,
+        hourly_units,
+        hourly,
+        daily_units: None,
+        daily: None,
+    })
+}
+
+#[derive(Debug, Clone, Copy)]
+enum DailyWeatherAggregation {
+    Max(&'static str),
+    Min(&'static str),
+    Mean(&'static str),
+    Sum(&'static str),
+    PrecipitationHours(&'static str),
+    DominantWindDirection,
+}
+
+impl DailyWeatherAggregation {
+    fn seed_variable(self) -> &'static str {
+        match self {
+            Self::Max(variable)
+            | Self::Min(variable)
+            | Self::Mean(variable)
+            | Self::Sum(variable)
+            | Self::PrecipitationHours(variable) => variable,
+            Self::DominantWindDirection => "wind_u_component_10m",
+        }
+    }
+
+    fn output_variable(self) -> &'static str {
+        match self {
+            Self::Max(variable)
+            | Self::Min(variable)
+            | Self::Mean(variable)
+            | Self::Sum(variable) => variable,
+            Self::PrecipitationHours(_) => "precipitation",
+            Self::DominantWindDirection => "wind_direction_10m",
+        }
+    }
+}
+
+fn daily_weather_aggregation(variable: &str) -> Result<DailyWeatherAggregation> {
+    let aggregation = match variable {
+        "temperature_2m_max" => DailyWeatherAggregation::Max("temperature_2m"),
+        "temperature_2m_min" => DailyWeatherAggregation::Min("temperature_2m"),
+        "temperature_2m_mean" => DailyWeatherAggregation::Mean("temperature_2m"),
+        "apparent_temperature_max" => DailyWeatherAggregation::Max("apparent_temperature"),
+        "apparent_temperature_min" => DailyWeatherAggregation::Min("apparent_temperature"),
+        "apparent_temperature_mean" => DailyWeatherAggregation::Mean("apparent_temperature"),
+        "precipitation_sum" => DailyWeatherAggregation::Sum("precipitation"),
+        "rain_sum" => DailyWeatherAggregation::Sum("rain"),
+        "showers_sum" => DailyWeatherAggregation::Sum("showers"),
+        "snowfall_sum" => DailyWeatherAggregation::Sum("snowfall"),
+        "snowfall_water_equivalent_sum" => DailyWeatherAggregation::Sum("snowfall_water_equivalent"),
+        "weather_code" | "weathercode" => DailyWeatherAggregation::Max("weather_code"),
+        "wind_speed_10m_max" | "windspeed_10m_max" => DailyWeatherAggregation::Max("wind_speed_10m"),
+        "wind_speed_10m_min" | "windspeed_10m_min" => DailyWeatherAggregation::Min("wind_speed_10m"),
+        "wind_speed_10m_mean" | "windspeed_10m_mean" => DailyWeatherAggregation::Mean("wind_speed_10m"),
+        "wind_gusts_10m_max" | "windgusts_10m_max" => DailyWeatherAggregation::Max("wind_gusts_10m"),
+        "wind_gusts_10m_min" | "windgusts_10m_min" => DailyWeatherAggregation::Min("wind_gusts_10m"),
+        "wind_gusts_10m_mean" | "windgusts_10m_mean" => DailyWeatherAggregation::Mean("wind_gusts_10m"),
+        "wind_direction_10m_dominant" | "winddirection_10m_dominant" => DailyWeatherAggregation::DominantWindDirection,
+        "precipitation_hours" => DailyWeatherAggregation::PrecipitationHours("precipitation"),
+        "visibility_max" => DailyWeatherAggregation::Max("visibility"),
+        "visibility_min" => DailyWeatherAggregation::Min("visibility"),
+        "visibility_mean" => DailyWeatherAggregation::Mean("visibility"),
+        "pressure_msl_max" => DailyWeatherAggregation::Max("pressure_msl"),
+        "pressure_msl_min" => DailyWeatherAggregation::Min("pressure_msl"),
+        "pressure_msl_mean" => DailyWeatherAggregation::Mean("pressure_msl"),
+        "surface_pressure_max" => DailyWeatherAggregation::Max("surface_pressure"),
+        "surface_pressure_min" => DailyWeatherAggregation::Min("surface_pressure"),
+        "surface_pressure_mean" => DailyWeatherAggregation::Mean("surface_pressure"),
+        "cloud_cover_max" | "cloudcover_max" => DailyWeatherAggregation::Max("cloud_cover"),
+        "cloud_cover_min" | "cloudcover_min" => DailyWeatherAggregation::Min("cloud_cover"),
+        "cloud_cover_mean" | "cloudcover_mean" => DailyWeatherAggregation::Mean("cloud_cover"),
+        "dew_point_2m_max" | "dewpoint_2m_max" => DailyWeatherAggregation::Max("dew_point_2m"),
+        "dew_point_2m_min" | "dewpoint_2m_min" => DailyWeatherAggregation::Min("dew_point_2m"),
+        "dew_point_2m_mean" | "dewpoint_2m_mean" => DailyWeatherAggregation::Mean("dew_point_2m"),
+        "relative_humidity_2m_max" => DailyWeatherAggregation::Max("relative_humidity_2m"),
+        "relative_humidity_2m_min" => DailyWeatherAggregation::Min("relative_humidity_2m"),
+        "relative_humidity_2m_mean" => DailyWeatherAggregation::Mean("relative_humidity_2m"),
+        "snow_depth_max" => DailyWeatherAggregation::Max("snow_depth"),
+        "snow_depth_min" => DailyWeatherAggregation::Min("snow_depth"),
+        "snow_depth_mean" => DailyWeatherAggregation::Mean("snow_depth"),
+        "uv_index_max" => DailyWeatherAggregation::Max("uv_index"),
+        "uv_index_clear_sky_max" => DailyWeatherAggregation::Max("uv_index_clear_sky"),
+        _ => bail!(
+            "unsupported daily weather variable: {variable}; this server only exposes official aggregations backed by locally downloaded fields"
+        ),
+    };
+    Ok(aggregation)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn attach_daily_weather(
+    response: &mut ForecastResponse,
+    snapshot: &OmDataSnapshot,
+    decoder: Option<&OfficialDecoder>,
+    latitude: f64,
+    longitude: f64,
+    variables: &[String],
+    start_date: Option<&str>,
+    end_date: Option<&str>,
+    past_days: Option<usize>,
+    forecast_days: Option<usize>,
+    timezone: &QueryTimezone,
+) -> Result<()> {
+    let aggregations = variables
+        .iter()
+        .map(|variable| daily_weather_aggregation(variable))
+        .collect::<Result<Vec<_>>>()?;
+    let seed = aggregations
+        .first()
+        .context("daily weather variables must not be empty")?
+        .seed_variable();
+    let dates = select_weather_dates(
+        snapshot,
+        seed,
+        start_date,
+        end_date,
+        past_days,
+        forecast_days,
+        timezone,
+    )?;
+
+    let mut daily_units = BTreeMap::new();
+    daily_units.insert("time".to_string(), "iso8601".to_string());
+    let mut daily = BTreeMap::new();
+    daily.insert(
+        "time".to_string(),
+        serde_json::to_value(
+            dates
+                .iter()
+                .map(|date| date.format("%Y-%m-%d").to_string())
+                .collect::<Vec<_>>(),
+        )?,
+    );
+
+    for (variable, aggregation) in variables.iter().zip(aggregations) {
+        let values = dates
+            .iter()
+            .map(|date| {
+                daily_weather_value(
+                    snapshot,
+                    decoder,
+                    aggregation,
+                    *date,
+                    timezone,
+                    latitude,
+                    longitude,
+                )
+            })
+            .collect::<Result<Vec<_>>>()?;
+        daily_units.insert(
+            variable.clone(),
+            daily_weather_unit(variable, aggregation).to_string(),
+        );
+        daily.insert(
+            variable.clone(),
+            json_array_for_daily_variable(variable, aggregation, values),
+        );
+    }
+    response.daily_units = Some(daily_units);
+    response.daily = Some(daily);
+    Ok(())
+}
+
+fn select_weather_dates(
+    snapshot: &OmDataSnapshot,
+    seed_variable: &str,
+    start_date: Option<&str>,
+    end_date: Option<&str>,
+    past_days: Option<usize>,
+    forecast_days: Option<usize>,
+    timezone: &QueryTimezone,
+) -> Result<Vec<NaiveDate>> {
+    if start_date.is_some() != end_date.is_some() {
+        bail!("both start_date and end_date must be set");
+    }
+    if start_date.is_some() && (past_days.unwrap_or(0) != 0 || forecast_days.unwrap_or(0) != 0) {
+        bail!("past_days and forecast_days cannot be combined with start_date and end_date");
+    }
+
+    let raw_seed = seed_variable_for_times(seed_variable);
+    let (product_name, raw_variable) = product_for_variable(snapshot, &raw_seed)?;
+    let mut times = snapshot
+        .product_snapshots(product_name)
+        .into_iter()
+        .flat_map(|product| {
+            product
+                .entries
+                .keys()
+                .filter(|key| key.variable == raw_variable)
+                .map(|key| key.valid_time_utc)
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    times.sort();
+    times.dedup();
+    let first = *times
+        .first()
+        .context("no data available for requested daily weather variable")?;
+    let last = *times
+        .last()
+        .context("no data available for requested daily weather variable")?;
+    let first_date = first.with_timezone(&timezone.offset).date_naive();
+    let last_date = last.with_timezone(&timezone.offset).date_naive();
+
+    let (requested_start, requested_end) = match (start_date, end_date) {
+        (Some(start), Some(end)) => (
+            NaiveDate::parse_from_str(start, "%Y-%m-%d")
+                .with_context(|| format!("invalid date: {start}"))?,
+            NaiveDate::parse_from_str(end, "%Y-%m-%d")
+                .with_context(|| format!("invalid date: {end}"))?,
+        ),
+        (None, None) => {
+            let past_days = past_days.unwrap_or(0);
+            let forecast_days = forecast_days.unwrap_or(7);
+            if forecast_days == 0 || forecast_days > 16 {
+                bail!("forecast_days must be between 1 and 16");
+            }
+            let today = Utc::now().with_timezone(&timezone.offset).date_naive();
+            (
+                today
+                    .checked_sub_signed(Duration::days(past_days as i64))
+                    .context("daily start date overflow")?,
+                today
+                    .checked_add_signed(Duration::days(forecast_days as i64 - 1))
+                    .context("daily end date overflow")?,
+            )
+        }
+        _ => unreachable!("validated matching start/end date options"),
+    };
+    if requested_start > requested_end {
+        bail!("start_date must not be after end_date");
+    }
+    if requested_start < first_date || requested_end > last_date {
+        bail!(
+            "daily date range is outside available data: {} to {}",
+            first_date,
+            last_date
+        );
+    }
+
+    let mut dates = Vec::new();
+    let mut date = requested_start;
+    while date <= requested_end {
+        dates.push(date);
+        date = date.succ_opt().context("daily date range overflow")?;
+    }
+    Ok(dates)
+}
+
+fn daily_weather_value(
+    snapshot: &OmDataSnapshot,
+    decoder: Option<&OfficialDecoder>,
+    aggregation: DailyWeatherAggregation,
+    date: NaiveDate,
+    timezone: &QueryTimezone,
+    latitude: f64,
+    longitude: f64,
+) -> Result<f32> {
+    let local_start = date
+        .and_hms_opt(0, 0, 0)
+        .context("invalid daily local start")?;
+    let local_end = date
+        .succ_opt()
+        .context("daily date overflow")?
+        .and_hms_opt(0, 0, 0)
+        .context("invalid daily local end")?;
+    let start = timezone
+        .offset
+        .from_local_datetime(&local_start)
+        .single()
+        .context("invalid daily local start")?
+        .with_timezone(&Utc);
+    let end = timezone
+        .offset
+        .from_local_datetime(&local_end)
+        .single()
+        .context("invalid daily local end")?
+        .with_timezone(&Utc);
+
+    if matches!(aggregation, DailyWeatherAggregation::DominantWindDirection) {
+        let mut u_sum = 0.0_f32;
+        let mut v_sum = 0.0_f32;
+        let mut time = start;
+        while time < end {
+            let u = read_daily_hour(
+                snapshot,
+                decoder,
+                "wind_u_component_10m",
+                time,
+                latitude,
+                longitude,
+            )?;
+            let v = read_daily_hour(
+                snapshot,
+                decoder,
+                "wind_v_component_10m",
+                time,
+                latitude,
+                longitude,
+            )?;
+            if !u.is_finite() || !v.is_finite() {
+                return Ok(f32::NAN);
+            }
+            u_sum += u;
+            v_sum += v;
+            time += Duration::hours(1);
+        }
+        return Ok(wind_direction(u_sum, v_sum));
+    }
+
+    let source = aggregation.seed_variable();
+    let mut values = Vec::new();
+    let mut time = start;
+    while time < end {
+        values.push(read_daily_hour(
+            snapshot, decoder, source, time, latitude, longitude,
+        )?);
+        time += Duration::hours(1);
+    }
+
+    let finite_extreme = |take_max: bool| {
+        values
+            .iter()
+            .copied()
+            .filter(|value| value.is_finite())
+            .reduce(|left, right| {
+                if take_max {
+                    left.max(right)
+                } else {
+                    left.min(right)
+                }
+            })
+            .unwrap_or(f32::NAN)
+    };
+    let complete = values.iter().all(|value| value.is_finite());
+    let value = match aggregation {
+        DailyWeatherAggregation::Max(_) => finite_extreme(true),
+        DailyWeatherAggregation::Min(_) => finite_extreme(false),
+        DailyWeatherAggregation::Mean(_) if complete => {
+            values.iter().sum::<f32>() / values.len() as f32
+        }
+        DailyWeatherAggregation::Sum(_) if complete => values.iter().sum(),
+        DailyWeatherAggregation::PrecipitationHours(_) if complete => values
+            .iter()
+            .map(|value| if *value > 0.001 { 1.0 } else { 0.0 })
+            .sum(),
+        DailyWeatherAggregation::Mean(_)
+        | DailyWeatherAggregation::Sum(_)
+        | DailyWeatherAggregation::PrecipitationHours(_) => f32::NAN,
+        DailyWeatherAggregation::DominantWindDirection => unreachable!("handled above"),
+    };
+    Ok(value)
+}
+
+fn read_daily_hour(
+    snapshot: &OmDataSnapshot,
+    decoder: Option<&OfficialDecoder>,
+    variable: &str,
+    time: DateTime<Utc>,
+    latitude: f64,
+    longitude: f64,
+) -> Result<f32> {
+    match read_variable_value(snapshot, decoder, variable, time, latitude, longitude) {
+        Ok(value) => Ok(value),
+        Err(error) if error.to_string().contains("variable/time is not available") => Ok(f32::NAN),
+        Err(error) => Err(error),
+    }
+}
+
+fn daily_weather_unit(variable: &str, aggregation: DailyWeatherAggregation) -> &'static str {
+    match variable {
+        "precipitation_hours" => "h",
+        _ => unit_for_variable(aggregation.output_variable()),
+    }
+}
+
+fn attach_daily_chinese_air_quality(
+    response: &mut ForecastResponse,
+    snapshot: &OmDataSnapshot,
+    decoder: Option<&OfficialDecoder>,
+    latitude: f64,
+    longitude: f64,
+    variables: &[String],
+    start_date: Option<&str>,
+    end_date: Option<&str>,
+) -> Result<()> {
+    if variables
+        .iter()
+        .any(|variable| !is_chinese_air_quality_daily_variable(variable))
+    {
+        bail!("unsupported daily Chinese air-quality variable")
+    }
+
+    let dates = select_chinese_aqi_dates(snapshot, start_date, end_date)?;
+    let mut daily_units = BTreeMap::new();
+    daily_units.insert("time".to_string(), "iso8601".to_string());
+    let mut daily = BTreeMap::new();
+    let mut selected_dates = Vec::new();
+    let mut values_by_variable = variables
+        .iter()
+        .map(|variable| (variable.clone(), Vec::new()))
+        .collect::<BTreeMap<_, _>>();
+
+    for date in dates {
+        let stats = daily_chinese_air_quality_stats(snapshot, decoder, date, latitude, longitude)?;
+        let mut values = Vec::with_capacity(variables.len());
+        for variable in variables {
+            values.push(daily_chinese_air_quality_value(&stats, variable)?);
+        }
+        selected_dates.push(date.format("%Y-%m-%d").to_string());
+        for (variable, value) in variables.iter().zip(values) {
+            values_by_variable
+                .get_mut(variable)
+                .expect("created from requested variables")
+                .push(value);
+        }
+    }
+
+    daily.insert("time".to_string(), serde_json::to_value(selected_dates)?);
+    for (variable, values) in values_by_variable {
+        daily_units.insert(variable.clone(), unit_for_variable(&variable).to_string());
+        daily.insert(variable.clone(), json_array_for_variable(&variable, values));
+    }
+    response.daily_units = Some(daily_units);
+    response.daily = Some(daily);
+    Ok(())
+}
+
+fn select_chinese_aqi_dates(
+    snapshot: &OmDataSnapshot,
+    start_date: Option<&str>,
+    end_date: Option<&str>,
+) -> Result<Vec<NaiveDate>> {
+    let product = snapshot.require_product("cams_global")?;
+    let mut times: Vec<DateTime<Utc>> = snapshot
+        .product_snapshots("cams_global")
+        .iter()
+        .flat_map(|candidate| candidate.entries.keys())
+        .filter(|key| key.variable == "pm2_5")
+        .map(|key| key.valid_time_utc)
+        .collect();
+    times.sort();
+    times.dedup();
+    let first = *times
+        .first()
+        .context("no CAMS PM2.5 data is available for daily Chinese AQI")?;
+    let last = *times
+        .last()
+        .context("no CAMS PM2.5 data is available for daily Chinese AQI")?;
+    let china_offset = FixedOffset::east_opt(8 * 3600).expect("valid China UTC offset");
+    let first_date = first.with_timezone(&china_offset).date_naive();
+    let last_date = last.with_timezone(&china_offset).date_naive();
+    let requested_start = parse_date(start_date)?.unwrap_or(first_date);
+    let requested_end = parse_date(end_date)?.unwrap_or(last_date);
+    if requested_start > requested_end {
+        bail!("start_date must not be after end_date")
+    }
+    let _ = product;
+    let mut dates = Vec::new();
+    let mut date = requested_start.max(first_date);
+    let end = requested_end.min(last_date);
+    while date <= end {
+        dates.push(date);
+        date = date.succ_opt().context("daily date range overflow")?;
+    }
+    Ok(dates)
+}
+
+fn parse_date(value: Option<&str>) -> Result<Option<NaiveDate>> {
+    value
+        .map(|text| {
+            NaiveDate::parse_from_str(text, "%Y-%m-%d")
+                .with_context(|| format!("invalid date: {text}"))
+        })
+        .transpose()
+}
+
+fn validate_coordinate(latitude: f64, longitude: f64) -> Result<()> {
+    if !(-90.0..=90.0).contains(&latitude) {
+        bail!("latitude must be between -90 and 90");
+    }
+    if !(-180.0..=180.0).contains(&longitude) {
+        bail!("longitude must be between -180 and 180");
+    }
+    Ok(())
+}
+
+fn select_times(
+    snapshot: &OmDataSnapshot,
+    variables: &[String],
+    start: Option<DateTime<Utc>>,
+    end: Option<DateTime<Utc>>,
+    limit: Option<usize>,
+) -> Result<Vec<DateTime<Utc>>> {
+    let seed_var = variables
+        .first()
+        .map(|value| seed_variable_for_times(value))
+        .unwrap_or_else(|| "temperature_2m".to_string());
+    let (product_name, raw_var) = product_for_variable(snapshot, &seed_var)?;
+    let product = snapshot.require_product(product_name)?;
+    let mut times: Vec<DateTime<Utc>> = snapshot
+        .product_snapshots(product_name)
+        .into_iter()
+        .flat_map(|candidate| {
+            candidate
+                .entries
+                .keys()
+                .filter(|key| key.variable == raw_var)
+                .map(|key| key.valid_time_utc)
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    times.sort();
+    times.dedup();
+    let first = *times
+        .first()
+        .context("no data available for requested variable")?;
+    let last = *times
+        .last()
+        .context("no data available for requested variable")?;
+    let public_start = product
+        .manifest
+        .public_start_utc
+        .unwrap_or(first)
+        .max(first);
+    let selected_start = start.unwrap_or(public_start).max(public_start);
+    let selected_end = end.unwrap_or(last).min(last);
+    times.clear();
+    let mut time = selected_start;
+    while time <= selected_end {
+        times.push(time);
+        time += Duration::hours(1);
+    }
+    if let Some(limit) = limit {
+        times.truncate(limit);
+    }
+    if times.is_empty() {
+        bail!("no data available for requested time range");
+    }
+    Ok(times)
+}
+
+pub fn read_variable_value(
+    snapshot: &OmDataSnapshot,
+    decoder: Option<&OfficialDecoder>,
+    variable: &str,
+    time: DateTime<Utc>,
+    latitude: f64,
+    longitude: f64,
+) -> Result<f32> {
+    if let Some(value) =
+        read_derived_air_quality(snapshot, decoder, variable, time, latitude, longitude)?
+    {
+        return Ok(value);
+    }
+    if let Some(value) =
+        read_derived_pressure(snapshot, decoder, variable, time, latitude, longitude)?
+    {
+        return Ok(value);
+    }
+    match variable {
+        "weather_code" | "weathercode" => {
+            return read_weather_code(snapshot, decoder, time, latitude, longitude);
+        }
+        "apparent_temperature" => {
+            let temperature = read_direct(
+                snapshot,
+                decoder,
+                "temperature_2m",
+                time,
+                latitude,
+                longitude,
+            )?;
+            let relative_humidity = read_direct(
+                snapshot,
+                decoder,
+                "relative_humidity_2m",
+                time,
+                latitude,
+                longitude,
+            )?;
+            let wind_speed = read_variable_value(
+                snapshot,
+                decoder,
+                "wind_speed_10m",
+                time,
+                latitude,
+                longitude,
+            )?;
+            let shortwave_radiation = read_direct(
+                snapshot,
+                decoder,
+                "shortwave_radiation",
+                time,
+                latitude,
+                longitude,
+            )?;
+            return Ok(apparent_temperature(
+                temperature,
+                relative_humidity,
+                wind_speed,
+                Some(shortwave_radiation),
+            ));
+        }
+        "surface_pressure" => {
+            let temperature = read_direct(
+                snapshot,
+                decoder,
+                "temperature_2m",
+                time,
+                latitude,
+                longitude,
+            )?;
+            let pressure_msl =
+                read_direct(snapshot, decoder, "pressure_msl", time, latitude, longitude)?;
+            let elevation = current_product_sampling("gfs013_surface")
+                .map(surface_pressure_elevation)
+                .or_else(|| {
+                    gfs013_model_location(snapshot, decoder, latitude, longitude)
+                        .ok()
+                        .flatten()
+                        .map(|(_, _, elevation)| elevation)
+                })
+                .unwrap_or(0.0);
+            return Ok(surface_pressure(temperature, pressure_msl, elevation));
+        }
+        "dew_point_2m" | "dewpoint_2m" => {
+            let temperature = read_direct(
+                snapshot,
+                decoder,
+                "temperature_2m",
+                time,
+                latitude,
+                longitude,
+            )?;
+            let relative_humidity = read_direct(
+                snapshot,
+                decoder,
+                "relative_humidity_2m",
+                time,
+                latitude,
+                longitude,
+            )?;
+            return Ok(dew_point(temperature, relative_humidity));
+        }
+        "wet_bulb_temperature_2m" => {
+            let temperature = read_direct(
+                snapshot,
+                decoder,
+                "temperature_2m",
+                time,
+                latitude,
+                longitude,
+            )?;
+            let relative_humidity = read_direct(
+                snapshot,
+                decoder,
+                "relative_humidity_2m",
+                time,
+                latitude,
+                longitude,
+            )?;
+            return Ok(wet_bulb_temperature(temperature, relative_humidity));
+        }
+        "evapotranspiration" => {
+            let latent_heat_flux = read_direct(
+                snapshot,
+                decoder,
+                "latent_heat_flux",
+                time,
+                latitude,
+                longitude,
+            )?;
+            return Ok(evapotranspiration(latent_heat_flux));
+        }
+        "vapour_pressure_deficit" | "vapor_pressure_deficit" => {
+            let temperature = read_direct(
+                snapshot,
+                decoder,
+                "temperature_2m",
+                time,
+                latitude,
+                longitude,
+            )?;
+            let relative_humidity = read_direct(
+                snapshot,
+                decoder,
+                "relative_humidity_2m",
+                time,
+                latitude,
+                longitude,
+            )?;
+            let dewpoint = dew_point(temperature, relative_humidity);
+            return Ok(vapor_pressure_deficit(temperature, dewpoint));
+        }
+        "et0_fao_evapotranspiration" => {
+            let temperature = read_direct(
+                snapshot,
+                decoder,
+                "temperature_2m",
+                time,
+                latitude,
+                longitude,
+            )?;
+            let relative_humidity = read_direct(
+                snapshot,
+                decoder,
+                "relative_humidity_2m",
+                time,
+                latitude,
+                longitude,
+            )?;
+            let shortwave_radiation = read_direct(
+                snapshot,
+                decoder,
+                "shortwave_radiation",
+                time,
+                latitude,
+                longitude,
+            )?;
+            let wind_speed = read_variable_value(
+                snapshot,
+                decoder,
+                "wind_speed_10m",
+                time,
+                latitude,
+                longitude,
+            )?;
+            let sampling = gfs013_sampling(snapshot, decoder, latitude, longitude)?;
+            let extraterrestrial = extra_terrestrial_radiation_backwards(
+                time,
+                3600,
+                sampling.latitude as f32,
+                sampling.longitude as f32,
+            );
+            return Ok(et0_evapotranspiration(
+                temperature,
+                wind_speed,
+                dew_point(temperature, relative_humidity),
+                shortwave_radiation,
+                sampling.target_elevation,
+                extraterrestrial,
+                3600,
+            ));
+        }
+        "snowfall" => {
+            return Ok(read_direct(
+                snapshot,
+                decoder,
+                "snowfall_water_equivalent",
+                time,
+                latitude,
+                longitude,
+            )? * 0.7);
+        }
+        "rain" => {
+            let swe = read_direct(
+                snapshot,
+                decoder,
+                "snowfall_water_equivalent",
+                time,
+                latitude,
+                longitude,
+            )?;
+            let precipitation = read_direct(
+                snapshot,
+                decoder,
+                "precipitation",
+                time,
+                latitude,
+                longitude,
+            )?;
+            let showers = read_direct(snapshot, decoder, "showers", time, latitude, longitude)?;
+            if !precipitation.is_finite() || !swe.is_finite() || !showers.is_finite() {
+                return Ok(f32::NAN);
+            }
+            return Ok((precipitation - swe - showers).max(0.0));
+        }
+        "wind_speed_10m" | "windspeed_10m" => {
+            let u = read_direct(
+                snapshot,
+                decoder,
+                "wind_u_component_10m",
+                time,
+                latitude,
+                longitude,
+            )?;
+            let v = read_direct(
+                snapshot,
+                decoder,
+                "wind_v_component_10m",
+                time,
+                latitude,
+                longitude,
+            )?;
+            return Ok((u * u + v * v).sqrt());
+        }
+        "wind_direction_10m" | "winddirection_10m" => {
+            let u = read_direct(
+                snapshot,
+                decoder,
+                "wind_u_component_10m",
+                time,
+                latitude,
+                longitude,
+            )?;
+            let v = read_direct(
+                snapshot,
+                decoder,
+                "wind_v_component_10m",
+                time,
+                latitude,
+                longitude,
+            )?;
+            return Ok(wind_direction(u, v));
+        }
+        "wind_speed_80m" | "windspeed_80m" => {
+            let u = read_direct(
+                snapshot,
+                decoder,
+                "wind_u_component_80m",
+                time,
+                latitude,
+                longitude,
+            )?;
+            let v = read_direct(
+                snapshot,
+                decoder,
+                "wind_v_component_80m",
+                time,
+                latitude,
+                longitude,
+            )?;
+            return Ok((u * u + v * v).sqrt());
+        }
+        "wind_direction_80m" | "winddirection_80m" => {
+            let u = read_direct(
+                snapshot,
+                decoder,
+                "wind_u_component_80m",
+                time,
+                latitude,
+                longitude,
+            )?;
+            let v = read_direct(
+                snapshot,
+                decoder,
+                "wind_v_component_80m",
+                time,
+                latitude,
+                longitude,
+            )?;
+            return Ok(wind_direction(u, v));
+        }
+        "wind_speed_100m" | "windspeed_100m" => {
+            let u = read_direct(
+                snapshot,
+                decoder,
+                "wind_u_component_100m",
+                time,
+                latitude,
+                longitude,
+            )?;
+            let v = read_direct(
+                snapshot,
+                decoder,
+                "wind_v_component_100m",
+                time,
+                latitude,
+                longitude,
+            )?;
+            return Ok((u * u + v * v).sqrt());
+        }
+        "wind_direction_100m"
+        | "winddirection_100m"
+        | "wind_direction_120m"
+        | "winddirection_120m" => {
+            let u = read_direct(
+                snapshot,
+                decoder,
+                "wind_u_component_100m",
+                time,
+                latitude,
+                longitude,
+            )?;
+            let v = read_direct(
+                snapshot,
+                decoder,
+                "wind_v_component_100m",
+                time,
+                latitude,
+                longitude,
+            )?;
+            return Ok(wind_direction(u, v));
+        }
+        "wind_speed_120m" | "windspeed_120m" => {
+            let u = read_direct(
+                snapshot,
+                decoder,
+                "wind_u_component_100m",
+                time,
+                latitude,
+                longitude,
+            )?;
+            let v = read_direct(
+                snapshot,
+                decoder,
+                "wind_v_component_100m",
+                time,
+                latitude,
+                longitude,
+            )?;
+            return Ok((u * u + v * v).sqrt() * wind_scale_factor(100.0, 120.0));
+        }
+        "temperature_120m" => {
+            return read_direct(
+                snapshot,
+                decoder,
+                "temperature_100m",
+                time,
+                latitude,
+                longitude,
+            )
+        }
+        "direct_radiation" => {
+            let shortwave = read_direct(
+                snapshot,
+                decoder,
+                "shortwave_radiation",
+                time,
+                latitude,
+                longitude,
+            )?;
+            let diffuse = read_direct(
+                snapshot,
+                decoder,
+                "diffuse_radiation",
+                time,
+                latitude,
+                longitude,
+            )?;
+            return Ok(shortwave - diffuse);
+        }
+        "shortwave_radiation_instant"
+        | "diffuse_radiation_instant"
+        | "direct_radiation_instant"
+        | "global_tilted_irradiance_instant" => {
+            let raw = match variable {
+                "shortwave_radiation_instant" | "global_tilted_irradiance_instant" => read_direct(
+                    snapshot,
+                    decoder,
+                    "shortwave_radiation",
+                    time,
+                    latitude,
+                    longitude,
+                )?,
+                "diffuse_radiation_instant" => read_direct(
+                    snapshot,
+                    decoder,
+                    "diffuse_radiation",
+                    time,
+                    latitude,
+                    longitude,
+                )?,
+                _ => read_variable_value(
+                    snapshot,
+                    decoder,
+                    "direct_radiation",
+                    time,
+                    latitude,
+                    longitude,
+                )?,
+            };
+            let sampling = gfs013_sampling(snapshot, decoder, latitude, longitude)?;
+            return Ok(raw
+                * backwards_to_instant_factor(
+                    time,
+                    3600,
+                    sampling.latitude as f32,
+                    sampling.longitude as f32,
+                ));
+        }
+        "direct_normal_irradiance" | "direct_normal_irradiance_instant" => {
+            let direct = read_variable_value(
+                snapshot,
+                decoder,
+                "direct_radiation",
+                time,
+                latitude,
+                longitude,
+            )?;
+            let sampling = gfs013_sampling(snapshot, decoder, latitude, longitude)?;
+            return Ok(backwards_direct_normal_irradiance(
+                direct,
+                time,
+                3600,
+                sampling.latitude as f32,
+                sampling.longitude as f32,
+                variable.ends_with("_instant"),
+            ));
+        }
+        "global_tilted_irradiance" => {
+            return read_direct(
+                snapshot,
+                decoder,
+                "shortwave_radiation",
+                time,
+                latitude,
+                longitude,
+            )
+        }
+        "sunshine_duration" => {
+            let direct = read_variable_value(
+                snapshot,
+                decoder,
+                "direct_radiation",
+                time,
+                latitude,
+                longitude,
+            )?;
+            let sampling = gfs013_sampling(snapshot, decoder, latitude, longitude)?;
+            return Ok(backwards_sunshine_duration(
+                direct,
+                time,
+                3600,
+                sampling.latitude as f32,
+                sampling.longitude as f32,
+            ));
+        }
+        "is_day" => {
+            let sampling = gfs013_sampling(snapshot, decoder, latitude, longitude)?;
+            return Ok(is_day(
+                time,
+                sampling.latitude as f32,
+                sampling.longitude as f32,
+            ));
+        }
+        "cloudcover" => {
+            return read_direct(snapshot, decoder, "cloud_cover", time, latitude, longitude)
+        }
+        "cloudcover_low" => {
+            return read_direct(
+                snapshot,
+                decoder,
+                "cloud_cover_low",
+                time,
+                latitude,
+                longitude,
+            )
+        }
+        "cloudcover_mid" => {
+            return read_direct(
+                snapshot,
+                decoder,
+                "cloud_cover_mid",
+                time,
+                latitude,
+                longitude,
+            )
+        }
+        "cloudcover_high" => {
+            return read_direct(
+                snapshot,
+                decoder,
+                "cloud_cover_high",
+                time,
+                latitude,
+                longitude,
+            )
+        }
+        "relativehumidity_2m" => {
+            return read_direct(
+                snapshot,
+                decoder,
+                "relative_humidity_2m",
+                time,
+                latitude,
+                longitude,
+            )
+        }
+        "precip_phase" => {
+            let code = read_weather_code(snapshot, decoder, time, latitude, longitude)?;
+            return Ok(precip_phase(code));
+        }
+        "thunderstorm_code" => {
+            let code = read_weather_code(snapshot, decoder, time, latitude, longitude)?;
+            return Ok(if [95.0, 96.0, 99.0].contains(&code) {
+                code
+            } else {
+                0.0
+            });
+        }
+        _ => {}
+    }
+    read_direct(snapshot, decoder, variable, time, latitude, longitude)
+}
+
+fn read_derived_pressure(
+    snapshot: &OmDataSnapshot,
+    decoder: Option<&OfficialDecoder>,
+    variable: &str,
+    time: DateTime<Utc>,
+    latitude: f64,
+    longitude: f64,
+) -> Result<Option<f32>> {
+    let Some((name, level_text)) = variable.rsplit_once('_') else {
+        return Ok(None);
+    };
+    if level_text
+        .strip_suffix("hPa")
+        .and_then(|value| value.parse::<u16>().ok())
+        .is_none()
+    {
+        return Ok(None);
+    }
+    let raw = |prefix: &str| format!("{prefix}_{level_text}");
+    let value = match name {
+        "wind_speed" | "windspeed" => {
+            let u = read_direct(
+                snapshot,
+                decoder,
+                &raw("wind_u_component"),
+                time,
+                latitude,
+                longitude,
+            )?;
+            let v = read_direct(
+                snapshot,
+                decoder,
+                &raw("wind_v_component"),
+                time,
+                latitude,
+                longitude,
+            )?;
+            Some((u * u + v * v).sqrt())
+        }
+        "wind_direction" | "winddirection" => {
+            let u = read_direct(
+                snapshot,
+                decoder,
+                &raw("wind_u_component"),
+                time,
+                latitude,
+                longitude,
+            )?;
+            let v = read_direct(
+                snapshot,
+                decoder,
+                &raw("wind_v_component"),
+                time,
+                latitude,
+                longitude,
+            )?;
+            Some(wind_direction(u, v))
+        }
+        "dew_point" | "dewpoint" => {
+            let temperature = read_direct(
+                snapshot,
+                decoder,
+                &raw("temperature"),
+                time,
+                latitude,
+                longitude,
+            )?;
+            let relative_humidity = read_direct(
+                snapshot,
+                decoder,
+                &raw("relative_humidity"),
+                time,
+                latitude,
+                longitude,
+            )?;
+            Some(dew_point(temperature, relative_humidity))
+        }
+        "cloudcover" => Some(read_direct(
+            snapshot,
+            decoder,
+            &raw("cloud_cover"),
+            time,
+            latitude,
+            longitude,
+        )?),
+        "relativehumidity" => Some(read_direct(
+            snapshot,
+            decoder,
+            &raw("relative_humidity"),
+            time,
+            latitude,
+            longitude,
+        )?),
+        _ => None,
+    };
+    Ok(value)
+}
+
+/// Read a regional grid directly from the local OM bundles.
+///
+/// The returned values are row-major in the supplied latitude/longitude order.
+/// Each underlying variable is decoded as one bounding rectangle and then
+/// sampled with the same nearest-grid-cell rule as the point API.
+pub fn read_variable_grid(
+    snapshot: &OmDataSnapshot,
+    decoder: &OfficialDecoder,
+    variable: &str,
+    time: DateTime<Utc>,
+    latitudes: &[f64],
+    longitudes: &[f64],
+) -> Result<Vec<f32>> {
+    if latitudes.is_empty() || longitudes.is_empty() {
+        bail!("regional grid dimensions must not be empty");
+    }
+    let combine2 = |left: Vec<f32>, right: Vec<f32>, op: fn(f32, f32) -> f32| {
+        left.into_iter().zip(right).map(|(a, b)| op(a, b)).collect()
+    };
+    match variable {
+        "dew_point_2m" | "dewpoint_2m" => {
+            let temperature = read_direct_grid(
+                snapshot,
+                decoder,
+                "temperature_2m",
+                time,
+                latitudes,
+                longitudes,
+                true,
+            )?;
+            let humidity = read_direct_grid(
+                snapshot,
+                decoder,
+                "relative_humidity_2m",
+                time,
+                latitudes,
+                longitudes,
+                true,
+            )?;
+            Ok(combine2(temperature, humidity, dew_point))
+        }
+        "surface_pressure" => {
+            let temperature = read_direct_grid(
+                snapshot,
+                decoder,
+                "temperature_2m",
+                time,
+                latitudes,
+                longitudes,
+                true,
+            )?;
+            let pressure = read_direct_grid(
+                snapshot,
+                decoder,
+                "pressure_msl",
+                time,
+                latitudes,
+                longitudes,
+                true,
+            )?;
+            let elevation =
+                read_gfs_surface_elevation_grid(snapshot, decoder, latitudes, longitudes)?;
+            Ok(temperature
+                .into_iter()
+                .zip(pressure)
+                .zip(elevation)
+                .map(|((temperature, pressure), elevation)| {
+                    surface_pressure(temperature, pressure, elevation)
+                })
+                .collect())
+        }
+        "weather_code" | "weathercode" | "precip_phase" | "thunderstorm_code" => {
+            read_weather_code_grid(snapshot, decoder, time, latitudes, longitudes)
+        }
+        "snowfall" => Ok(read_direct_grid(
+            snapshot,
+            decoder,
+            "snowfall_water_equivalent",
+            time,
+            latitudes,
+            longitudes,
+            true,
+        )?
+        .into_iter()
+        .map(|value| value * 0.7)
+        .collect()),
+        "cloudcover" => read_direct_grid(
+            snapshot,
+            decoder,
+            "cloud_cover",
+            time,
+            latitudes,
+            longitudes,
+            true,
+        ),
+        "cloudcover_low" => read_direct_grid(
+            snapshot,
+            decoder,
+            "cloud_cover_low",
+            time,
+            latitudes,
+            longitudes,
+            true,
+        ),
+        "cloudcover_mid" => read_direct_grid(
+            snapshot,
+            decoder,
+            "cloud_cover_mid",
+            time,
+            latitudes,
+            longitudes,
+            true,
+        ),
+        "cloudcover_high" => read_direct_grid(
+            snapshot,
+            decoder,
+            "cloud_cover_high",
+            time,
+            latitudes,
+            longitudes,
+            true,
+        ),
+        "relativehumidity_2m" => read_direct_grid(
+            snapshot,
+            decoder,
+            "relative_humidity_2m",
+            time,
+            latitudes,
+            longitudes,
+            true,
+        ),
+        _ => read_direct_grid(
+            snapshot, decoder, variable, time, latitudes, longitudes, true,
+        ),
+    }
+}
+
+/// Read several regional output hours while allowing native 3D OM files to be
+/// decoded as one time slab. Open-Meteo stores the complete run time axis in a
+/// single chunk, so decoding one hour at a time repeatedly inflates the same
+/// chunk and is prohibitively slow for WebP production.
+pub fn read_variable_grid_series(
+    snapshot: &OmDataSnapshot,
+    decoder: &OfficialDecoder,
+    variable: &str,
+    times: &[DateTime<Utc>],
+    latitudes: &[f64],
+    longitudes: &[f64],
+) -> Result<Vec<Vec<f32>>> {
+    if times.is_empty() || latitudes.is_empty() || longitudes.is_empty() {
+        bail!("regional grid series dimensions must not be empty");
+    }
+    let combine2 = |left: Vec<Vec<f32>>, right: Vec<Vec<f32>>, op: fn(f32, f32) -> f32| {
+        left.into_iter()
+            .zip(right)
+            .map(|(left, right)| left.into_iter().zip(right).map(|(a, b)| op(a, b)).collect())
+            .collect()
+    };
+    if let Some((name, level_text)) = variable.rsplit_once('_') {
+        if level_text
+            .strip_suffix("hPa")
+            .and_then(|value| value.parse::<u16>().ok())
+            .is_some()
+        {
+            let raw = |prefix: &str| format!("{prefix}_{level_text}");
+            match name {
+                "wind_speed" | "windspeed" => {
+                    return Ok(combine2(
+                        read_direct_grid_series(
+                            snapshot,
+                            decoder,
+                            &raw("wind_u_component"),
+                            times,
+                            latitudes,
+                            longitudes,
+                            true,
+                        )?,
+                        read_direct_grid_series(
+                            snapshot,
+                            decoder,
+                            &raw("wind_v_component"),
+                            times,
+                            latitudes,
+                            longitudes,
+                            true,
+                        )?,
+                        |u, v| (u * u + v * v).sqrt(),
+                    ));
+                }
+                "wind_direction" | "winddirection" => {
+                    return Ok(combine2(
+                        read_direct_grid_series(
+                            snapshot,
+                            decoder,
+                            &raw("wind_u_component"),
+                            times,
+                            latitudes,
+                            longitudes,
+                            true,
+                        )?,
+                        read_direct_grid_series(
+                            snapshot,
+                            decoder,
+                            &raw("wind_v_component"),
+                            times,
+                            latitudes,
+                            longitudes,
+                            true,
+                        )?,
+                        wind_direction,
+                    ));
+                }
+                "dew_point" | "dewpoint" => {
+                    return Ok(combine2(
+                        read_direct_grid_series(
+                            snapshot,
+                            decoder,
+                            &raw("temperature"),
+                            times,
+                            latitudes,
+                            longitudes,
+                            true,
+                        )?,
+                        read_direct_grid_series(
+                            snapshot,
+                            decoder,
+                            &raw("relative_humidity"),
+                            times,
+                            latitudes,
+                            longitudes,
+                            true,
+                        )?,
+                        dew_point,
+                    ));
+                }
+                "cloudcover" => {
+                    return read_direct_grid_series(
+                        snapshot,
+                        decoder,
+                        &raw("cloud_cover"),
+                        times,
+                        latitudes,
+                        longitudes,
+                        true,
+                    );
+                }
+                "relativehumidity" => {
+                    return read_direct_grid_series(
+                        snapshot,
+                        decoder,
+                        &raw("relative_humidity"),
+                        times,
+                        latitudes,
+                        longitudes,
+                        true,
+                    );
+                }
+                _ => {}
+            }
+        }
+    }
+    match variable {
+        "dew_point_2m" | "dewpoint_2m" => Ok(combine2(
+            read_direct_grid_series(
+                snapshot,
+                decoder,
+                "temperature_2m",
+                times,
+                latitudes,
+                longitudes,
+                true,
+            )?,
+            read_direct_grid_series(
+                snapshot,
+                decoder,
+                "relative_humidity_2m",
+                times,
+                latitudes,
+                longitudes,
+                true,
+            )?,
+            dew_point,
+        )),
+        "surface_pressure" => {
+            let temperature = read_direct_grid_series(
+                snapshot,
+                decoder,
+                "temperature_2m",
+                times,
+                latitudes,
+                longitudes,
+                true,
+            )?;
+            let pressure = read_direct_grid_series(
+                snapshot,
+                decoder,
+                "pressure_msl",
+                times,
+                latitudes,
+                longitudes,
+                true,
+            )?;
+            let elevation = if let Some(sampling) = current_product_sampling("gfs013_surface") {
+                vec![surface_pressure_elevation(sampling); latitudes.len() * longitudes.len()]
+            } else {
+                read_gfs_surface_elevation_grid(snapshot, decoder, latitudes, longitudes)?
+            };
+            Ok(temperature
+                .into_iter()
+                .zip(pressure)
+                .map(|(temperature, pressure)| {
+                    temperature
+                        .into_iter()
+                        .zip(pressure)
+                        .zip(elevation.iter().copied())
+                        .map(|((temperature, pressure), elevation)| {
+                            surface_pressure(temperature, pressure, elevation)
+                        })
+                        .collect()
+                })
+                .collect())
+        }
+        "weather_code" | "weathercode" | "precip_phase" | "thunderstorm_code" => {
+            read_weather_code_grid_series(snapshot, decoder, times, latitudes, longitudes)
+        }
+        "apparent_temperature" => {
+            let temperature = read_direct_grid_series(
+                snapshot,
+                decoder,
+                "temperature_2m",
+                times,
+                latitudes,
+                longitudes,
+                true,
+            )?;
+            let humidity = read_direct_grid_series(
+                snapshot,
+                decoder,
+                "relative_humidity_2m",
+                times,
+                latitudes,
+                longitudes,
+                true,
+            )?;
+            let u = read_direct_grid_series(
+                snapshot,
+                decoder,
+                "wind_u_component_10m",
+                times,
+                latitudes,
+                longitudes,
+                true,
+            )?;
+            let v = read_direct_grid_series(
+                snapshot,
+                decoder,
+                "wind_v_component_10m",
+                times,
+                latitudes,
+                longitudes,
+                true,
+            )?;
+            let radiation = read_direct_grid_series(
+                snapshot,
+                decoder,
+                "shortwave_radiation",
+                times,
+                latitudes,
+                longitudes,
+                true,
+            )?;
+            Ok(temperature
+                .into_iter()
+                .zip(humidity)
+                .zip(u)
+                .zip(v)
+                .zip(radiation)
+                .map(|((((temperature, humidity), u), v), radiation)| {
+                    temperature
+                        .into_iter()
+                        .zip(humidity)
+                        .zip(u)
+                        .zip(v)
+                        .zip(radiation)
+                        .map(|((((temperature, humidity), u), v), radiation)| {
+                            apparent_temperature(
+                                temperature,
+                                humidity,
+                                (u * u + v * v).sqrt(),
+                                Some(radiation),
+                            )
+                        })
+                        .collect()
+                })
+                .collect())
+        }
+        "rain" => {
+            let precipitation = read_direct_grid_series(
+                snapshot,
+                decoder,
+                "precipitation",
+                times,
+                latitudes,
+                longitudes,
+                true,
+            )?;
+            let snowfall = read_direct_grid_series(
+                snapshot,
+                decoder,
+                "snowfall_water_equivalent",
+                times,
+                latitudes,
+                longitudes,
+                true,
+            )?;
+            let showers = read_direct_grid_series(
+                snapshot, decoder, "showers", times, latitudes, longitudes, true,
+            )?;
+            Ok(precipitation
+                .into_iter()
+                .zip(snowfall)
+                .zip(showers)
+                .map(|((precipitation, snowfall), showers)| {
+                    precipitation
+                        .into_iter()
+                        .zip(snowfall)
+                        .zip(showers)
+                        .map(|((precipitation, snowfall), showers)| {
+                            if precipitation.is_finite()
+                                && snowfall.is_finite()
+                                && showers.is_finite()
+                            {
+                                (precipitation - snowfall - showers).max(0.0)
+                            } else {
+                                f32::NAN
+                            }
+                        })
+                        .collect()
+                })
+                .collect())
+        }
+        "wind_speed_10m" | "windspeed_10m" => Ok(combine2(
+            read_direct_grid_series(
+                snapshot,
+                decoder,
+                "wind_u_component_10m",
+                times,
+                latitudes,
+                longitudes,
+                true,
+            )?,
+            read_direct_grid_series(
+                snapshot,
+                decoder,
+                "wind_v_component_10m",
+                times,
+                latitudes,
+                longitudes,
+                true,
+            )?,
+            |u, v| (u * u + v * v).sqrt(),
+        )),
+        "wind_direction_10m" | "winddirection_10m" => Ok(combine2(
+            read_direct_grid_series(
+                snapshot,
+                decoder,
+                "wind_u_component_10m",
+                times,
+                latitudes,
+                longitudes,
+                true,
+            )?,
+            read_direct_grid_series(
+                snapshot,
+                decoder,
+                "wind_v_component_10m",
+                times,
+                latitudes,
+                longitudes,
+                true,
+            )?,
+            wind_direction,
+        )),
+        "snowfall" => Ok(read_direct_grid_series(
+            snapshot,
+            decoder,
+            "snowfall_water_equivalent",
+            times,
+            latitudes,
+            longitudes,
+            true,
+        )?
+        .into_iter()
+        .map(|values| values.into_iter().map(|value| value * 0.7).collect())
+        .collect()),
+        "cloudcover" => read_direct_grid_series(
+            snapshot,
+            decoder,
+            "cloud_cover",
+            times,
+            latitudes,
+            longitudes,
+            true,
+        ),
+        "cloudcover_low" => read_direct_grid_series(
+            snapshot,
+            decoder,
+            "cloud_cover_low",
+            times,
+            latitudes,
+            longitudes,
+            true,
+        ),
+        "cloudcover_mid" => read_direct_grid_series(
+            snapshot,
+            decoder,
+            "cloud_cover_mid",
+            times,
+            latitudes,
+            longitudes,
+            true,
+        ),
+        "cloudcover_high" => read_direct_grid_series(
+            snapshot,
+            decoder,
+            "cloud_cover_high",
+            times,
+            latitudes,
+            longitudes,
+            true,
+        ),
+        "relativehumidity_2m" => read_direct_grid_series(
+            snapshot,
+            decoder,
+            "relative_humidity_2m",
+            times,
+            latitudes,
+            longitudes,
+            true,
+        ),
+        _ => read_direct_grid_series(
+            snapshot, decoder, variable, times, latitudes, longitudes, true,
+        ),
+    }
+}
+
+fn read_variable_point_series(
+    snapshot: &OmDataSnapshot,
+    decoder: &OfficialDecoder,
+    variable: &str,
+    times: &[DateTime<Utc>],
+    latitude: f64,
+    longitude: f64,
+) -> Result<Option<Vec<f32>>> {
+    let seed = seed_variable_for_times(variable);
+    let (product, _) = product_for_variable(snapshot, &seed)?;
+    if !is_gfs_product(product) {
+        return Ok(None);
+    }
+    let latest_full_start = snapshot
+        .product_snapshots(product)
+        .into_iter()
+        .find(|candidate| gfs_snapshot_is_full(candidate))
+        .and_then(|candidate| {
+            candidate
+                .entries
+                .values()
+                .next()
+                .map(|entry| entry.valid_time_utc - Duration::hours(entry.forecast_hour))
+        })
+        .ok_or_else(|| anyhow!("GFS complete run is not available for {product}"))?;
+    let split = times.partition_point(|time| *time < latest_full_start);
+    let mut values = Vec::with_capacity(times.len());
+    // Hours before the latest complete run may be supplied by any of the
+    // retained short snapshots. Keep the established newest-covering-run
+    // selection for that small prefix instead of forcing an older full run.
+    for time in &times[..split] {
+        match read_variable_value(
+            snapshot,
+            Some(decoder),
+            variable,
+            *time,
+            latitude,
+            longitude,
+        ) {
+            Ok(value) => values.push(value),
+            Err(error) if error.to_string().contains("variable/time is not available") => {
+                values.push(f32::NAN)
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    if split < times.len() {
+        values.extend(
+            read_variable_grid_series(
+                snapshot,
+                decoder,
+                variable,
+                &times[split..],
+                &[latitude],
+                &[longitude],
+            )?
+            .into_iter()
+            .map(|mut values| {
+                if values.len() != 1 {
+                    bail!(
+                        "point time-slab decode returned {} grid values",
+                        values.len()
+                    );
+                }
+                Ok(values.remove(0))
+            })
+            .collect::<Result<Vec<_>>>()?,
+        );
+    }
+    Ok(Some(values))
+}
+
+fn read_derived_air_quality(
+    snapshot: &OmDataSnapshot,
+    decoder: Option<&OfficialDecoder>,
+    variable: &str,
+    time: DateTime<Utc>,
+    latitude: f64,
+    longitude: f64,
+) -> Result<Option<f32>> {
+    let value = match variable {
+        "european_aqi" => finite_max(&[
+            european_aqi_pm2_5(snapshot, decoder, time, latitude, longitude)?,
+            european_aqi_pm10(snapshot, decoder, time, latitude, longitude)?,
+            european_aqi_no2(snapshot, decoder, time, latitude, longitude)?,
+            european_aqi_o3(snapshot, decoder, time, latitude, longitude)?,
+            european_aqi_so2(snapshot, decoder, time, latitude, longitude)?,
+        ]),
+        "european_aqi_pm2_5" => european_aqi_pm2_5(snapshot, decoder, time, latitude, longitude)?,
+        "european_aqi_pm10" => european_aqi_pm10(snapshot, decoder, time, latitude, longitude)?,
+        "european_aqi_no2" | "european_aqi_nitrogen_dioxide" => {
+            european_aqi_no2(snapshot, decoder, time, latitude, longitude)?
+        }
+        "european_aqi_o3" | "european_aqi_ozone" => {
+            european_aqi_o3(snapshot, decoder, time, latitude, longitude)?
+        }
+        "european_aqi_so2" | "european_aqi_sulphur_dioxide" => {
+            european_aqi_so2(snapshot, decoder, time, latitude, longitude)?
+        }
+        "us_aqi" => finite_max(&[
+            us_aqi_pm2_5(snapshot, decoder, time, latitude, longitude)?,
+            us_aqi_pm10(snapshot, decoder, time, latitude, longitude)?,
+            us_aqi_no2(snapshot, decoder, time, latitude, longitude)?,
+            us_aqi_o3(snapshot, decoder, time, latitude, longitude)?,
+            us_aqi_so2(snapshot, decoder, time, latitude, longitude)?,
+            us_aqi_co(snapshot, decoder, time, latitude, longitude)?,
+        ]),
+        "us_aqi_pm2_5" => us_aqi_pm2_5(snapshot, decoder, time, latitude, longitude)?,
+        "us_aqi_pm10" => us_aqi_pm10(snapshot, decoder, time, latitude, longitude)?,
+        "us_aqi_no2" | "us_aqi_nitrogen_dioxide" => {
+            us_aqi_no2(snapshot, decoder, time, latitude, longitude)?
+        }
+        "us_aqi_o3" | "us_aqi_ozone" => us_aqi_o3(snapshot, decoder, time, latitude, longitude)?,
+        "us_aqi_so2" | "us_aqi_sulphur_dioxide" => {
+            us_aqi_so2(snapshot, decoder, time, latitude, longitude)?
+        }
+        "us_aqi_co" | "us_aqi_carbon_monoxide" => {
+            us_aqi_co(snapshot, decoder, time, latitude, longitude)?
+        }
+        "chinese_aqi" => finite_max(&[
+            chinese_aqi_pm2_5(snapshot, decoder, time, latitude, longitude)?,
+            chinese_aqi_pm10(snapshot, decoder, time, latitude, longitude)?,
+            chinese_aqi_no2(snapshot, decoder, time, latitude, longitude)?,
+            chinese_aqi_o3(snapshot, decoder, time, latitude, longitude)?,
+            chinese_aqi_so2(snapshot, decoder, time, latitude, longitude)?,
+            chinese_aqi_co(snapshot, decoder, time, latitude, longitude)?,
+        ]),
+        "chinese_aqi_pm2_5" => chinese_aqi_pm2_5(snapshot, decoder, time, latitude, longitude)?,
+        "chinese_aqi_pm10" => chinese_aqi_pm10(snapshot, decoder, time, latitude, longitude)?,
+        "chinese_aqi_no2" | "chinese_aqi_nitrogen_dioxide" => {
+            chinese_aqi_no2(snapshot, decoder, time, latitude, longitude)?
+        }
+        "chinese_aqi_o3" | "chinese_aqi_ozone" => {
+            chinese_aqi_o3(snapshot, decoder, time, latitude, longitude)?
+        }
+        "chinese_aqi_so2" | "chinese_aqi_sulphur_dioxide" => {
+            chinese_aqi_so2(snapshot, decoder, time, latitude, longitude)?
+        }
+        "chinese_aqi_co" | "chinese_aqi_carbon_monoxide" => {
+            chinese_aqi_co(snapshot, decoder, time, latitude, longitude)?
+        }
+        _ => return Ok(None),
+    };
+    Ok(Some(value))
+}
+
+fn european_aqi_pm2_5(
+    snapshot: &OmDataSnapshot,
+    decoder: Option<&OfficialDecoder>,
+    time: DateTime<Utc>,
+    latitude: f64,
+    longitude: f64,
+) -> Result<f32> {
+    let mean = rolling_mean_before(snapshot, decoder, "pm2_5", time, latitude, longitude, 24)?;
+    Ok(position_extrapolated(&[0.0, 10.0, 20.0, 25.0, 50.0, 75.0], mean) * 20.0)
+}
+
+fn european_aqi_pm10(
+    snapshot: &OmDataSnapshot,
+    decoder: Option<&OfficialDecoder>,
+    time: DateTime<Utc>,
+    latitude: f64,
+    longitude: f64,
+) -> Result<f32> {
+    let mean = rolling_mean_before(snapshot, decoder, "pm10", time, latitude, longitude, 24)?;
+    Ok(position_extrapolated(&[0.0, 20.0, 40.0, 50.0, 100.0, 150.0], mean) * 20.0)
+}
+
+fn european_aqi_no2(
+    snapshot: &OmDataSnapshot,
+    decoder: Option<&OfficialDecoder>,
+    time: DateTime<Utc>,
+    latitude: f64,
+    longitude: f64,
+) -> Result<f32> {
+    let no2 = read_direct(
+        snapshot,
+        decoder,
+        "nitrogen_dioxide",
+        time,
+        latitude,
+        longitude,
+    )?;
+    Ok(position_extrapolated(&[0.0, 40.0, 90.0, 120.0, 230.0, 340.0], no2) * 20.0)
+}
+
+fn european_aqi_o3(
+    snapshot: &OmDataSnapshot,
+    decoder: Option<&OfficialDecoder>,
+    time: DateTime<Utc>,
+    latitude: f64,
+    longitude: f64,
+) -> Result<f32> {
+    let o3 = read_direct(snapshot, decoder, "ozone", time, latitude, longitude)?;
+    Ok(position_extrapolated(&[0.0, 50.0, 100.0, 130.0, 240.0, 380.0], o3) * 20.0)
+}
+
+fn european_aqi_so2(
+    snapshot: &OmDataSnapshot,
+    decoder: Option<&OfficialDecoder>,
+    time: DateTime<Utc>,
+    latitude: f64,
+    longitude: f64,
+) -> Result<f32> {
+    let so2 = read_direct(
+        snapshot,
+        decoder,
+        "sulphur_dioxide",
+        time,
+        latitude,
+        longitude,
+    )?;
+    Ok(position_extrapolated(&[0.0, 100.0, 200.0, 350.0, 500.0, 750.0], so2) * 20.0)
+}
+
+fn us_aqi_pm2_5(
+    snapshot: &OmDataSnapshot,
+    decoder: Option<&OfficialDecoder>,
+    time: DateTime<Utc>,
+    latitude: f64,
+    longitude: f64,
+) -> Result<f32> {
+    let mean = rolling_mean_before(snapshot, decoder, "pm2_5", time, latitude, longitude, 24)?;
+    Ok(us_aqi_scale(position_extrapolated(
+        &[0.0, 9.0, 35.5, 55.5, 125.5, 225.5, 325.5, 500.5],
+        mean,
+    )))
+}
+
+fn us_aqi_pm10(
+    snapshot: &OmDataSnapshot,
+    decoder: Option<&OfficialDecoder>,
+    time: DateTime<Utc>,
+    latitude: f64,
+    longitude: f64,
+) -> Result<f32> {
+    let mean = rolling_mean_before(snapshot, decoder, "pm10", time, latitude, longitude, 24)?;
+    Ok(us_aqi_scale(position_extrapolated(
+        &[0.0, 55.0, 155.0, 255.0, 355.0, 425.0, 505.0, 605.0],
+        mean,
+    )))
+}
+
+fn us_aqi_no2(
+    snapshot: &OmDataSnapshot,
+    decoder: Option<&OfficialDecoder>,
+    time: DateTime<Utc>,
+    latitude: f64,
+    longitude: f64,
+) -> Result<f32> {
+    let no2 = read_direct(
+        snapshot,
+        decoder,
+        "nitrogen_dioxide",
+        time,
+        latitude,
+        longitude,
+    )?;
+    Ok(us_aqi_scale(position_extrapolated(
+        &[0.0, 54.0, 100.0, 360.0, 650.0, 1250.0, 1650.0, 2050.0],
+        no2 / 1.88,
+    )))
+}
+
+fn us_aqi_o3(
+    snapshot: &OmDataSnapshot,
+    decoder: Option<&OfficialDecoder>,
+    time: DateTime<Utc>,
+    latitude: f64,
+    longitude: f64,
+) -> Result<f32> {
+    let o3 = read_direct(snapshot, decoder, "ozone", time, latitude, longitude)? / 1.96;
+    let o3_8h =
+        rolling_mean_before(snapshot, decoder, "ozone", time, latitude, longitude, 8)? / 1.96;
+    let hourly = position_extrapolated(
+        &[f32::NAN, f32::NAN, 125.0, 165.0, 205.0, 405.0, 505.0, 605.0],
+        o3,
+    );
+    let averaged = position_extrapolated(
+        &[0.0, 55.0, 70.0, 85.0, 105.0, 200.0, f32::NAN, f32::NAN],
+        o3_8h,
+    );
+    if hourly.is_nan() {
+        return Ok(us_aqi_scale(averaged));
+    }
+    if averaged.is_nan() {
+        return Ok(us_aqi_scale(hourly));
+    }
+    Ok(us_aqi_scale(hourly.max(averaged)))
+}
+
+fn us_aqi_so2(
+    snapshot: &OmDataSnapshot,
+    decoder: Option<&OfficialDecoder>,
+    time: DateTime<Utc>,
+    latitude: f64,
+    longitude: f64,
+) -> Result<f32> {
+    let so2 = read_direct(
+        snapshot,
+        decoder,
+        "sulphur_dioxide",
+        time,
+        latitude,
+        longitude,
+    )? / 2.62;
+    let so2_24h = rolling_mean_before(
+        snapshot,
+        decoder,
+        "sulphur_dioxide",
+        time,
+        latitude,
+        longitude,
+        24,
+    )? / 2.62;
+    let hourly = position_extrapolated(
+        &[0.0, 35.0, 75.0, 185.0, 305.0, f32::NAN, f32::NAN, f32::NAN],
+        so2,
+    );
+    let averaged = position_extrapolated(
+        &[
+            f32::NAN,
+            f32::NAN,
+            f32::NAN,
+            f32::NAN,
+            305.0,
+            605.0,
+            805.0,
+            1005.0,
+        ],
+        so2_24h,
+    );
+    Ok(if hourly.is_nan() {
+        us_aqi_scale(averaged)
+    } else {
+        us_aqi_scale(hourly)
+    })
+}
+
+fn us_aqi_co(
+    snapshot: &OmDataSnapshot,
+    decoder: Option<&OfficialDecoder>,
+    time: DateTime<Utc>,
+    latitude: f64,
+    longitude: f64,
+) -> Result<f32> {
+    let mean = rolling_mean_before(
+        snapshot,
+        decoder,
+        "carbon_monoxide",
+        time,
+        latitude,
+        longitude,
+        8,
+    )?;
+    Ok(us_aqi_scale(position_extrapolated(
+        &[0.0, 4.5, 9.5, 12.5, 15.5, 30.5, 40.5, 50.5],
+        mean / 1.15 / 1000.0,
+    )))
+}
+
+fn chinese_aqi_pm2_5(
+    snapshot: &OmDataSnapshot,
+    decoder: Option<&OfficialDecoder>,
+    time: DateTime<Utc>,
+    latitude: f64,
+    longitude: f64,
+) -> Result<f32> {
+    chinese_hourly_iaqi(
+        read_direct_unrounded(snapshot, decoder, "pm2_5", time, latitude, longitude)?,
+        &HJ633_PM2_5_DAILY,
+        &HJ633_AQI_BREAKPOINTS,
+        500.0,
+        0,
+    )
+}
+
+fn chinese_aqi_pm10(
+    snapshot: &OmDataSnapshot,
+    decoder: Option<&OfficialDecoder>,
+    time: DateTime<Utc>,
+    latitude: f64,
+    longitude: f64,
+) -> Result<f32> {
+    chinese_hourly_iaqi(
+        read_direct_unrounded(snapshot, decoder, "pm10", time, latitude, longitude)?,
+        &HJ633_PM10_DAILY,
+        &HJ633_AQI_BREAKPOINTS,
+        500.0,
+        0,
+    )
+}
+
+fn chinese_aqi_no2(
+    snapshot: &OmDataSnapshot,
+    decoder: Option<&OfficialDecoder>,
+    time: DateTime<Utc>,
+    latitude: f64,
+    longitude: f64,
+) -> Result<f32> {
+    chinese_hourly_iaqi(
+        read_direct_unrounded(
+            snapshot,
+            decoder,
+            "nitrogen_dioxide",
+            time,
+            latitude,
+            longitude,
+        )?,
+        &HJ633_NO2_HOURLY,
+        &HJ633_AQI_BREAKPOINTS,
+        500.0,
+        0,
+    )
+}
+
+fn chinese_aqi_o3(
+    snapshot: &OmDataSnapshot,
+    decoder: Option<&OfficialDecoder>,
+    time: DateTime<Utc>,
+    latitude: f64,
+    longitude: f64,
+) -> Result<f32> {
+    chinese_hourly_iaqi(
+        read_direct_unrounded(snapshot, decoder, "ozone", time, latitude, longitude)?,
+        &HJ633_O3_HOURLY,
+        &HJ633_AQI_BREAKPOINTS,
+        500.0,
+        0,
+    )
+}
+
+fn chinese_aqi_so2(
+    snapshot: &OmDataSnapshot,
+    decoder: Option<&OfficialDecoder>,
+    time: DateTime<Utc>,
+    latitude: f64,
+    longitude: f64,
+) -> Result<f32> {
+    chinese_hourly_iaqi(
+        read_direct_unrounded(
+            snapshot,
+            decoder,
+            "sulphur_dioxide",
+            time,
+            latitude,
+            longitude,
+        )?,
+        &HJ633_SO2_HOURLY,
+        &HJ633_AQI_BREAKPOINTS[..5],
+        200.0,
+        0,
+    )
+}
+
+fn chinese_aqi_co(
+    snapshot: &OmDataSnapshot,
+    decoder: Option<&OfficialDecoder>,
+    time: DateTime<Utc>,
+    latitude: f64,
+    longitude: f64,
+) -> Result<f32> {
+    chinese_hourly_iaqi(
+        read_direct_unrounded(
+            snapshot,
+            decoder,
+            "carbon_monoxide",
+            time,
+            latitude,
+            longitude,
+        )? / 1000.0,
+        &HJ633_CO_HOURLY,
+        &HJ633_AQI_BREAKPOINTS,
+        500.0,
+        1,
+    )
+}
+
+const HJ633_AQI_BREAKPOINTS: [f32; 8] = [0.0, 50.0, 100.0, 150.0, 200.0, 300.0, 400.0, 500.0];
+const HJ633_SO2_DAILY: [f32; 8] = [0.0, 50.0, 150.0, 475.0, 800.0, 1600.0, 2100.0, 2620.0];
+const HJ633_SO2_HOURLY: [f32; 5] = [0.0, 150.0, 500.0, 650.0, 800.0];
+const HJ633_NO2_DAILY: [f32; 8] = [0.0, 40.0, 80.0, 180.0, 280.0, 565.0, 750.0, 940.0];
+const HJ633_NO2_HOURLY: [f32; 8] = [0.0, 100.0, 200.0, 700.0, 1200.0, 2340.0, 3090.0, 3840.0];
+const HJ633_CO_DAILY: [f32; 8] = [0.0, 2.0, 4.0, 14.0, 24.0, 36.0, 48.0, 60.0];
+const HJ633_CO_HOURLY: [f32; 8] = [0.0, 5.0, 10.0, 35.0, 60.0, 90.0, 120.0, 150.0];
+const HJ633_O3_8H: [f32; 6] = [0.0, 100.0, 160.0, 215.0, 265.0, 800.0];
+const HJ633_O3_HOURLY: [f32; 8] = [0.0, 160.0, 200.0, 300.0, 400.0, 800.0, 1000.0, 1200.0];
+const HJ633_PM10_DAILY: [f32; 8] = [0.0, 50.0, 120.0, 250.0, 350.0, 420.0, 500.0, 600.0];
+const HJ633_PM2_5_DAILY: [f32; 8] = [0.0, 30.0, 60.0, 115.0, 150.0, 250.0, 350.0, 500.0];
+
+#[derive(Debug, Clone, Copy)]
+struct ChineseDailyAirQualityStats {
+    pm2_5_mean: f32,
+    pm10_mean: f32,
+    nitrogen_dioxide_mean: f32,
+    ozone_maximum_8h_mean: f32,
+    sulphur_dioxide_mean: f32,
+    carbon_monoxide_mean: f32,
+}
+
+fn daily_chinese_air_quality_stats(
+    snapshot: &OmDataSnapshot,
+    decoder: Option<&OfficialDecoder>,
+    date: NaiveDate,
+    latitude: f64,
+    longitude: f64,
+) -> Result<ChineseDailyAirQualityStats> {
+    let day_start = china_day_start_utc(date)?;
+    Ok(ChineseDailyAirQualityStats {
+        pm2_5_mean: daily_mean(snapshot, decoder, "pm2_5", day_start, latitude, longitude)?,
+        pm10_mean: daily_mean(snapshot, decoder, "pm10", day_start, latitude, longitude)?,
+        nitrogen_dioxide_mean: daily_mean(
+            snapshot,
+            decoder,
+            "nitrogen_dioxide",
+            day_start,
+            latitude,
+            longitude,
+        )?,
+        ozone_maximum_8h_mean: daily_maximum_8h_mean(
+            snapshot, decoder, day_start, latitude, longitude,
+        )?,
+        sulphur_dioxide_mean: daily_mean(
+            snapshot,
+            decoder,
+            "sulphur_dioxide",
+            day_start,
+            latitude,
+            longitude,
+        )?,
+        carbon_monoxide_mean: daily_mean(
+            snapshot,
+            decoder,
+            "carbon_monoxide",
+            day_start,
+            latitude,
+            longitude,
+        )?,
+    })
+}
+
+fn daily_chinese_air_quality_value(
+    stats: &ChineseDailyAirQualityStats,
+    variable: &str,
+) -> Result<f32> {
+    let pm2_5 = chinese_daily_iaqi(
+        stats.pm2_5_mean,
+        &HJ633_PM2_5_DAILY,
+        &HJ633_AQI_BREAKPOINTS,
+        500.0,
+        0,
+    );
+    let pm10 = chinese_daily_iaqi(
+        stats.pm10_mean,
+        &HJ633_PM10_DAILY,
+        &HJ633_AQI_BREAKPOINTS,
+        500.0,
+        0,
+    );
+    let no2 = chinese_daily_iaqi(
+        stats.nitrogen_dioxide_mean,
+        &HJ633_NO2_DAILY,
+        &HJ633_AQI_BREAKPOINTS,
+        500.0,
+        0,
+    );
+    let o3 = chinese_daily_iaqi(
+        stats.ozone_maximum_8h_mean,
+        &HJ633_O3_8H,
+        &HJ633_AQI_BREAKPOINTS[..6],
+        300.0,
+        0,
+    );
+    let so2 = chinese_daily_iaqi(
+        stats.sulphur_dioxide_mean,
+        &HJ633_SO2_DAILY,
+        &HJ633_AQI_BREAKPOINTS,
+        500.0,
+        0,
+    );
+    let co = chinese_daily_iaqi(
+        stats.carbon_monoxide_mean / 1000.0,
+        &HJ633_CO_DAILY,
+        &HJ633_AQI_BREAKPOINTS,
+        500.0,
+        1,
+    );
+    let all = [pm2_5, pm10, no2, o3, so2, co];
+    let value = match variable {
+        "chinese_aqi" => all_finite_max(&all),
+        "chinese_aqi_pm2_5" => pm2_5,
+        "chinese_aqi_pm10" => pm10,
+        "chinese_aqi_no2" | "chinese_aqi_nitrogen_dioxide" => no2,
+        "chinese_aqi_o3" | "chinese_aqi_ozone" => o3,
+        "chinese_aqi_so2" | "chinese_aqi_sulphur_dioxide" => so2,
+        "chinese_aqi_co" | "chinese_aqi_carbon_monoxide" => co,
+        "pm2_5_mean" => round_ties_to_even(stats.pm2_5_mean, 0),
+        "pm10_mean" => round_ties_to_even(stats.pm10_mean, 0),
+        "nitrogen_dioxide_mean" => round_ties_to_even(stats.nitrogen_dioxide_mean, 0),
+        "ozone_maximum_8h_mean" => round_ties_to_even(stats.ozone_maximum_8h_mean, 0),
+        "sulphur_dioxide_mean" => round_ties_to_even(stats.sulphur_dioxide_mean, 0),
+        "carbon_monoxide_mean" => round_ties_to_even(stats.carbon_monoxide_mean / 1000.0, 1),
+        _ => bail!("unsupported daily Chinese AQI variable: {variable}"),
+    };
+    Ok(value)
+}
+
+fn china_day_start_utc(date: NaiveDate) -> Result<DateTime<Utc>> {
+    let local_midnight = date
+        .and_hms_opt(0, 0, 0)
+        .context("invalid Chinese AQI day")?;
+    Ok(DateTime::from_naive_utc_and_offset(
+        local_midnight - Duration::hours(8),
+        Utc,
+    ))
+}
+
+fn daily_mean(
+    snapshot: &OmDataSnapshot,
+    decoder: Option<&OfficialDecoder>,
+    variable: &str,
+    day_start: DateTime<Utc>,
+    latitude: f64,
+    longitude: f64,
+) -> Result<f32> {
+    mean_including(
+        snapshot, decoder, variable, day_start, latitude, longitude, 24,
+    )
+}
+
+fn daily_maximum_8h_mean(
+    snapshot: &OmDataSnapshot,
+    decoder: Option<&OfficialDecoder>,
+    day_start: DateTime<Utc>,
+    latitude: f64,
+    longitude: f64,
+) -> Result<f32> {
+    let mut maximum = f32::NEG_INFINITY;
+    for hour in 8..=24 {
+        let value = trailing_mean_including(
+            snapshot,
+            decoder,
+            "ozone",
+            day_start + Duration::hours(hour),
+            latitude,
+            longitude,
+            8,
+        )?;
+        if !value.is_finite() {
+            return Ok(f32::NAN);
+        }
+        maximum = maximum.max(value);
+    }
+    Ok(maximum)
+}
+
+fn mean_including(
+    snapshot: &OmDataSnapshot,
+    decoder: Option<&OfficialDecoder>,
+    variable: &str,
+    start: DateTime<Utc>,
+    latitude: f64,
+    longitude: f64,
+    hours: i64,
+) -> Result<f32> {
+    let mut sum = 0.0;
+    for hour in 0..hours {
+        let value = read_direct_unrounded(
+            snapshot,
+            decoder,
+            variable,
+            start + Duration::hours(hour),
+            latitude,
+            longitude,
+        )?;
+        if !value.is_finite() {
+            return Ok(f32::NAN);
+        }
+        sum += value;
+    }
+    Ok(sum / hours as f32)
+}
+
+fn trailing_mean_including(
+    snapshot: &OmDataSnapshot,
+    decoder: Option<&OfficialDecoder>,
+    variable: &str,
+    end: DateTime<Utc>,
+    latitude: f64,
+    longitude: f64,
+    hours: i64,
+) -> Result<f32> {
+    mean_including(
+        snapshot,
+        decoder,
+        variable,
+        end - Duration::hours(hours - 1),
+        latitude,
+        longitude,
+        hours,
+    )
+}
+
+fn chinese_hourly_iaqi(
+    concentration: f32,
+    concentration_breakpoints: &[f32],
+    aqi_breakpoints: &[f32],
+    upper_limit: f32,
+    decimals: u32,
+) -> Result<f32> {
+    Ok(hj633_2026_iaqi(
+        concentration,
+        concentration_breakpoints,
+        aqi_breakpoints,
+        upper_limit,
+        decimals,
+    ))
+}
+
+fn chinese_daily_iaqi(
+    concentration: f32,
+    concentration_breakpoints: &[f32],
+    aqi_breakpoints: &[f32],
+    upper_limit: f32,
+    decimals: u32,
+) -> f32 {
+    hj633_2026_iaqi(
+        concentration,
+        concentration_breakpoints,
+        aqi_breakpoints,
+        upper_limit,
+        decimals,
+    )
+}
+
+fn hj633_2026_iaqi(
+    concentration: f32,
+    concentration_breakpoints: &[f32],
+    aqi_breakpoints: &[f32],
+    upper_limit: f32,
+    decimals: u32,
+) -> f32 {
+    if !concentration.is_finite() {
+        return f32::NAN;
+    }
+    let scale = 10_i64.pow(decimals);
+    let concentration = round_ties_to_even(concentration.max(0.0), decimals);
+    let concentration_scaled = ((concentration as f64) * scale as f64).round() as i64;
+    let Some((&last_concentration, &last_aqi)) =
+        concentration_breakpoints.last().zip(aqi_breakpoints.last())
+    else {
+        return f32::NAN;
+    };
+    let last_concentration_scaled = ((last_concentration as f64) * scale as f64).round() as i64;
+    if concentration_scaled > last_concentration_scaled {
+        return upper_limit.min(last_aqi);
+    }
+    for index in 1..concentration_breakpoints.len() {
+        let low_scaled =
+            ((concentration_breakpoints[index - 1] as f64) * scale as f64).round() as i64;
+        let high_scaled = ((concentration_breakpoints[index] as f64) * scale as f64).round() as i64;
+        if concentration_scaled <= high_scaled {
+            let aqi_low = aqi_breakpoints[index - 1] as f64;
+            let aqi_high = aqi_breakpoints[index] as f64;
+            let iaqi = aqi_low
+                + (aqi_high - aqi_low) * (concentration_scaled - low_scaled) as f64
+                    / (high_scaled - low_scaled) as f64;
+            return (iaqi.ceil() as f32).min(upper_limit);
+        }
+    }
+    upper_limit.min(last_aqi)
+}
+
+fn round_ties_to_even(value: f32, decimals: u32) -> f32 {
+    let factor = 10_f64.powi(decimals as i32);
+    ((value as f64 * factor).round_ties_even() / factor) as f32
+}
+
+fn all_finite_max(values: &[f32]) -> f32 {
+    if values.iter().any(|value| !value.is_finite()) {
+        f32::NAN
+    } else {
+        values.iter().copied().reduce(f32::max).unwrap_or(f32::NAN)
+    }
+}
+
+fn is_chinese_aqi_variable(variable: &str) -> bool {
+    matches!(
+        variable,
+        "chinese_aqi"
+            | "chinese_aqi_pm2_5"
+            | "chinese_aqi_pm10"
+            | "chinese_aqi_no2"
+            | "chinese_aqi_nitrogen_dioxide"
+            | "chinese_aqi_o3"
+            | "chinese_aqi_ozone"
+            | "chinese_aqi_so2"
+            | "chinese_aqi_sulphur_dioxide"
+            | "chinese_aqi_co"
+            | "chinese_aqi_carbon_monoxide"
+    )
+}
+
+fn is_chinese_air_quality_daily_variable(variable: &str) -> bool {
+    is_chinese_aqi_variable(variable)
+        || matches!(
+            variable,
+            "pm2_5_mean"
+                | "pm10_mean"
+                | "nitrogen_dioxide_mean"
+                | "ozone_maximum_8h_mean"
+                | "sulphur_dioxide_mean"
+                | "carbon_monoxide_mean"
+        )
+}
+
+fn rolling_mean_before(
+    snapshot: &OmDataSnapshot,
+    decoder: Option<&OfficialDecoder>,
+    variable: &str,
+    time: DateTime<Utc>,
+    latitude: f64,
+    longitude: f64,
+    hours: i64,
+) -> Result<f32> {
+    let mut sum = 0.0;
+    // Swift's slidingAverageDroppingFirstDt reduces the window from the
+    // oldest sample to the newest; preserve that order for identical f32 ties.
+    for hour in (1..=hours).rev() {
+        let sample_time = time - Duration::hours(hour);
+        let Some(value) = read_optional_direct(
+            snapshot,
+            decoder,
+            variable,
+            sample_time,
+            latitude,
+            longitude,
+        )?
+        else {
+            return Ok(f32::NAN);
+        };
+        sum += value;
+    }
+    Ok(sum / hours as f32)
+}
+
+fn position_extrapolated(thresholds: &[f32], search: f32) -> f32 {
+    let mut previous = f32::NAN;
+    let mut slope = f32::NAN;
+    for (index, value) in thresholds.iter().enumerate() {
+        slope = *value - previous;
+        if search < *value {
+            return index as f32 - 1.0 + (search - previous) / slope;
+        }
+        previous = *value;
+    }
+    thresholds.len() as f32 - 1.0 + (search - previous) / slope
+}
+
+fn us_aqi_scale(value: f32) -> f32 {
+    if value <= 4.0 {
+        value * 50.0
+    } else {
+        value * 100.0 - 200.0
+    }
+}
+
+fn finite_max(values: &[f32]) -> f32 {
+    values
+        .iter()
+        .copied()
+        .filter(|value| value.is_finite())
+        .reduce(f32::max)
+        .unwrap_or(f32::NAN)
+}
+
+fn surface_pressure(temperature: f32, pressure_msl: f32, elevation: f32) -> f32 {
+    let elevation = if elevation.is_nan() { 0.0 } else { elevation };
+    let t0 = temperature + 273.15 + 0.0065 * elevation;
+    let factor = (1.0 - (0.0065 * elevation) / t0).powf(-5.255_781_3);
+    pressure_msl / factor
+}
+
+fn surface_pressure_elevation(sampling: ModelSampling) -> f32 {
+    if sampling.target_elevation.is_finite() {
+        sampling.target_elevation
+    } else {
+        sampling.model_elevation
+    }
+}
+
+fn read_gfs_surface_elevation_grid(
+    snapshot: &OmDataSnapshot,
+    decoder: &OfficialDecoder,
+    latitudes: &[f64],
+    longitudes: &[f64],
+) -> Result<Vec<f32>> {
+    let product = snapshot.require_product("gfs013_surface")?;
+    let mut values = if let Some(entry) = product.static_entries.get("surface_elevation") {
+        read_entry_grid(&product, entry, decoder, latitudes, longitudes)?
+    } else {
+        read_static_elevation_grid_for_coordinates(
+            snapshot,
+            decoder,
+            GFS013_STATIC_SPEC,
+            latitudes,
+            longitudes,
+        )?
+    };
+    values.iter_mut().for_each(|value| {
+        if !value.is_finite() || *value <= -900.0 {
+            *value = 0.0;
+        }
+    });
+    Ok(values)
+}
+
+fn read_direct(
+    snapshot: &OmDataSnapshot,
+    decoder: Option<&OfficialDecoder>,
+    variable: &str,
+    time: DateTime<Utc>,
+    latitude: f64,
+    longitude: f64,
+) -> Result<f32> {
+    read_direct_with_rounding(snapshot, decoder, variable, time, latitude, longitude, true)
+}
+
+fn read_direct_unrounded(
+    snapshot: &OmDataSnapshot,
+    decoder: Option<&OfficialDecoder>,
+    variable: &str,
+    time: DateTime<Utc>,
+    latitude: f64,
+    longitude: f64,
+) -> Result<f32> {
+    read_direct_with_rounding(
+        snapshot, decoder, variable, time, latitude, longitude, false,
+    )
+}
+
+fn read_direct_with_rounding(
+    snapshot: &OmDataSnapshot,
+    decoder: Option<&OfficialDecoder>,
+    variable: &str,
+    time: DateTime<Utc>,
+    latitude: f64,
+    longitude: f64,
+    round_values: bool,
+) -> Result<f32> {
+    if variable == "carbon_monoxide"
+        && snapshot.product("cams_global_greenhouse_gases").is_some()
+        && snapshot.product("cams_global").is_some()
+    {
+        return read_cams_mixed_carbon_monoxide(
+            snapshot,
+            decoder,
+            time,
+            latitude,
+            longitude,
+            round_values,
+        );
+    }
+    let (product_name, raw_variable) = product_for_variable(snapshot, variable)?;
+    read_product_history_value_with_rounding(
+        snapshot,
+        decoder,
+        product_name,
+        variable,
+        &raw_variable,
+        time,
+        latitude,
+        longitude,
+        round_values,
+    )
+}
+
+fn read_direct_grid(
+    snapshot: &OmDataSnapshot,
+    decoder: &OfficialDecoder,
+    variable: &str,
+    time: DateTime<Utc>,
+    latitudes: &[f64],
+    longitudes: &[f64],
+    round_values: bool,
+) -> Result<Vec<f32>> {
+    if variable == "carbon_monoxide" {
+        bail!("regional carbon_monoxide mixing is not implemented");
+    }
+    let (product_name, raw_variable) = product_for_variable(snapshot, variable)?;
+    let products = snapshot.product_snapshots(product_name);
+    if is_gfs_product(product_name) {
+        if let Some(primary) = products
+            .iter()
+            .find(|product| product_covers_time(product, &raw_variable, time))
+        {
+            let mut values = read_product_grid_with_rounding(
+                primary,
+                decoder,
+                variable,
+                &raw_variable,
+                time,
+                latitudes,
+                longitudes,
+                round_values,
+            )?;
+            if values.iter().any(|value| value.is_nan()) {
+                let fallback = products.iter().find(|product| {
+                    !Arc::ptr_eq(primary, product)
+                        && gfs_snapshot_is_full(product)
+                        && product_covers_time(product, &raw_variable, time)
+                });
+                if let Some(product) = fallback {
+                    let fallback = read_product_grid_with_rounding(
+                        product,
+                        decoder,
+                        variable,
+                        &raw_variable,
+                        time,
+                        latitudes,
+                        longitudes,
+                        round_values,
+                    )?;
+                    for (value, fallback_value) in values.iter_mut().zip(fallback) {
+                        if value.is_nan() && !fallback_value.is_nan() {
+                            *value = fallback_value;
+                        }
+                    }
+                }
+            }
+            return Ok(values);
+        }
+    }
+    if is_cams_product(product_name) {
+        let covering_products = products
+            .iter()
+            .filter(|product| product_covers_time(product, &raw_variable, time))
+            .take(2)
+            .collect::<Vec<_>>();
+        if let Some(first) = covering_products.first() {
+            let mut values = read_product_grid_with_rounding(
+                first,
+                decoder,
+                variable,
+                &raw_variable,
+                time,
+                latitudes,
+                longitudes,
+                round_values,
+            )?;
+            for product in covering_products.iter().skip(1) {
+                if !values.iter().any(|value| value.is_nan()) {
+                    break;
+                }
+                let fallback = read_product_grid_with_rounding(
+                    product,
+                    decoder,
+                    variable,
+                    &raw_variable,
+                    time,
+                    latitudes,
+                    longitudes,
+                    round_values,
+                )?;
+                for (value, fallback_value) in values.iter_mut().zip(fallback) {
+                    if value.is_nan() && !fallback_value.is_nan() {
+                        *value = fallback_value;
+                    }
+                }
+            }
+            return Ok(values);
+        }
+    }
+    for product in &products {
+        if !product_covers_time(product, &raw_variable, time) {
+            continue;
+        }
+        return read_product_grid_with_rounding(
+            product,
+            decoder,
+            variable,
+            &raw_variable,
+            time,
+            latitudes,
+            longitudes,
+            round_values,
+        );
+    }
+    if products.iter().any(|product| {
+        product
+            .entries
+            .keys()
+            .any(|entry_key| entry_key.variable == raw_variable)
+    }) {
+        return Ok(vec![f32::NAN; latitudes.len() * longitudes.len()]);
+    }
+    bail!("variable/time is not available: {} {}", raw_variable, time)
+}
+
+fn read_direct_grid_series(
+    snapshot: &OmDataSnapshot,
+    decoder: &OfficialDecoder,
+    variable: &str,
+    times: &[DateTime<Utc>],
+    latitudes: &[f64],
+    longitudes: &[f64],
+    round_values: bool,
+) -> Result<Vec<Vec<f32>>> {
+    let (product_name, raw_variable) = product_for_variable(snapshot, variable)?;
+    // Point requests resolve a potentially different nearest land/model cell
+    // for every product (for example GFS 0.13° surface versus 0.25° wind).
+    // The time-slab path must use that product-specific cell just like the
+    // single-value path in read_entry_value(). Regional/WebP requests have no
+    // thread-local sampling and continue to use their supplied output grid.
+    let sampled_latitudes;
+    let sampled_longitudes;
+    let (latitudes, longitudes) = if latitudes.len() == 1 && longitudes.len() == 1 {
+        if let Some(sampling) = current_product_sampling(product_name) {
+            sampled_latitudes = [sampling.latitude];
+            sampled_longitudes = [sampling.longitude];
+            (&sampled_latitudes[..], &sampled_longitudes[..])
+        } else {
+            (latitudes, longitudes)
+        }
+    } else {
+        (latitudes, longitudes)
+    };
+    let products = snapshot.product_snapshots(product_name);
+    if is_gfs_product(product_name) {
+        let full_products = products
+            .iter()
+            .filter(|product| {
+                gfs_snapshot_is_full(product)
+                    && times
+                        .iter()
+                        .any(|time| product_covers_time(product, &raw_variable, *time))
+            })
+            .take(2)
+            .collect::<Vec<_>>();
+        if let Some(first) = full_products.first() {
+            if let Some(mut values) = read_exact_native_grid_series(
+                first,
+                decoder,
+                variable,
+                &raw_variable,
+                times,
+                latitudes,
+                longitudes,
+                round_values,
+            )? {
+                if values
+                    .iter()
+                    .any(|frame| frame.iter().any(|value| value.is_nan()))
+                {
+                    if let Some(previous) = full_products.get(1) {
+                        if let Some(fallback_frames) = read_exact_native_grid_series(
+                            previous,
+                            decoder,
+                            variable,
+                            &raw_variable,
+                            times,
+                            latitudes,
+                            longitudes,
+                            round_values,
+                        )? {
+                            for (frame, fallback_frame) in values.iter_mut().zip(fallback_frames) {
+                                for (value, fallback_value) in frame.iter_mut().zip(fallback_frame)
+                                {
+                                    if value.is_nan() && !fallback_value.is_nan() {
+                                        *value = fallback_value;
+                                    }
+                                }
+                            }
+                        } else {
+                            // The previous complete run crosses the official
+                            // GFS f120 hourly-to-three-hour boundary at a
+                            // different output index, so it may not be
+                            // decodable as one contiguous slab. Only anomaly
+                            // frames take this slower path; healthy WebP runs
+                            // remain one-slab decodes.
+                            for (index, frame) in values.iter_mut().enumerate() {
+                                if !frame.iter().any(|value| value.is_nan())
+                                    || !product_covers_time(previous, &raw_variable, times[index])
+                                {
+                                    continue;
+                                }
+                                let fallback_frame = read_product_grid_with_rounding(
+                                    previous,
+                                    decoder,
+                                    variable,
+                                    &raw_variable,
+                                    times[index],
+                                    latitudes,
+                                    longitudes,
+                                    round_values,
+                                )?;
+                                for (value, fallback_value) in frame.iter_mut().zip(fallback_frame)
+                                {
+                                    if value.is_nan() && !fallback_value.is_nan() {
+                                        *value = fallback_value;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                // Native time-slab decoding bypasses read_entry_value(), so
+                // apply the same point-request elevation correction here.
+                // Regional/WebP calls have no request sampling and therefore
+                // remain byte-for-byte unchanged.
+                for frame in &mut values {
+                    for value in frame {
+                        *value = apply_elevation_correction(product_name, variable, *value);
+                    }
+                }
+                return Ok(values);
+            }
+        }
+    }
+    times
+        .iter()
+        .map(|time| {
+            read_direct_grid(
+                snapshot,
+                decoder,
+                variable,
+                *time,
+                latitudes,
+                longitudes,
+                round_values,
+            )
+        })
+        .collect()
+}
+
+fn is_gfs_product(product_name: &str) -> bool {
+    matches!(
+        product_name,
+        "gfs013_surface" | "gfs025" | "gfs_pressure_profile"
+    )
+}
+
+fn is_cams_product(product_name: &str) -> bool {
+    matches!(product_name, "cams_global" | "cams_global_greenhouse_gases")
+}
+
+fn gfs_snapshot_is_full(product: &ProductSnapshot) -> bool {
+    product
+        .entries
+        .values()
+        .map(|entry| entry.forecast_hour)
+        .max()
+        .is_some_and(|forecast_hour| forecast_hour > 5)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn read_product_grid_with_rounding(
+    product: &ProductSnapshot,
+    decoder: &OfficialDecoder,
+    variable: &str,
+    raw_variable: &str,
+    time: DateTime<Utc>,
+    latitudes: &[f64],
+    longitudes: &[f64],
+    round_values: bool,
+) -> Result<Vec<f32>> {
+    let native_times = native_times_for_variable(product, raw_variable);
+    match interpolation_kind_for_variable(variable) {
+        InterpolationKind::Direct => {
+            read_native_grid(product, decoder, raw_variable, time, latitudes, longitudes)
+        }
+        InterpolationKind::BackwardsSum { scalefactor }
+        | InterpolationKind::Backwards { scalefactor } => {
+            if native_times.is_empty()
+                || time < native_times[0]
+                || time > *native_times.last().expect("checked not empty")
+            {
+                return Ok(vec![f32::NAN; latitudes.len() * longitudes.len()]);
+            }
+            let Some(index) = native_times
+                .iter()
+                .position(|native_time| *native_time >= time)
+            else {
+                return Ok(vec![f32::NAN; latitudes.len() * longitudes.len()]);
+            };
+            let mut values = read_native_grid(
+                product,
+                decoder,
+                raw_variable,
+                native_times[index],
+                latitudes,
+                longitudes,
+            )?;
+            if matches!(
+                interpolation_kind_for_variable(variable),
+                InterpolationKind::BackwardsSum { .. }
+            ) {
+                let native_dt_seconds = native_dt_seconds_at(&native_times, index);
+                if native_dt_seconds > 0 {
+                    let factor = 3600.0 / native_dt_seconds as f32;
+                    values.iter_mut().for_each(|value| *value *= factor);
+                }
+            }
+            if round_values {
+                values
+                    .iter_mut()
+                    .for_each(|value| *value = round_to_scalefactor(*value, scalefactor));
+            }
+            Ok(values)
+        }
+        InterpolationKind::Linear { scalefactor } => {
+            let Some((index, fraction)) = interpolation_index(&native_times, time) else {
+                return Ok(vec![f32::NAN; latitudes.len() * longitudes.len()]);
+            };
+            let a = read_native_grid(
+                product,
+                decoder,
+                raw_variable,
+                native_times[index],
+                latitudes,
+                longitudes,
+            )?;
+            let b = if index + 1 < native_times.len() {
+                read_native_grid(
+                    product,
+                    decoder,
+                    raw_variable,
+                    native_times[index + 1],
+                    latitudes,
+                    longitudes,
+                )?
+            } else {
+                a.clone()
+            };
+            Ok(a.into_iter()
+                .zip(b)
+                .map(|(a, b)| {
+                    maybe_round_to_scalefactor(
+                        a * (1.0 - fraction) + b * fraction,
+                        scalefactor,
+                        round_values,
+                    )
+                })
+                .collect())
+        }
+        InterpolationKind::Hermite {
+            scalefactor,
+            bounds,
+        } => read_hermite_grid(
+            product,
+            decoder,
+            raw_variable,
+            time,
+            latitudes,
+            longitudes,
+            scalefactor,
+            bounds,
+            round_values,
+        ),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn read_hermite_grid(
+    product: &ProductSnapshot,
+    decoder: &OfficialDecoder,
+    raw_variable: &str,
+    time: DateTime<Utc>,
+    latitudes: &[f64],
+    longitudes: &[f64],
+    scalefactor: f32,
+    bounds: Option<(f32, f32)>,
+    round_values: bool,
+) -> Result<Vec<f32>> {
+    let native_times = native_times_for_variable(product, raw_variable);
+    let Some((index, fraction)) = interpolation_index(&native_times, time) else {
+        return Ok(vec![f32::NAN; latitudes.len() * longitudes.len()]);
+    };
+    let b = read_native_grid(
+        product,
+        decoder,
+        raw_variable,
+        native_times[index],
+        latitudes,
+        longitudes,
+    )?;
+    if index + 1 >= native_times.len() {
+        return Ok(b
+            .into_iter()
+            .map(|value| maybe_round_to_scalefactor(value, scalefactor, round_values))
+            .collect());
+    }
+    let stride_seconds = interpolation_stride_seconds(&native_times, index);
+    let a_time = native_times[index] - Duration::seconds(stride_seconds);
+    let a = if native_times.binary_search(&a_time).is_ok() {
+        read_native_grid(
+            product,
+            decoder,
+            raw_variable,
+            a_time,
+            latitudes,
+            longitudes,
+        )?
+    } else {
+        b.clone()
+    };
+    let c = read_native_grid(
+        product,
+        decoder,
+        raw_variable,
+        native_times[index + 1],
+        latitudes,
+        longitudes,
+    )?;
+    let d_time = native_times[index + 1] + Duration::seconds(stride_seconds);
+    let d = if native_times.binary_search(&d_time).is_ok() {
+        read_native_grid(
+            product,
+            decoder,
+            raw_variable,
+            d_time,
+            latitudes,
+            longitudes,
+        )?
+    } else {
+        c.clone()
+    };
+    Ok(a.into_iter()
+        .zip(b)
+        .zip(c)
+        .zip(d)
+        .map(|(((a, b), c), d)| {
+            let a = if a.is_nan() { b } else { a };
+            let c = if c.is_nan() { b } else { c };
+            let d = if d.is_nan() {
+                missing_second_lookahead_value(product, b, c)
+            } else {
+                d
+            };
+            let coeff_a = -a / 2.0 + (3.0 * b) / 2.0 - (3.0 * c) / 2.0 + d / 2.0;
+            let coeff_b = a - (5.0 * b) / 2.0 + 2.0 * c - d / 2.0;
+            let coeff_c = -a / 2.0 + c / 2.0;
+            let h = coeff_a * fraction * fraction * fraction
+                + coeff_b * fraction * fraction
+                + coeff_c * fraction
+                + b;
+            let mut value = maybe_round_to_scalefactor(h, scalefactor, round_values);
+            if let Some((lower, upper)) = bounds {
+                value = value.clamp(lower, upper);
+            }
+            value
+        })
+        .collect())
+}
+
+fn read_native_grid(
+    product: &ProductSnapshot,
+    decoder: &OfficialDecoder,
+    raw_variable: &str,
+    time: DateTime<Utc>,
+    latitudes: &[f64],
+    longitudes: &[f64],
+) -> Result<Vec<f32>> {
+    let key = EntryKey {
+        variable: raw_variable.to_string(),
+        valid_time_utc: time,
+    };
+    let entry = product
+        .entries
+        .get(&key)
+        .with_context(|| format!("variable/time is not available: {} {}", raw_variable, time))?;
+    read_entry_grid(product, entry, decoder, latitudes, longitudes)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn read_exact_native_grid_series(
+    product: &ProductSnapshot,
+    decoder: &OfficialDecoder,
+    variable: &str,
+    raw_variable: &str,
+    times: &[DateTime<Utc>],
+    latitudes: &[f64],
+    longitudes: &[f64],
+    round_values: bool,
+) -> Result<Option<Vec<Vec<f32>>>> {
+    // GFS is hourly through forecast hour 120, exactly the WebP window. CAMS
+    // requires interpolation and intentionally keeps the per-hour path.
+    if !product.product.starts_with("gfs") {
+        return Ok(None);
+    }
+    let entries = times
+        .iter()
+        .map(|time| {
+            product.entries.get(&EntryKey {
+                variable: raw_variable.to_string(),
+                valid_time_utc: *time,
+            })
+        })
+        .collect::<Vec<_>>();
+    let available = entries.iter().filter(|entry| entry.is_some()).count();
+    if available == 0
+        || entries
+            .iter()
+            .enumerate()
+            .any(|(index, entry)| entry.is_none() && index != 0)
+        || entries.iter().flatten().any(|entry| {
+            entry.native_file_path.is_none()
+                || entry.native_time_index.is_none()
+                || entry.array.dimensions.len() != 3
+        })
+    {
+        return Ok(None);
+    }
+
+    let grid_len = latitudes.len() * longitudes.len();
+    let mut output = vec![vec![f32::NAN; grid_len]; times.len()];
+    let mut output_index = 0;
+    while output_index < entries.len() {
+        let Some(first) = entries[output_index] else {
+            output_index += 1;
+            continue;
+        };
+        let first_native_index = first.native_time_index.expect("checked native entry");
+        let first_path = first
+            .native_file_path
+            .as_deref()
+            .expect("checked native entry");
+        let mut end = output_index + 1;
+        while end < entries.len() {
+            let Some(next) = entries[end] else {
+                break;
+            };
+            if next.native_file_path.as_deref() != Some(first_path)
+                || next.native_time_index != Some(first_native_index + (end - output_index) as u64)
+            {
+                break;
+            }
+            end += 1;
+        }
+        let decoded = read_native_entry_grid_time_range(
+            product,
+            first,
+            decoder,
+            latitudes,
+            longitudes,
+            first_native_index,
+            end - output_index,
+        )?;
+        for (offset, values) in decoded.into_iter().enumerate() {
+            output[output_index + offset] = values;
+        }
+        output_index = end;
+    }
+
+    let native_times = native_times_for_variable(product, raw_variable);
+    let interpolation = interpolation_kind_for_variable(variable);
+    for (time, values) in times.iter().zip(output.iter_mut()) {
+        if values.iter().all(|value| value.is_nan()) {
+            continue;
+        }
+        match interpolation {
+            InterpolationKind::Direct => {}
+            InterpolationKind::Linear { scalefactor }
+            | InterpolationKind::Backwards { scalefactor } => {
+                if round_values {
+                    values
+                        .iter_mut()
+                        .for_each(|value| *value = round_to_scalefactor(*value, scalefactor));
+                }
+            }
+            InterpolationKind::Hermite {
+                scalefactor,
+                bounds,
+            } => {
+                values.iter_mut().for_each(|value| {
+                    *value = maybe_round_to_scalefactor(*value, scalefactor, round_values);
+                    if let Some((lower, upper)) = bounds {
+                        *value = value.clamp(lower, upper);
+                    }
+                });
+            }
+            InterpolationKind::BackwardsSum { scalefactor } => {
+                let index = native_times
+                    .binary_search(time)
+                    .map_err(|_| anyhow!("exact native GFS time disappeared from the index"))?;
+                let native_dt_seconds = native_dt_seconds_at(&native_times, index);
+                let factor = if native_dt_seconds > 0 {
+                    3600.0 / native_dt_seconds as f32
+                } else {
+                    1.0
+                };
+                values.iter_mut().for_each(|value| {
+                    *value *= factor;
+                    if round_values {
+                        *value = round_to_scalefactor(*value, scalefactor);
+                    }
+                });
+            }
+        }
+    }
+    for (index, entry) in entries.iter().enumerate() {
+        if entry.is_some() {
+            continue;
+        }
+        match read_product_grid_with_rounding(
+            product,
+            decoder,
+            variable,
+            raw_variable,
+            times[index],
+            latitudes,
+            longitudes,
+            round_values,
+        ) {
+            Ok(values) => output[index] = values,
+            Err(error) if error.to_string().contains("variable/time is not available") => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(Some(output))
+}
+
+fn read_native_entry_grid_time_range(
+    product: &ProductSnapshot,
+    entry: &BundleEntry,
+    decoder: &OfficialDecoder,
+    latitudes: &[f64],
+    longitudes: &[f64],
+    time_index: u64,
+    time_count: usize,
+) -> Result<Vec<Vec<f32>>> {
+    let y_indices = latitudes
+        .iter()
+        .map(|latitude| {
+            grid_index_for_lat_lon(
+                &entry.array,
+                entry.native_grid.as_ref(),
+                *latitude,
+                longitudes[0],
+            )
+            .map(|value| value.0)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let x_indices = longitudes
+        .iter()
+        .map(|longitude| {
+            grid_index_for_lat_lon(
+                &entry.array,
+                entry.native_grid.as_ref(),
+                latitudes[0],
+                *longitude,
+            )
+            .map(|value| value.1)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let y0 = *y_indices
+        .iter()
+        .min()
+        .context("regional grid has no rows")?;
+    let y1 = *y_indices
+        .iter()
+        .max()
+        .context("regional grid has no rows")?;
+    let x0 = *x_indices
+        .iter()
+        .min()
+        .context("regional grid has no columns")?;
+    let x1 = *x_indices
+        .iter()
+        .max()
+        .context("regional grid has no columns")?;
+    ensure_in_selection(entry, y0, x0)?;
+    ensure_in_selection(entry, y1, x1)?;
+    let time_count_u64 = u64::try_from(time_count)?;
+    if entry.array.chunks.len() != 3
+        || entry.selection_ranges.len() != 2
+        || time_index + time_count_u64 > entry.array.dimensions[2]
+    {
+        bail!("native OM time-slab decoding dimensions do not match entry type");
+    }
+    let height = y1 - y0 + 1;
+    let width = x1 - x0 + 1;
+    let metadata = build_v3_array_metadata_blob(
+        entry.variable_path.as_deref().unwrap_or(&entry.variable),
+        entry.array.data_type,
+        entry.array.compression,
+        &entry.array.dimensions,
+        &entry.array.chunks,
+        entry
+            .array
+            .lut_size
+            .context("array metadata missing lut_size")?,
+        entry
+            .array
+            .lut_offset
+            .context("array metadata missing lut_offset")?,
+        entry.array.scale_factor.unwrap_or(1.0),
+        entry.array.add_offset.unwrap_or(0.0),
+    );
+    let reader = entry_range_reader(product, entry)?;
+    let rectangle = decoder.decode_grid(
+        &metadata,
+        &reader,
+        &[y0, x0, time_index],
+        &[height, width, time_count_u64],
+    )?;
+    let expected = usize::try_from(height * width * time_count_u64)?;
+    if rectangle.len() != expected {
+        bail!("decoded native OM time slab has the wrong element count");
+    }
+    let mut output = vec![Vec::with_capacity(latitudes.len() * longitudes.len()); time_count];
+    for y in y_indices {
+        for x in &x_indices {
+            let point_start = usize::try_from(((y - y0) * width + (*x - x0)) * time_count_u64)?;
+            for time_offset in 0..time_count {
+                output[time_offset].push(rectangle[point_start + time_offset]);
+            }
+        }
+    }
+    Ok(output)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn read_product_history_value_with_rounding(
+    snapshot: &OmDataSnapshot,
+    decoder: Option<&OfficialDecoder>,
+    product_name: &str,
+    variable: &str,
+    raw_variable: &str,
+    time: DateTime<Utc>,
+    latitude: f64,
+    longitude: f64,
+    round_values: bool,
+) -> Result<f32> {
+    let products = snapshot.product_snapshots(product_name);
+    if is_gfs_product(product_name) {
+        if let Some(primary) = products
+            .iter()
+            .find(|product| product_covers_time(product, raw_variable, time))
+        {
+            let mut value = read_product_value_with_rounding(
+                primary,
+                decoder,
+                variable,
+                raw_variable,
+                time,
+                latitude,
+                longitude,
+                round_values,
+            )?;
+            value = apply_elevation_correction(&primary.product, variable, value);
+            if value.is_nan() {
+                if let Some(fallback) = products.iter().find(|product| {
+                    !Arc::ptr_eq(primary, product)
+                        && gfs_snapshot_is_full(product)
+                        && product_covers_time(product, raw_variable, time)
+                }) {
+                    value = read_product_value_with_rounding(
+                        fallback,
+                        decoder,
+                        variable,
+                        raw_variable,
+                        time,
+                        latitude,
+                        longitude,
+                        round_values,
+                    )?;
+                    value = apply_elevation_correction(&fallback.product, variable, value);
+                }
+            }
+            return Ok(value);
+        }
+    }
+    if is_cams_product(product_name) {
+        let mut fallback = f32::NAN;
+        let mut found_coverage = false;
+        for product in products.iter().take(2) {
+            if !product_covers_time(product, raw_variable, time) {
+                continue;
+            }
+            found_coverage = true;
+            fallback = read_product_value_with_rounding(
+                product,
+                decoder,
+                variable,
+                raw_variable,
+                time,
+                latitude,
+                longitude,
+                round_values,
+            )?;
+            fallback = apply_elevation_correction(&product.product, variable, fallback);
+            if !fallback.is_nan() {
+                return Ok(fallback);
+            }
+        }
+        if found_coverage {
+            return Ok(fallback);
+        }
+    }
+    for product in &products {
+        if !product_covers_time(product, raw_variable, time) {
+            continue;
+        }
+        let value = read_product_value_with_rounding(
+            product,
+            decoder,
+            variable,
+            raw_variable,
+            time,
+            latitude,
+            longitude,
+            round_values,
+        );
+        return value.map(|value| apply_elevation_correction(&product.product, variable, value));
+    }
+    if products.iter().any(|product| {
+        product
+            .entries
+            .keys()
+            .any(|entry_key| entry_key.variable == raw_variable)
+    }) {
+        return Ok(f32::NAN);
+    }
+    bail!("variable/time is not available: {} {}", raw_variable, time)
+}
+
+fn read_cams_mixed_carbon_monoxide(
+    snapshot: &OmDataSnapshot,
+    decoder: Option<&OfficialDecoder>,
+    time: DateTime<Utc>,
+    latitude: f64,
+    longitude: f64,
+    round_values: bool,
+) -> Result<f32> {
+    // This is the CamsMixer's integrateIfNaNSmooth(width: 3): use the
+    // greenhouse-gas CO where present, fill a gap from CAMS Global, then blend
+    // the three preceding hours into that transition.
+    let mut high = Vec::with_capacity(4);
+    let mut low = Vec::with_capacity(4);
+    for offset in 0..=3 {
+        let sample_time = time + Duration::hours(offset);
+        high.push(read_product_history_value_with_rounding(
+            snapshot,
+            decoder,
+            "cams_global_greenhouse_gases",
+            "carbon_monoxide",
+            "carbon_monoxide",
+            sample_time,
+            latitude,
+            longitude,
+            false,
+        )?);
+        low.push(read_product_history_value_with_rounding(
+            snapshot,
+            decoder,
+            "cams_global",
+            "carbon_monoxide",
+            "carbon_monoxide",
+            sample_time,
+            latitude,
+            longitude,
+            false,
+        )?);
+    }
+
+    let mut steps_since_nan = 3_i32;
+    for index in (0..high.len()).rev() {
+        steps_since_nan += 1;
+        if low[index].is_nan() {
+            continue;
+        }
+        if high[index].is_nan() {
+            steps_since_nan = 0;
+            high[index] = low[index];
+            continue;
+        }
+        if steps_since_nan > 3 {
+            continue;
+        }
+        high[index] = (low[index] * (4 - steps_since_nan) as f32
+            + high[index] * steps_since_nan as f32)
+            / 4.0;
+    }
+    Ok(maybe_round_to_scalefactor(high[0], 1.0, round_values))
+}
+
+fn product_covers_time(product: &ProductSnapshot, raw_variable: &str, time: DateTime<Utc>) -> bool {
+    let native_times = native_times_for_variable(product, raw_variable);
+    match (native_times.first(), native_times.last()) {
+        (Some(first), Some(last)) => time >= *first && time <= *last,
+        _ => false,
+    }
+}
+
+fn read_product_value_with_rounding(
+    product: &ProductSnapshot,
+    decoder: Option<&OfficialDecoder>,
+    variable: &str,
+    raw_variable: &str,
+    time: DateTime<Utc>,
+    latitude: f64,
+    longitude: f64,
+    round_values: bool,
+) -> Result<f32> {
+    match interpolation_kind_for_variable(variable) {
+        InterpolationKind::Direct => {}
+        InterpolationKind::BackwardsSum { scalefactor } => {
+            return read_backwards_value(
+                product,
+                decoder,
+                raw_variable,
+                time,
+                latitude,
+                longitude,
+                true,
+                scalefactor,
+                round_values,
+            );
+        }
+        InterpolationKind::Backwards { scalefactor } => {
+            return read_backwards_value(
+                product,
+                decoder,
+                raw_variable,
+                time,
+                latitude,
+                longitude,
+                false,
+                scalefactor,
+                round_values,
+            );
+        }
+        InterpolationKind::Linear { scalefactor } => {
+            return read_linear_value(
+                product,
+                decoder,
+                raw_variable,
+                time,
+                latitude,
+                longitude,
+                scalefactor,
+                round_values,
+            );
+        }
+        InterpolationKind::Hermite {
+            scalefactor,
+            bounds,
+        } => {
+            return read_hermite_value(
+                product,
+                decoder,
+                raw_variable,
+                time,
+                latitude,
+                longitude,
+                scalefactor,
+                bounds,
+                round_values,
+            );
+        }
+    }
+    let key = EntryKey {
+        variable: raw_variable.to_string(),
+        valid_time_utc: time,
+    };
+    let entry = product
+        .entries
+        .get(&key)
+        .with_context(|| format!("variable/time is not available: {} {}", raw_variable, time))?;
+    read_entry_value(product, entry, decoder, latitude, longitude)
+}
+
+fn read_backwards_value(
+    product: &ProductSnapshot,
+    decoder: Option<&OfficialDecoder>,
+    raw_variable: &str,
+    time: DateTime<Utc>,
+    latitude: f64,
+    longitude: f64,
+    preserve_sum: bool,
+    scalefactor: f32,
+    round_values: bool,
+) -> Result<f32> {
+    let native_times = native_times_for_variable(product, raw_variable);
+    if native_times.is_empty() {
+        bail!("variable/time is not available: {} {}", raw_variable, time);
+    }
+    if time < native_times[0] || time > *native_times.last().expect("checked not empty") {
+        return Ok(f32::NAN);
+    }
+    let Some(native_index) = native_times
+        .iter()
+        .position(|native_time| *native_time >= time)
+    else {
+        return Ok(f32::NAN);
+    };
+    let key = EntryKey {
+        variable: raw_variable.to_string(),
+        valid_time_utc: native_times[native_index],
+    };
+    let entry = product
+        .entries
+        .get(&key)
+        .with_context(|| format!("variable/time is not available: {} {}", raw_variable, time))?;
+    let value = read_entry_value(product, entry, decoder, latitude, longitude)?;
+    let native_dt_seconds = native_dt_seconds_at(&native_times, native_index);
+    let scaled = if preserve_sum && native_dt_seconds > 0 {
+        value * (3600.0 / native_dt_seconds as f32)
+    } else {
+        value
+    };
+    Ok(maybe_round_to_scalefactor(
+        scaled,
+        scalefactor,
+        round_values,
+    ))
+}
+
+fn read_linear_value(
+    product: &ProductSnapshot,
+    decoder: Option<&OfficialDecoder>,
+    raw_variable: &str,
+    time: DateTime<Utc>,
+    latitude: f64,
+    longitude: f64,
+    scalefactor: f32,
+    round_values: bool,
+) -> Result<f32> {
+    let native_times = native_times_for_variable(product, raw_variable);
+    let Some((index, fraction)) = interpolation_index(&native_times, time) else {
+        return Ok(f32::NAN);
+    };
+    let a = read_native_value(
+        product,
+        decoder,
+        raw_variable,
+        native_times[index],
+        latitude,
+        longitude,
+    )?;
+    let b = if index + 1 >= native_times.len() {
+        a
+    } else {
+        read_native_value(
+            product,
+            decoder,
+            raw_variable,
+            native_times[index + 1],
+            latitude,
+            longitude,
+        )?
+    };
+    Ok(maybe_round_to_scalefactor(
+        a * (1.0 - fraction) + b * fraction,
+        scalefactor,
+        round_values,
+    ))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn read_hermite_value(
+    product: &ProductSnapshot,
+    decoder: Option<&OfficialDecoder>,
+    raw_variable: &str,
+    time: DateTime<Utc>,
+    latitude: f64,
+    longitude: f64,
+    scalefactor: f32,
+    bounds: Option<(f32, f32)>,
+    round_values: bool,
+) -> Result<f32> {
+    let native_times = native_times_for_variable(product, raw_variable);
+    let Some((index, fraction)) = interpolation_index(&native_times, time) else {
+        return Ok(f32::NAN);
+    };
+    let b = read_native_value(
+        product,
+        decoder,
+        raw_variable,
+        native_times[index],
+        latitude,
+        longitude,
+    )?;
+    if index + 1 >= native_times.len() {
+        return Ok(maybe_round_to_scalefactor(b, scalefactor, round_values));
+    }
+    let stride_seconds = interpolation_stride_seconds(&native_times, index);
+    let a_time = native_times[index] - Duration::seconds(stride_seconds);
+    let a = match read_native_value_if_present(
+        product,
+        decoder,
+        raw_variable,
+        &native_times,
+        a_time,
+        latitude,
+        longitude,
+    )? {
+        Some(value) if !value.is_nan() => value,
+        _ => b,
+    };
+    let c = read_native_value(
+        product,
+        decoder,
+        raw_variable,
+        native_times[index + 1],
+        latitude,
+        longitude,
+    )?;
+    let c = if c.is_nan() { b } else { c };
+    let d_time = native_times[index + 1] + Duration::seconds(stride_seconds);
+    let d = match read_native_value_if_present(
+        product,
+        decoder,
+        raw_variable,
+        &native_times,
+        d_time,
+        latitude,
+        longitude,
+    )? {
+        Some(value) if !value.is_nan() => value,
+        Some(_) => b,
+        None => missing_second_lookahead_value(product, b, c),
+    };
+    let coeff_a = -a / 2.0 + (3.0 * b) / 2.0 - (3.0 * c) / 2.0 + d / 2.0;
+    let coeff_b = a - (5.0 * b) / 2.0 + 2.0 * c - d / 2.0;
+    let coeff_c = -a / 2.0 + c / 2.0;
+    let h = coeff_a * fraction * fraction * fraction
+        + coeff_b * fraction * fraction
+        + coeff_c * fraction
+        + b;
+    let mut scaled = maybe_round_to_scalefactor(h, scalefactor, round_values);
+    if let Some((lower, upper)) = bounds {
+        scaled = scaled.clamp(lower, upper);
+    }
+    Ok(scaled)
+}
+
+fn missing_second_lookahead_value(product: &ProductSnapshot, b: f32, c: f32) -> f32 {
+    // The official CAMS greenhouse reader retains the unavailable next 3-hour slot as NaN,
+    // so Hermite falls back to B. The global reader's native tail ends at C.
+    if product.product == "cams_global_greenhouse_gases" {
+        b
+    } else {
+        c
+    }
+}
+
+fn interpolation_index(times: &[DateTime<Utc>], time: DateTime<Utc>) -> Option<(usize, f32)> {
+    if times.is_empty() || time < times[0] || time > *times.last().expect("checked not empty") {
+        return None;
+    }
+    match times.binary_search(&time) {
+        Ok(index) => Some((index, 0.0)),
+        Err(next_index) if next_index > 0 && next_index < times.len() => {
+            let index = next_index - 1;
+            let dt = (times[index + 1] - times[index]).num_seconds();
+            if dt <= 0 {
+                return None;
+            }
+            let offset = (time - times[index]).num_seconds();
+            Some((index, offset as f32 / dt as f32))
+        }
+        _ => None,
+    }
+}
+
+fn interpolation_stride_seconds(times: &[DateTime<Utc>], index: usize) -> i64 {
+    if index + 1 < times.len() {
+        return (times[index + 1] - times[index]).num_seconds();
+    }
+    if index > 0 {
+        return (times[index] - times[index - 1]).num_seconds();
+    }
+    3600
+}
+
+#[allow(clippy::too_many_arguments)]
+fn read_native_value_if_present(
+    product: &ProductSnapshot,
+    decoder: Option<&OfficialDecoder>,
+    raw_variable: &str,
+    native_times: &[DateTime<Utc>],
+    time: DateTime<Utc>,
+    latitude: f64,
+    longitude: f64,
+) -> Result<Option<f32>> {
+    if native_times.binary_search(&time).is_err() {
+        return Ok(None);
+    }
+    read_native_value(product, decoder, raw_variable, time, latitude, longitude).map(Some)
+}
+
+fn read_native_value(
+    product: &ProductSnapshot,
+    decoder: Option<&OfficialDecoder>,
+    raw_variable: &str,
+    time: DateTime<Utc>,
+    latitude: f64,
+    longitude: f64,
+) -> Result<f32> {
+    let key = EntryKey {
+        variable: raw_variable.to_string(),
+        valid_time_utc: time,
+    };
+    let entry = product
+        .entries
+        .get(&key)
+        .with_context(|| format!("variable/time is not available: {} {}", raw_variable, time))?;
+    read_entry_value(product, entry, decoder, latitude, longitude)
+}
+
+fn native_times_for_variable(product: &ProductSnapshot, raw_variable: &str) -> Vec<DateTime<Utc>> {
+    let mut times: Vec<DateTime<Utc>> = product
+        .entries
+        .keys()
+        .filter(|key| key.variable == raw_variable)
+        .map(|key| key.valid_time_utc)
+        .collect();
+    times.sort();
+    times.dedup();
+    times
+}
+
+fn native_dt_seconds_at(times: &[DateTime<Utc>], index: usize) -> i64 {
+    if times.len() < 2 {
+        return 3600;
+    }
+    if index > 0 {
+        return (times[index] - times[index - 1]).num_seconds();
+    }
+    (times[index + 1] - times[index]).num_seconds()
+}
+
+fn round_to_scalefactor(value: f32, scalefactor: f32) -> f32 {
+    (value * scalefactor).round() / scalefactor
+}
+
+fn maybe_round_to_scalefactor(value: f32, scalefactor: f32, round_values: bool) -> f32 {
+    if round_values {
+        round_to_scalefactor(value, scalefactor)
+    } else {
+        value
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum InterpolationKind {
+    Direct,
+    Linear {
+        scalefactor: f32,
+    },
+    Hermite {
+        scalefactor: f32,
+        bounds: Option<(f32, f32)>,
+    },
+    Backwards {
+        scalefactor: f32,
+    },
+    BackwardsSum {
+        scalefactor: f32,
+    },
+}
+
+fn interpolation_kind_for_variable(variable: &str) -> InterpolationKind {
+    if is_cams_variable(variable) {
+        return cams_interpolation_kind(variable);
+    }
+    if variable.ends_with("hPa") {
+        return pressure_interpolation_kind(variable);
+    }
+    match variable {
+        "precipitation" | "showers" | "snowfall_water_equivalent" => {
+            InterpolationKind::BackwardsSum { scalefactor: 10.0 }
+        }
+        "categorical_freezing_rain" | "frozen_precipitation_percent" => {
+            InterpolationKind::Backwards { scalefactor: 1.0 }
+        }
+        "visibility" => InterpolationKind::Linear { scalefactor: 0.05 },
+        "freezing_level_height" => InterpolationKind::Linear { scalefactor: 0.1 },
+        "snow_depth" => InterpolationKind::Linear { scalefactor: 100.0 },
+        "temperature_2m"
+        | "temperature_80m"
+        | "temperature_100m"
+        | "surface_temperature"
+        | "soil_temperature_0_to_10cm"
+        | "soil_temperature_10_to_40cm"
+        | "soil_temperature_40_to_100cm"
+        | "soil_temperature_100_to_200cm" => InterpolationKind::Hermite {
+            scalefactor: 20.0,
+            bounds: None,
+        },
+        "cloud_cover" | "cloud_cover_low" | "cloud_cover_mid" | "cloud_cover_high" => {
+            InterpolationKind::Hermite {
+                scalefactor: 1.0,
+                bounds: Some((0.0, 100.0)),
+            }
+        }
+        "relative_humidity_2m" => InterpolationKind::Hermite {
+            scalefactor: 1.0,
+            bounds: Some((0.0, 100.0)),
+        },
+        "pressure_msl" => InterpolationKind::Hermite {
+            scalefactor: 10.0,
+            bounds: None,
+        },
+        "wind_u_component_10m"
+        | "wind_v_component_10m"
+        | "wind_u_component_80m"
+        | "wind_v_component_80m"
+        | "wind_u_component_100m"
+        | "wind_v_component_100m" => InterpolationKind::Hermite {
+            scalefactor: 10.0,
+            bounds: None,
+        },
+        "wind_gusts_10m" => InterpolationKind::Hermite {
+            scalefactor: 10.0,
+            bounds: Some((0.0, 10e9)),
+        },
+        "cape" => InterpolationKind::Hermite {
+            scalefactor: 0.1,
+            bounds: Some((0.0, 10e9)),
+        },
+        "lifted_index" => InterpolationKind::Hermite {
+            scalefactor: 10.0,
+            bounds: None,
+        },
+        "convective_inhibition" => InterpolationKind::Hermite {
+            scalefactor: 1.0,
+            bounds: Some((0.0, 10e9)),
+        },
+        "boundary_layer_height" => InterpolationKind::Hermite {
+            scalefactor: 0.2,
+            bounds: Some((0.0, 10e9)),
+        },
+        "soil_moisture_0_to_10cm"
+        | "soil_moisture_10_to_40cm"
+        | "soil_moisture_40_to_100cm"
+        | "soil_moisture_100_to_200cm" => InterpolationKind::Hermite {
+            scalefactor: 1000.0,
+            bounds: None,
+        },
+        "total_column_integrated_water_vapour" => InterpolationKind::Hermite {
+            scalefactor: 10.0,
+            bounds: None,
+        },
+        "mass_density_8m" => InterpolationKind::Linear { scalefactor: 0.1 },
+        _ => InterpolationKind::Direct,
+    }
+}
+
+fn cams_interpolation_kind(variable: &str) -> InterpolationKind {
+    let scalefactor = match variable {
+        "pm10" | "pm2_5" | "nitrogen_dioxide" | "sulphur_dioxide" => 10.0,
+        "aerosol_optical_depth" => 100.0,
+        "dust" | "carbon_monoxide" | "ozone" => 1.0,
+        _ => 1.0,
+    };
+    InterpolationKind::Hermite {
+        scalefactor,
+        bounds: Some((0.0, f32::INFINITY)),
+    }
+}
+
+fn pressure_interpolation_kind(variable: &str) -> InterpolationKind {
+    let Some((name, level)) = pressure_variable_name_and_level(variable) else {
+        return InterpolationKind::Direct;
+    };
+    match name {
+        "temperature" => InterpolationKind::Hermite {
+            scalefactor: interpolate_range(2.0, 10.0, fraction_in_range(300.0, 1000.0, level)),
+            bounds: None,
+        },
+        "wind_u_component" | "wind_v_component" => InterpolationKind::Hermite {
+            scalefactor: interpolate_range(3.0, 10.0, fraction_in_range(500.0, 1000.0, level)),
+            bounds: None,
+        },
+        "geopotential_height" => InterpolationKind::Linear {
+            scalefactor: interpolate_range(0.05, 1.0, fraction_in_range(0.0, 500.0, level)),
+        },
+        "cloud_cover" => InterpolationKind::Linear {
+            scalefactor: interpolate_range(0.2, 1.0, fraction_in_range(0.0, 800.0, level)),
+        },
+        "relative_humidity" => InterpolationKind::Hermite {
+            scalefactor: interpolate_range(0.2, 1.0, fraction_in_range(0.0, 800.0, level)),
+            bounds: Some((0.0, 100.0)),
+        },
+        "vertical_velocity" => InterpolationKind::Hermite {
+            scalefactor: interpolate_range(20.0, 100.0, fraction_in_range(0.0, 500.0, level)),
+            bounds: None,
+        },
+        _ => InterpolationKind::Direct,
+    }
+}
+
+fn pressure_variable_name_and_level(variable: &str) -> Option<(&str, f32)> {
+    let (name, level_text) = variable.rsplit_once('_')?;
+    let level = level_text.strip_suffix("hPa")?.parse::<f32>().ok()?;
+    Some((name, level))
+}
+
+fn fraction_in_range(lower: f32, upper: f32, value: f32) -> f32 {
+    ((value.clamp(lower, upper) - lower) / (upper - lower)).clamp(0.0, 1.0)
+}
+
+fn interpolate_range(lower: f32, upper: f32, fraction: f32) -> f32 {
+    (lower + (upper - lower) * fraction).clamp(lower, upper)
+}
+
+fn read_optional_direct(
+    snapshot: &OmDataSnapshot,
+    decoder: Option<&OfficialDecoder>,
+    variable: &str,
+    time: DateTime<Utc>,
+    latitude: f64,
+    longitude: f64,
+) -> Result<Option<f32>> {
+    match read_direct(snapshot, decoder, variable, time, latitude, longitude) {
+        Ok(value) => Ok(Some(value)),
+        Err(_) => Ok(None),
+    }
+}
+
+fn read_optional_direct_unrounded(
+    snapshot: &OmDataSnapshot,
+    decoder: Option<&OfficialDecoder>,
+    variable: &str,
+    time: DateTime<Utc>,
+    latitude: f64,
+    longitude: f64,
+) -> Result<Option<f32>> {
+    match read_direct_unrounded(snapshot, decoder, variable, time, latitude, longitude) {
+        Ok(value) => Ok(Some(value)),
+        Err(_) => Ok(None),
+    }
+}
+
+fn product_for_variable(
+    snapshot: &OmDataSnapshot,
+    variable: &str,
+) -> Result<(&'static str, String)> {
+    let candidates: &[&str] = if variable == "carbon_monoxide" {
+        &["cams_global_greenhouse_gases", "cams_global"]
+    } else if is_cams_variable(variable) {
+        &["cams_global"]
+    } else if is_gfs025_variable(variable) {
+        &["gfs025"]
+    } else if is_pressure_variable(variable) {
+        &["gfs_pressure_profile"]
+    } else {
+        &["gfs013_surface"]
+    };
+    for product in candidates {
+        if snapshot.product(product).is_some() {
+            return Ok((product, variable.to_string()));
+        }
+    }
+    bail!(
+        "product is not available for variable {}: {}",
+        variable,
+        candidates.join(", ")
+    );
+}
+
+fn seed_variable_for_times(variable: &str) -> String {
+    if let Some((name, level_text)) = variable.rsplit_once('_') {
+        if level_text
+            .strip_suffix("hPa")
+            .and_then(|value| value.parse::<u16>().ok())
+            .is_some()
+        {
+            let prefix = match name {
+                "wind_speed" | "windspeed" | "wind_direction" | "winddirection" => {
+                    Some("wind_u_component")
+                }
+                "dew_point" | "dewpoint" => Some("temperature"),
+                "cloudcover" => Some("cloud_cover"),
+                "relativehumidity" => Some("relative_humidity"),
+                _ => None,
+            };
+            if let Some(prefix) = prefix {
+                return format!("{prefix}_{level_text}");
+            }
+        }
+    }
+    let seed = match variable {
+        "dew_point_2m"
+        | "dewpoint_2m"
+        | "wet_bulb_temperature_2m"
+        | "apparent_temperature"
+        | "vapour_pressure_deficit"
+        | "vapor_pressure_deficit"
+        | "et0_fao_evapotranspiration"
+        | "is_day" => "temperature_2m",
+        "evapotranspiration" => "latent_heat_flux",
+        "direct_radiation"
+        | "shortwave_radiation_instant"
+        | "direct_radiation_instant"
+        | "direct_normal_irradiance"
+        | "direct_normal_irradiance_instant"
+        | "global_tilted_irradiance"
+        | "global_tilted_irradiance_instant"
+        | "sunshine_duration" => "shortwave_radiation",
+        "diffuse_radiation_instant" => "diffuse_radiation",
+        "surface_pressure" => "temperature_2m",
+        "weather_code" | "weathercode" => "cloud_cover",
+        "rain" => "precipitation",
+        "snowfall" => "snowfall_water_equivalent",
+        "wind_speed_10m" | "windspeed_10m" | "wind_direction_10m" | "winddirection_10m" => {
+            "wind_u_component_10m"
+        }
+        "wind_speed_80m" | "windspeed_80m" | "wind_direction_80m" | "winddirection_80m" => {
+            "wind_u_component_80m"
+        }
+        "wind_speed_100m"
+        | "windspeed_100m"
+        | "wind_direction_100m"
+        | "winddirection_100m"
+        | "wind_speed_120m"
+        | "windspeed_120m"
+        | "wind_direction_120m"
+        | "winddirection_120m" => "wind_u_component_100m",
+        "temperature_120m" => "temperature_100m",
+        "precip_phase" | "thunderstorm_code" => "cloud_cover",
+        "european_aqi" | "european_aqi_pm2_5" | "european_aqi_pm10" | "us_aqi" | "us_aqi_pm2_5"
+        | "us_aqi_pm10" | "chinese_aqi" | "chinese_aqi_pm2_5" | "chinese_aqi_pm10" => "pm2_5",
+        "european_aqi_no2"
+        | "european_aqi_nitrogen_dioxide"
+        | "us_aqi_no2"
+        | "us_aqi_nitrogen_dioxide"
+        | "chinese_aqi_no2"
+        | "chinese_aqi_nitrogen_dioxide" => "nitrogen_dioxide",
+        "european_aqi_o3" | "european_aqi_ozone" | "us_aqi_o3" | "us_aqi_ozone"
+        | "chinese_aqi_o3" | "chinese_aqi_ozone" => "ozone",
+        "european_aqi_so2"
+        | "european_aqi_sulphur_dioxide"
+        | "us_aqi_so2"
+        | "us_aqi_sulphur_dioxide"
+        | "chinese_aqi_so2"
+        | "chinese_aqi_sulphur_dioxide" => "sulphur_dioxide",
+        "us_aqi_co"
+        | "us_aqi_carbon_monoxide"
+        | "chinese_aqi_co"
+        | "chinese_aqi_carbon_monoxide" => "carbon_monoxide",
+        _ => variable,
+    };
+    seed.to_string()
+}
+
+fn is_cams_variable(variable: &str) -> bool {
+    matches!(
+        variable,
+        "aerosol_optical_depth"
+            | "pm2_5"
+            | "pm10"
+            | "dust"
+            | "carbon_monoxide"
+            | "nitrogen_dioxide"
+            | "ozone"
+            | "sulphur_dioxide"
+    )
+}
+
+fn is_air_quality_variable(variable: &str) -> bool {
+    is_cams_variable(&seed_variable_for_times(variable))
+        || variable.starts_with("european_aqi")
+        || variable.starts_with("us_aqi")
+        || variable.starts_with("chinese_aqi")
+}
+
+fn is_gfs025_variable(variable: &str) -> bool {
+    matches!(
+        variable,
+        "pressure_msl"
+            | "visibility"
+            | "wind_gusts_10m"
+            | "cape"
+            | "lifted_index"
+            | "categorical_freezing_rain"
+            | "freezing_level_height"
+            | "convective_inhibition"
+            | "temperature_80m"
+            | "temperature_100m"
+            | "wind_u_component_80m"
+            | "wind_v_component_80m"
+            | "wind_u_component_100m"
+            | "wind_v_component_100m"
+    )
+}
+
+fn is_pressure_variable(variable: &str) -> bool {
+    variable.ends_with("hPa")
+}
+
+fn is_elevation_correctable(variable: &str) -> bool {
+    matches!(
+        variable,
+        "temperature_2m"
+            | "temperature_80m"
+            | "temperature_100m"
+            | "surface_temperature"
+            | "soil_temperature_0_to_10cm"
+            | "soil_temperature_10_to_40cm"
+            | "soil_temperature_40_to_100cm"
+            | "soil_temperature_100_to_200cm"
+    )
+}
+
+fn apply_elevation_correction(product: &str, variable: &str, value: f32) -> f32 {
+    if !is_elevation_correctable(variable) || !value.is_finite() {
+        return value;
+    }
+    let Some(sampling) = current_product_sampling(product) else {
+        return value;
+    };
+    if !sampling.model_elevation.is_finite() || !sampling.target_elevation.is_finite() {
+        return value;
+    }
+    value + (sampling.model_elevation - sampling.target_elevation) * 0.0065
+}
+
+fn read_entry_grid(
+    product: &ProductSnapshot,
+    entry: &BundleEntry,
+    decoder: &OfficialDecoder,
+    latitudes: &[f64],
+    longitudes: &[f64],
+) -> Result<Vec<f32>> {
+    let y_indices = latitudes
+        .iter()
+        .map(|latitude| {
+            grid_index_for_lat_lon(
+                &entry.array,
+                entry.native_grid.as_ref(),
+                *latitude,
+                longitudes[0],
+            )
+            .map(|v| v.0)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let x_indices = longitudes
+        .iter()
+        .map(|longitude| {
+            grid_index_for_lat_lon(
+                &entry.array,
+                entry.native_grid.as_ref(),
+                latitudes[0],
+                *longitude,
+            )
+            .map(|v| v.1)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let y0 = *y_indices
+        .iter()
+        .min()
+        .context("regional grid has no rows")?;
+    let y1 = *y_indices
+        .iter()
+        .max()
+        .context("regional grid has no rows")?;
+    let x0 = *x_indices
+        .iter()
+        .min()
+        .context("regional grid has no columns")?;
+    let x1 = *x_indices
+        .iter()
+        .max()
+        .context("regional grid has no columns")?;
+    ensure_in_selection(entry, y0, x0)?;
+    ensure_in_selection(entry, y1, x1)?;
+    if entry.native_time_index.is_none() && entry.array.compression == 4 {
+        let mut values = Vec::with_capacity(latitudes.len() * longitudes.len());
+        for y in y_indices {
+            for x in &x_indices {
+                values.push(read_uncompressed_point(product, entry, y, *x)?);
+            }
+        }
+        return Ok(values);
+    }
+    let lut_size = entry
+        .array
+        .lut_size
+        .context("array metadata missing lut_size")?;
+    let lut_offset = entry
+        .array
+        .lut_offset
+        .context("array metadata missing lut_offset")?;
+    let is_native = entry.native_time_index.is_some();
+    if (!is_native && entry.array.chunks.len() != 2)
+        || (is_native && entry.array.chunks.len() != 3)
+        || entry.selection_ranges.len() != 2
+    {
+        bail!("OM regional decoding dimensions do not match entry type");
+    }
+    let height = y1 - y0 + 1;
+    let width = x1 - x0 + 1;
+    let metadata = build_v3_array_metadata_blob(
+        entry.variable_path.as_deref().unwrap_or(&entry.variable),
+        entry.array.data_type,
+        entry.array.compression,
+        &entry.array.dimensions,
+        &entry.array.chunks,
+        lut_size,
+        lut_offset,
+        entry.array.scale_factor.unwrap_or(1.0),
+        entry.array.add_offset.unwrap_or(0.0),
+    );
+    let reader = entry_range_reader(product, entry)?;
+    let (offset, count) = if let Some(time_index) = entry.native_time_index {
+        (vec![y0, x0, time_index], vec![height, width, 1])
+    } else {
+        (vec![y0, x0], vec![height, width])
+    };
+    let rectangle = decoder.decode_grid(&metadata, &reader, &offset, &count)?;
+    let mut values = Vec::with_capacity(latitudes.len() * longitudes.len());
+    for y in y_indices {
+        for x in &x_indices {
+            let index = ((y - y0) * width + (*x - x0)) as usize;
+            values.push(
+                rectangle
+                    .get(index)
+                    .copied()
+                    .context("decoded OM rectangle does not contain requested grid point")?,
+            );
+        }
+    }
+    Ok(values)
+}
+
+fn read_entry_value(
+    product: &ProductSnapshot,
+    entry: &BundleEntry,
+    decoder: Option<&OfficialDecoder>,
+    latitude: f64,
+    longitude: f64,
+) -> Result<f32> {
+    let (latitude, longitude) = current_product_sampling(&product.product)
+        .map(|sampling| (sampling.latitude, sampling.longitude))
+        .unwrap_or((latitude, longitude));
+    let (y, x) = grid_index_for_lat_lon(
+        &entry.array,
+        entry.native_grid.as_ref(),
+        latitude,
+        longitude,
+    )?;
+    ensure_in_selection(entry, y, x)?;
+    if let Some(time_index) = entry.native_time_index {
+        let decoder =
+            decoder.context("official OM decoder library is required for native runtime files")?;
+        let metadata = build_v3_array_metadata_blob(
+            entry.variable_path.as_deref().unwrap_or(&entry.variable),
+            entry.array.data_type,
+            entry.array.compression,
+            &entry.array.dimensions,
+            &entry.array.chunks,
+            entry
+                .array
+                .lut_size
+                .context("array metadata missing lut_size")?,
+            entry
+                .array
+                .lut_offset
+                .context("array metadata missing lut_offset")?,
+            entry.array.scale_factor.unwrap_or(1.0),
+            entry.array.add_offset.unwrap_or(0.0),
+        );
+        let reader = entry_range_reader(product, entry)?;
+        return decoder.decode_point(&metadata, &reader, &[y, x, time_index]);
+    }
+    if entry.array.compression == 4 {
+        return read_uncompressed_point(product, entry, y, x);
+    }
+    let decoder = decoder.ok_or_else(|| {
+        anyhow!(
+            "official OM decoder library is required for compression {}; set OM_OMFILE_LIB",
+            entry.array.compression
+        )
+    })?;
+    let lut_size = entry
+        .array
+        .lut_size
+        .context("array metadata missing lut_size")?;
+    let lut_offset = entry
+        .array
+        .lut_offset
+        .context("array metadata missing lut_offset")?;
+    if entry.array.chunks.len() != 2 || entry.selection_ranges.len() != 2 {
+        bail!("only 2D OM chunk caching is supported");
+    }
+    let chunk_y = entry.array.chunks[0];
+    let chunk_x = entry.array.chunks[1];
+    let tile_y = chunk_y.saturating_mul(4);
+    let tile_x = chunk_x.saturating_mul(4);
+    let y_range = entry.selection_ranges[0];
+    let x_range = entry.selection_ranges[1];
+    let y0 = (y / tile_y * tile_y).max(y_range[0]);
+    let x0 = (x / tile_x * tile_x).max(x_range[0]);
+    let y1 = ((y / tile_y + 1) * tile_y).min(y_range[1]);
+    let x1 = ((x / tile_x + 1) * tile_x).min(x_range[1]);
+    let height = y1 - y0;
+    let width = x1 - x0;
+    let cache_handle = entry_file_handle(product, entry)?;
+    let key = TileCacheKey {
+        bundle: Arc::as_ptr(&cache_handle) as usize,
+        entry_offset: entry.bundle_offset,
+        y0,
+        x0,
+        height,
+        width,
+    };
+    let cached = DECODED_TILE_CACHE.with(|cache| cache.borrow().get(&key).cloned());
+    let tile = if let Some(cached) = cached {
+        cached
+    } else {
+        let metadata = build_v3_array_metadata_blob(
+            entry.variable_path.as_deref().unwrap_or(&entry.variable),
+            entry.array.data_type,
+            entry.array.compression,
+            &entry.array.dimensions,
+            &entry.array.chunks,
+            lut_size,
+            lut_offset,
+            entry.array.scale_factor.unwrap_or(1.0),
+            entry.array.add_offset.unwrap_or(0.0),
+        );
+        let reader = entry_range_reader(product, entry)?;
+        let decoded =
+            Arc::new(decoder.decode_grid(&metadata, &reader, &[y0, x0], &[height, width])?);
+        DECODED_TILE_CACHE.with(|cache| {
+            let mut cache = cache.borrow_mut();
+            if cache.len() >= 128 {
+                cache.clear();
+            }
+            cache.insert(key, decoded.clone());
+        });
+        decoded
+    };
+    let index = ((y - y0) * width + (x - x0)) as usize;
+    tile.get(index)
+        .copied()
+        .context("decoded OM tile does not contain requested point")
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct TileCacheKey {
+    bundle: usize,
+    entry_offset: u64,
+    y0: u64,
+    x0: u64,
+    height: u64,
+    width: u64,
+}
+
+thread_local! {
+    static DECODED_TILE_CACHE: RefCell<HashMap<TileCacheKey, Arc<Vec<f32>>>> =
+        RefCell::new(HashMap::new());
+}
+
+fn grid_index_for_lat_lon(
+    array: &ArrayMetadata,
+    native_grid: Option<&crate::manifest::NativeGridMetadata>,
+    latitude: f64,
+    longitude: f64,
+) -> Result<(u64, u64)> {
+    if let Some(grid) = native_grid {
+        if !matches!(array.dimensions.len(), 2 | 3)
+            || array.dimensions[0] != grid.ny
+            || array.dimensions[1] != grid.nx
+        {
+            bail!("native OM array dimensions do not match grid contract");
+        }
+        let x = ((longitude - grid.lon_min) / grid.dx).round() as i64;
+        let y = ((latitude - grid.lat_min) / grid.dy).round() as i64;
+        if y < 0 || y >= grid.ny as i64 || x < 0 || x >= grid.nx as i64 {
+            bail!("point is outside native regional grid");
+        }
+        return Ok((y as u64, x as u64));
+    }
+    if array.dimensions.len() != 2 {
+        bail!("only 2D OM entries are supported by the point API");
+    }
+    let ny = array.dimensions[0] as f32;
+    let nx = array.dimensions[1] as f32;
+    let dx = 360.0_f32 / nx;
+    let (lat_min, dy) = if array.dimensions[0] == 1536 {
+        let dy = 0.11714935_f32;
+        (-dy * (ny - 1.0) / 2.0, dy)
+    } else {
+        (-90.0_f32, 180.0_f32 / (ny - 1.0))
+    };
+    let mut lon = longitude as f32;
+    while lon < -180.0 {
+        lon += 360.0;
+    }
+    while lon >= 180.0 {
+        lon -= 360.0;
+    }
+    let x = ((lon + 180.0_f32) / dx).round() as i64;
+    let y = (((latitude as f32) - lat_min) / dy).round() as i64;
+    if y < 0 || y >= array.dimensions[0] as i64 || x < 0 || x >= array.dimensions[1] as i64 {
+        bail!("point is outside grid");
+    }
+    Ok((y as u64, x as u64))
+}
+
+fn grid_latitude_for_index(
+    array: &ArrayMetadata,
+    native_grid: Option<&crate::manifest::NativeGridMetadata>,
+    y: u64,
+) -> Result<f32> {
+    if let Some(grid) = native_grid {
+        if y >= grid.ny {
+            bail!("invalid native latitude grid index");
+        }
+        if grid.full_ny == Some(1536) {
+            let dy = grid.dy as f32;
+            let global_y = grid.y0.unwrap_or(0) + y;
+            let global_lat_min = -dy * (1536.0_f32 - 1.0) / 2.0;
+            return Ok(global_lat_min + global_y as f32 * dy);
+        }
+        if let (Some(_full_ny), Some(y0)) = (grid.full_ny, grid.y0) {
+            // Preserve Open-Meteo's global-grid f32 arithmetic after a native
+            // regional crop. Computing from the regional f64 origin changes
+            // the shortest JSON representation (for example 16.800003 becomes
+            // 16.8) even though it selects the same cell.
+            let dy = grid.dy as f32;
+            let global_lat_min = (grid.lat_min - y0 as f64 * grid.dy) as f32;
+            return Ok(global_lat_min + (y0 + y) as f32 * dy);
+        }
+        return Ok((grid.lat_min + y as f64 * grid.dy) as f32);
+    }
+    if array.dimensions.len() != 2 || y >= array.dimensions[0] {
+        bail!("invalid latitude grid index");
+    }
+    let ny = array.dimensions[0] as f32;
+    let (lat_min, dy) = if array.dimensions[0] == 1536 {
+        let dy = 0.11714935_f32;
+        (-dy * (ny - 1.0) / 2.0, dy)
+    } else {
+        (-90.0_f32, 180.0_f32 / (ny - 1.0))
+    };
+    Ok(lat_min + y as f32 * dy)
+}
+
+fn grid_longitude_for_index(
+    array: &ArrayMetadata,
+    native_grid: Option<&crate::manifest::NativeGridMetadata>,
+    x: u64,
+) -> Result<f32> {
+    if let Some(grid) = native_grid {
+        if x >= grid.nx {
+            bail!("invalid native longitude grid index");
+        }
+        if let (Some(full_nx), Some(x0)) = (grid.full_nx, grid.x0) {
+            let dx = 360.0_f32 / full_nx as f32;
+            return Ok(-180.0_f32 + (x0 + x) as f32 * dx);
+        }
+        return Ok((grid.lon_min + x as f64 * grid.dx) as f32);
+    }
+    if array.dimensions.len() != 2 || x >= array.dimensions[1] {
+        bail!("invalid longitude grid index");
+    }
+    Ok(-180.0_f32 + x as f32 * (360.0_f32 / array.dimensions[1] as f32))
+}
+
+#[derive(Debug, Clone, Copy)]
+struct StaticElevationSpec {
+    relative_path: &'static str,
+    dimensions: &'static [u64],
+    chunks: &'static [u64],
+    lut_offset: u64,
+    lut_size: u64,
+    file_size: u64,
+}
+
+const GFS013_STATIC_SPEC: StaticElevationSpec = StaticElevationSpec {
+    relative_path: GFS013_STATIC_ELEVATION_PATH,
+    dimensions: GFS013_STATIC_DIMENSIONS,
+    chunks: GFS013_STATIC_CHUNKS,
+    lut_offset: GFS013_STATIC_LUT_OFFSET,
+    lut_size: GFS013_STATIC_LUT_SIZE,
+    file_size: GFS013_STATIC_FILE_SIZE,
+};
+
+const GFS025_STATIC_SPEC: StaticElevationSpec = StaticElevationSpec {
+    relative_path: GFS025_STATIC_ELEVATION_PATH,
+    dimensions: GFS025_STATIC_DIMENSIONS,
+    chunks: GFS025_STATIC_CHUNKS,
+    lut_offset: GFS025_STATIC_LUT_OFFSET,
+    lut_size: GFS025_STATIC_LUT_SIZE,
+    file_size: GFS025_STATIC_FILE_SIZE,
+};
+
+fn resolve_request_sampling(
+    snapshot: &OmDataSnapshot,
+    decoder: Option<&OfficialDecoder>,
+    latitude: f64,
+    longitude: f64,
+    requested_elevation: Option<f32>,
+    mode: GridSelectionMode,
+) -> Result<RequestSampling> {
+    let decoder =
+        decoder.context("official OM decoder library is required for DEM and grid selection")?;
+    let dem_root = snapshot
+        .product("gfs013_surface")
+        .or_else(|| snapshot.product("gfs025"))
+        .or_else(|| snapshot.product("gfs_pressure_profile"))
+        .map(|product| product.product_root.clone())
+        .unwrap_or_else(|| snapshot.data_root.clone());
+    let target = match requested_elevation {
+        Some(value) => value,
+        None => read_dem90(decoder, &dem_root, latitude, longitude)?,
+    };
+    let gfs013 = if snapshot.product("gfs013_surface").is_some() {
+        Some(resolve_model_sampling(
+            snapshot,
+            decoder,
+            "gfs013_surface",
+            GFS013_STATIC_SPEC,
+            latitude,
+            longitude,
+            target,
+            mode,
+        )?)
+    } else {
+        None
+    };
+    let gfs025 = if snapshot.product("gfs025").is_some()
+        || snapshot.product("gfs_pressure_profile").is_some()
+    {
+        Some(resolve_model_sampling(
+            snapshot,
+            decoder,
+            if snapshot.product("gfs025").is_some() {
+                "gfs025"
+            } else {
+                "gfs_pressure_profile"
+            },
+            GFS025_STATIC_SPEC,
+            latitude,
+            longitude,
+            target,
+            mode,
+        )?)
+    } else {
+        None
+    };
+    let response_elevation = if target.is_nan() {
+        gfs013
+            .map(|sampling| sampling.model_elevation)
+            .unwrap_or(f32::NAN)
+    } else {
+        target
+    };
+    Ok(RequestSampling {
+        gfs013,
+        gfs025,
+        response_elevation,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn resolve_model_sampling(
+    snapshot: &OmDataSnapshot,
+    decoder: &OfficialDecoder,
+    product_name: &str,
+    spec: StaticElevationSpec,
+    latitude: f64,
+    longitude: f64,
+    target_elevation: f32,
+    mode: GridSelectionMode,
+) -> Result<ModelSampling> {
+    let product = snapshot
+        .product(product_name)
+        .with_context(|| format!("missing product {product_name}"))?;
+    let entry = product
+        .entries
+        .values()
+        .find(|entry| entry.variable == "temperature_2m")
+        .or_else(|| product.entries.values().next())
+        .with_context(|| format!("{product_name} has no grid entries"))?;
+    if entry.native_grid.is_none() && entry.array.dimensions.as_slice() != spec.dimensions {
+        bail!("static elevation grid does not match {product_name} dimensions");
+    }
+    let (center_y, center_x) = grid_index_for_lat_lon(
+        &entry.array,
+        entry.native_grid.as_ref(),
+        latitude,
+        longitude,
+    )?;
+    let ny = entry.array.dimensions[0];
+    let nx = entry.array.dimensions[1];
+    let y0 = center_y.saturating_sub(1);
+    let x0 = center_x.saturating_sub(1);
+    let y1 = (center_y + 1).min(ny - 1);
+    let x1 = (center_x + 1).min(nx - 1);
+    let height = y1 - y0 + 1;
+    let width = x1 - x0 + 1;
+    let elevations = if let Some(static_entry) = product.static_entries.get("surface_elevation") {
+        let latitudes = (y0..=y1)
+            .map(|y| {
+                grid_latitude_for_index(&static_entry.array, static_entry.native_grid.as_ref(), y)
+                    .map(f64::from)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let longitudes = (x0..=x1)
+            .map(|x| {
+                grid_longitude_for_index(&static_entry.array, static_entry.native_grid.as_ref(), x)
+                    .map(f64::from)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        read_entry_grid(&product, static_entry, decoder, &latitudes, &longitudes)?
+    } else {
+        read_static_elevation_grid(snapshot, decoder, spec, y0, x0, height, width)?
+    };
+    let center_index = (elevations.len() / 2).min(elevations.len().saturating_sub(1));
+    let center_elevation = elevations[center_index];
+    let center_position = center_y * nx + center_x;
+    let mut selected_position = center_position;
+    let mut selected_elevation = center_elevation;
+
+    match mode {
+        GridSelectionMode::Nearest => {}
+        GridSelectionMode::Land if target_elevation.is_nan() => {}
+        GridSelectionMode::Land => {
+            let delta_center = (center_elevation - target_elevation).abs();
+            if delta_center > 100.0 {
+                let mut min_delta = delta_center;
+                let mut min_elevation = f32::NAN;
+                for (index, elevation) in elevations.iter().copied().enumerate() {
+                    if elevation.is_nan() || elevation <= -999.0 {
+                        continue;
+                    }
+                    let x = x0 + index as u64 % width;
+                    let y = y0 + index as u64 / width;
+                    let grid_latitude =
+                        grid_latitude_for_index(&entry.array, entry.native_grid.as_ref(), y)?;
+                    let grid_longitude =
+                        grid_longitude_for_index(&entry.array, entry.native_grid.as_ref(), x)?;
+                    let distance_squared = (grid_latitude - latitude as f32).powi(2)
+                        + (grid_longitude - longitude as f32).powi(2);
+                    let distance_km = distance_squared.sqrt() * 111.0;
+                    let distance_penalty = distance_km * 30.0;
+                    let delta = if elevation >= 9999.0 {
+                        0.0
+                    } else {
+                        (elevation - target_elevation).abs()
+                    } + distance_penalty;
+                    if delta < min_delta && distance_km < 50.0 {
+                        min_delta = delta;
+                        selected_position = y * nx + x;
+                        min_elevation = elevation;
+                    }
+                }
+                if min_elevation.is_nan() || min_delta > 1500.0 {
+                    selected_position = center_position;
+                    selected_elevation = center_elevation;
+                } else {
+                    selected_elevation = min_elevation;
+                }
+            }
+        }
+        GridSelectionMode::Sea => {
+            if center_elevation > -999.0 {
+                let mut min_distance = f32::INFINITY;
+                let mut found = false;
+                for (index, elevation) in elevations.iter().copied().enumerate() {
+                    if elevation.is_nan() || elevation > -999.0 {
+                        continue;
+                    }
+                    let x = x0 + index as u64 % width;
+                    let y = y0 + index as u64 / width;
+                    let grid_latitude =
+                        grid_latitude_for_index(&entry.array, entry.native_grid.as_ref(), y)?;
+                    let grid_longitude =
+                        grid_longitude_for_index(&entry.array, entry.native_grid.as_ref(), x)?;
+                    let distance = (grid_latitude - latitude as f32).powi(2)
+                        + (grid_longitude - longitude as f32).powi(2);
+                    if distance < min_distance {
+                        min_distance = distance;
+                        selected_position = y * nx + x;
+                        selected_elevation = elevation;
+                        found = true;
+                    }
+                }
+                if !found {
+                    selected_position = center_position;
+                    selected_elevation = center_elevation;
+                }
+            }
+        }
+    }
+
+    let y = selected_position / nx;
+    let x = selected_position % nx;
+    let model_elevation = elevation_numeric(selected_elevation);
+    let target_elevation = if target_elevation.is_nan() {
+        model_elevation
+    } else {
+        target_elevation
+    };
+    Ok(ModelSampling {
+        latitude: official_f32_json_number(grid_latitude_for_index(
+            &entry.array,
+            entry.native_grid.as_ref(),
+            y,
+        )?)?,
+        longitude: official_f32_json_number(grid_longitude_for_index(
+            &entry.array,
+            entry.native_grid.as_ref(),
+            x,
+        )?)?,
+        model_elevation,
+        target_elevation,
+    })
+}
+
+fn read_static_elevation_grid(
+    snapshot: &OmDataSnapshot,
+    decoder: &OfficialDecoder,
+    spec: StaticElevationSpec,
+    y0: u64,
+    x0: u64,
+    height: u64,
+    width: u64,
+) -> Result<Vec<f32>> {
+    let path = snapshot.data_root.join(spec.relative_path);
+    let file =
+        Arc::new(File::open(&path).with_context(|| format!("failed to open {}", path.display()))?);
+    if file.metadata()?.len() != spec.file_size {
+        bail!(
+            "official static elevation file size is invalid: {}",
+            path.display()
+        );
+    }
+    let metadata = build_v3_array_metadata_blob(
+        "",
+        20,
+        0,
+        spec.dimensions,
+        spec.chunks,
+        spec.lut_size,
+        spec.lut_offset,
+        1.0,
+        0.0,
+    );
+    decoder.decode_grid(
+        &metadata,
+        &FullFileRangeReader { file },
+        &[y0, x0],
+        &[height, width],
+    )
+}
+
+fn read_static_elevation_grid_for_coordinates(
+    snapshot: &OmDataSnapshot,
+    decoder: &OfficialDecoder,
+    spec: StaticElevationSpec,
+    latitudes: &[f64],
+    longitudes: &[f64],
+) -> Result<Vec<f32>> {
+    if latitudes.is_empty() || longitudes.is_empty() {
+        bail!("static elevation grid coordinates must not be empty");
+    }
+    let array = ArrayMetadata {
+        data_type: 20,
+        compression: 0,
+        dimensions: spec.dimensions.to_vec(),
+        chunks: spec.chunks.to_vec(),
+        lut_offset: Some(spec.lut_offset),
+        lut_size: Some(spec.lut_size),
+        scale_factor: Some(1.0),
+        add_offset: Some(0.0),
+    };
+    let y_indices = latitudes
+        .iter()
+        .map(|latitude| {
+            grid_index_for_lat_lon(&array, None, *latitude, longitudes[0]).map(|index| index.0)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let x_indices = longitudes
+        .iter()
+        .map(|longitude| {
+            grid_index_for_lat_lon(&array, None, latitudes[0], *longitude).map(|index| index.1)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let y0 = *y_indices
+        .iter()
+        .min()
+        .context("static elevation grid has no rows")?;
+    let y1 = *y_indices
+        .iter()
+        .max()
+        .context("static elevation grid has no rows")?;
+    let x0 = *x_indices
+        .iter()
+        .min()
+        .context("static elevation grid has no columns")?;
+    let x1 = *x_indices
+        .iter()
+        .max()
+        .context("static elevation grid has no columns")?;
+    let width = x1 - x0 + 1;
+    let decoded = read_static_elevation_grid(snapshot, decoder, spec, y0, x0, y1 - y0 + 1, width)?;
+    let mut values = Vec::with_capacity(latitudes.len() * longitudes.len());
+    for y in y_indices {
+        for x in &x_indices {
+            values.push(decoded[((y - y0) * width + (*x - x0)) as usize]);
+        }
+    }
+    Ok(values)
+}
+
+fn elevation_numeric(value: f32) -> f32 {
+    if value <= -999.0 {
+        0.0
+    } else if value >= 9999.0 {
+        f32::NAN
+    } else {
+        value
+    }
+}
+
+fn gfs013_model_location(
+    snapshot: &OmDataSnapshot,
+    decoder: Option<&OfficialDecoder>,
+    latitude: f64,
+    longitude: f64,
+) -> Result<Option<(f64, f64, f32)>> {
+    if let Some(sampling) = current_product_sampling("gfs013_surface") {
+        return Ok(Some((
+            sampling.latitude,
+            sampling.longitude,
+            sampling.model_elevation,
+        )));
+    }
+    let Some(product) = snapshot.product("gfs013_surface") else {
+        return Ok(None);
+    };
+    let entry = product
+        .entries
+        .values()
+        .find(|entry| entry.variable == "temperature_2m")
+        .or_else(|| product.entries.values().next())
+        .context("gfs013_surface has no grid entries")?;
+    let (y, x) = grid_index_for_lat_lon(
+        &entry.array,
+        entry.native_grid.as_ref(),
+        latitude,
+        longitude,
+    )?;
+    let model_latitude = official_f32_json_number(grid_latitude_for_index(
+        &entry.array,
+        entry.native_grid.as_ref(),
+        y,
+    )?)?;
+    let model_longitude = official_f32_json_number(grid_longitude_for_index(
+        &entry.array,
+        entry.native_grid.as_ref(),
+        x,
+    )?)?;
+
+    let Some(decoder) = decoder else {
+        return Ok(None);
+    };
+    let static_path = snapshot.data_root.join(GFS013_STATIC_ELEVATION_PATH);
+    if !static_path.exists() {
+        bail!(
+            "required official GFS013 static elevation file is missing: {}",
+            static_path.display()
+        );
+    }
+    let cache_key = (static_path.clone(), y, x);
+    let cache = GFS_ELEVATION_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(elevation) = cache
+        .lock()
+        .map_err(|_| anyhow!("GFS elevation cache poisoned"))?
+        .get(&cache_key)
+        .copied()
+    {
+        return Ok(Some((model_latitude, model_longitude, elevation)));
+    }
+    let file = Arc::new(
+        File::open(&static_path)
+            .with_context(|| format!("failed to open {}", static_path.display()))?,
+    );
+    if file.metadata()?.len() != GFS013_STATIC_FILE_SIZE {
+        bail!("official GFS013 static elevation file size is invalid");
+    }
+    let metadata = build_v3_array_metadata_blob(
+        "",
+        20,
+        0,
+        GFS013_STATIC_DIMENSIONS,
+        GFS013_STATIC_CHUNKS,
+        GFS013_STATIC_LUT_SIZE,
+        GFS013_STATIC_LUT_OFFSET,
+        1.0,
+        0.0,
+    );
+    let reader = FullFileRangeReader { file };
+    let elevation = match decoder.decode_point(&metadata, &reader, &[y, x])? {
+        value if value <= -900.0 => 0.0,
+        value => value,
+    };
+    cache
+        .lock()
+        .map_err(|_| anyhow!("GFS elevation cache poisoned"))?
+        .insert(cache_key, elevation);
+    Ok(Some((model_latitude, model_longitude, elevation)))
+}
+
+fn air_quality_model_location(
+    snapshot: &OmDataSnapshot,
+    latitude: f64,
+    longitude: f64,
+) -> Result<Option<(f64, f64)>> {
+    let Some(product) = snapshot
+        .product("cams_global_greenhouse_gases")
+        .or_else(|| snapshot.product("cams_global"))
+    else {
+        return Ok(None);
+    };
+    let entry = product
+        .entries
+        .values()
+        .find(|entry| entry.variable == "carbon_monoxide")
+        .or_else(|| product.entries.values().next())
+        .context("air-quality model has no grid entries")?;
+    let (y, x) = grid_index_for_lat_lon(
+        &entry.array,
+        entry.native_grid.as_ref(),
+        latitude,
+        longitude,
+    )?;
+    Ok(Some((
+        official_f32_json_number(grid_latitude_for_index(
+            &entry.array,
+            entry.native_grid.as_ref(),
+            y,
+        )?)?,
+        official_f32_json_number(grid_longitude_for_index(
+            &entry.array,
+            entry.native_grid.as_ref(),
+            x,
+        )?)?,
+    )))
+}
+
+fn official_f32_json_number(value: f32) -> Result<f64> {
+    let mut buffer = ryu::Buffer::new();
+    buffer
+        .format_finite(value)
+        .parse::<f64>()
+        .context("failed to format model coordinate")
+}
+
+#[derive(Debug)]
+struct FullFileRangeReader {
+    file: Arc<File>,
+}
+
+impl BundleRangeReader for FullFileRangeReader {
+    fn read_original_range(&self, start: u64, count: u64) -> Result<Vec<u8>> {
+        let mut out = vec![0_u8; count as usize];
+        self.file.read_exact_at(&mut out, start)?;
+        Ok(out)
+    }
+}
+
+fn model_latitude_for_variable(
+    snapshot: &OmDataSnapshot,
+    variable: &str,
+    time: DateTime<Utc>,
+    latitude: f64,
+    longitude: f64,
+) -> Result<f32> {
+    let (product_name, raw_variable) = product_for_variable(snapshot, variable)?;
+    if let Some(sampling) = current_product_sampling(product_name) {
+        return Ok(sampling.latitude as f32);
+    }
+    let product = snapshot.require_product(product_name)?;
+    let key = EntryKey {
+        variable: raw_variable,
+        valid_time_utc: time,
+    };
+    let entry = product
+        .entries
+        .get(&key)
+        .with_context(|| format!("variable/time is not available: {} {}", variable, time))?;
+    let (y, _) = grid_index_for_lat_lon(
+        &entry.array,
+        entry.native_grid.as_ref(),
+        latitude,
+        longitude,
+    )?;
+    grid_latitude_for_index(&entry.array, entry.native_grid.as_ref(), y)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hj633_co_interpolation_does_not_ceil_exact_integer_due_to_f32_noise() {
+        assert_eq!(
+            hj633_2026_iaqi(0.6, &HJ633_CO_DAILY, &HJ633_AQI_BREAKPOINTS, 500.0, 1,),
+            15.0
+        );
+        assert_eq!(
+            hj633_2026_iaqi(0.7, &HJ633_CO_DAILY, &HJ633_AQI_BREAKPOINTS, 500.0, 1,),
+            18.0
+        );
+    }
+
+    #[test]
+    fn grid_index_matches_official_float_rounding_on_half_cell() {
+        let array = ArrayMetadata {
+            data_type: 20,
+            compression: 4,
+            dimensions: vec![451, 900],
+            chunks: vec![32, 32],
+            lut_offset: None,
+            lut_size: None,
+            scale_factor: None,
+            add_offset: None,
+        };
+
+        let (y, x) = grid_index_for_lat_lon(&array, None, 4.2, 75.3).unwrap();
+
+        assert_eq!((y, x), (235, 638));
+    }
+
+    #[test]
+    fn greenhouse_grid_coordinates_match_air_quality_response_metadata() {
+        let array = ArrayMetadata {
+            data_type: 20,
+            compression: 4,
+            dimensions: vec![1801, 3600],
+            chunks: vec![32, 32],
+            lut_offset: None,
+            lut_size: None,
+            scale_factor: None,
+            add_offset: None,
+        };
+
+        let (y, x) = grid_index_for_lat_lon(&array, None, 29.5638, 106.5505).unwrap();
+        assert_eq!(grid_latitude_for_index(&array, None, y).unwrap(), 29.599998);
+        assert_eq!(
+            grid_longitude_for_index(&array, None, x).unwrap(),
+            106.600006
+        );
+    }
+
+    #[test]
+    fn native_cams_crop_preserves_official_global_float_coordinates() {
+        let array = ArrayMetadata {
+            data_type: 20,
+            compression: 4,
+            dimensions: vec![150, 180, 121],
+            chunks: vec![32, 32, 121],
+            lut_offset: None,
+            lut_size: None,
+            scale_factor: None,
+            add_offset: None,
+        };
+        let grid = crate::manifest::NativeGridMetadata {
+            nx: 180,
+            ny: 150,
+            lon_min: 69.20000000000002,
+            lat_min: -0.7999999999999972,
+            dx: 0.4,
+            dy: 0.4,
+            dt_seconds: 3600,
+            om_file_length: 217,
+            full_nx: Some(900),
+            full_ny: Some(451),
+            x0: Some(623),
+            y0: Some(223),
+        };
+
+        assert_eq!(
+            grid_latitude_for_index(&array, Some(&grid), 44).unwrap(),
+            16.800003
+        );
+    }
+
+    #[test]
+    fn grid_index_uses_official_gfs013_latitude_spacing() {
+        let array = ArrayMetadata {
+            data_type: 20,
+            compression: 4,
+            dimensions: vec![1536, 3072],
+            chunks: vec![32, 32],
+            lut_offset: None,
+            lut_size: None,
+            scale_factor: None,
+            add_offset: None,
+        };
+
+        let (y, x) = grid_index_for_lat_lon(&array, None, 11.6, 85.9).unwrap();
+
+        assert_eq!((y, x), (867, 2269));
+    }
+
+    #[test]
+    fn grid_latitude_uses_selected_gfs013_cell_center() {
+        let array = ArrayMetadata {
+            data_type: 20,
+            compression: 4,
+            dimensions: vec![1536, 3072],
+            chunks: vec![32, 32],
+            lut_offset: None,
+            lut_size: None,
+            scale_factor: None,
+            add_offset: None,
+        };
+
+        let (y, _) = grid_index_for_lat_lon(&array, None, 22.75, 125.0).unwrap();
+        let model_latitude = grid_latitude_for_index(&array, None, y).unwrap();
+
+        assert!((model_latitude - 22.78555).abs() < 0.00001);
+    }
+
+    #[test]
+    fn model_coordinates_use_official_shortest_float_representation() {
+        assert_eq!(official_f32_json_number(131.953125).unwrap(), 131.95312);
+        assert_eq!(official_f32_json_number(75.5859375).unwrap(), 75.58594);
+        assert_eq!(official_f32_json_number(82.734375).unwrap(), 82.734375);
+        assert_eq!(
+            official_f32_json_number(39.06932067871094).unwrap(),
+            39.06932
+        );
+    }
+
+    #[test]
+    fn wind_gusts_are_routed_to_gfs025() {
+        assert!(is_gfs025_variable("wind_gusts_10m"));
+    }
+
+    #[test]
+    fn surface_pressure_matches_openmeteo_formula() {
+        assert_eq!(surface_pressure(20.0, 1013.25, f32::NAN), 1013.25);
+        assert!((surface_pressure(20.0, 1013.25, 1000.0) - 902.9).abs() < 0.2);
+        assert_eq!(
+            seed_variable_for_times("surface_pressure"),
+            "temperature_2m"
+        );
+    }
+
+    #[test]
+    fn surface_pressure_uses_model_elevation_when_target_is_nan() {
+        let sampling = ModelSampling {
+            latitude: 30.0,
+            longitude: 120.0,
+            model_elevation: 864.0,
+            target_elevation: f32::NAN,
+        };
+        assert_eq!(surface_pressure_elevation(sampling), 864.0);
+    }
+
+    #[test]
+    fn webp_output_rounding_matches_json_precision() {
+        assert_eq!(round_variable_output_value("temperature_2m", 24.85), 24.9);
+        assert_eq!(round_variable_output_value("cloud_cover", 49.6), 50.0);
+        assert_eq!(
+            round_variable_output_value("aerosol_optical_depth", 0.126),
+            0.13
+        );
+    }
+}
+
+fn ensure_in_selection(entry: &BundleEntry, y: u64, x: u64) -> Result<()> {
+    if entry.selection_ranges.len() != 2 {
+        bail!("only 2D selection ranges are supported");
+    }
+    let y_range = entry.selection_ranges[0];
+    let x_range = entry.selection_ranges[1];
+    if y < y_range[0] || y >= y_range[1] || x < x_range[0] || x >= x_range[1] {
+        bail!(
+            "point is outside downloaded product coverage for variable {}",
+            entry.variable
+        );
+    }
+    Ok(())
+}
+
+fn read_uncompressed_point(
+    product: &ProductSnapshot,
+    entry: &BundleEntry,
+    y: u64,
+    x: u64,
+) -> Result<f32> {
+    if entry.array.data_type != 20 {
+        bail!("uncompressed fallback only supports float arrays");
+    }
+    if entry.array.chunks != entry.array.dimensions {
+        bail!("uncompressed fallback requires one full-array chunk");
+    }
+    let data_range = entry
+        .data_byte_ranges
+        .first()
+        .context("entry has no data_byte_ranges")?;
+    let nx = entry.array.dimensions[1];
+    let offset = (y * nx + x) * 4;
+    let original_start = data_range[0] + offset;
+    let reader = entry_range_reader(product, entry)?;
+    let bytes = reader.read_original_range(original_start, 4)?;
+    Ok(f32::from_le_bytes(
+        bytes.try_into().expect("length checked"),
+    ))
+}
+
+#[derive(Debug)]
+struct EntryBundleReader {
+    bundle_handle: Arc<File>,
+    entry: BundleEntry,
+    direct_file: bool,
+}
+
+impl EntryBundleReader {
+    fn new(bundle_handle: Arc<File>, entry: BundleEntry) -> Self {
+        Self {
+            bundle_handle,
+            entry,
+            direct_file: false,
+        }
+    }
+
+    fn direct(bundle_handle: Arc<File>, entry: BundleEntry) -> Self {
+        Self {
+            bundle_handle,
+            entry,
+            direct_file: true,
+        }
+    }
+}
+
+impl BundleRangeReader for EntryBundleReader {
+    fn read_original_range(&self, start: u64, count: u64) -> Result<Vec<u8>> {
+        if self.direct_file {
+            let mut output = vec![0_u8; count as usize];
+            self.bundle_handle.read_exact_at(&mut output, start)?;
+            return Ok(output);
+        }
+        let end = start
+            .checked_add(count)
+            .ok_or_else(|| anyhow!("range overflow"))?;
+        let mut remaining_start = start;
+        let remaining_end = end;
+        let mut out = Vec::with_capacity(count as usize);
+        let mut local_cursor = self.entry.bundle_offset;
+        for range in &self.entry.byte_ranges {
+            let original_start = range[0];
+            let original_end = range[1] + 1;
+            let len = original_end - original_start;
+            if remaining_start >= original_end || remaining_end <= original_start {
+                local_cursor += len;
+                continue;
+            }
+            let part_start = remaining_start.max(original_start);
+            let part_end = remaining_end.min(original_end);
+            if part_start > remaining_start {
+                bail!("requested original range has a gap not present in bundle");
+            }
+            let local_offset = local_cursor + (part_start - original_start);
+            let part_len = part_end - part_start;
+            let before = out.len();
+            out.resize(before + part_len as usize, 0);
+            self.bundle_handle
+                .read_exact_at(&mut out[before..], local_offset)?;
+            remaining_start = part_end;
+            if remaining_start == remaining_end {
+                return Ok(out);
+            }
+            local_cursor += len;
+        }
+        bail!("requested original range is not present in bundle")
+    }
+}
+
+fn entry_file_handle(product: &ProductSnapshot, entry: &BundleEntry) -> Result<Arc<File>> {
+    if let Some(path) = &entry.native_file_path {
+        return product
+            .native_handles
+            .get(path)
+            .cloned()
+            .with_context(|| format!("native OM handle is missing: {path}"));
+    }
+    Ok(product.bundle_handle.clone())
+}
+
+fn entry_range_reader(product: &ProductSnapshot, entry: &BundleEntry) -> Result<EntryBundleReader> {
+    let handle = entry_file_handle(product, entry)?;
+    Ok(if entry.native_file_path.is_some() {
+        EntryBundleReader::direct(handle, entry.clone())
+    } else {
+        EntryBundleReader::new(handle, entry.clone())
+    })
+}
+
+fn read_optional_direct_grid_series_unrounded(
+    snapshot: &OmDataSnapshot,
+    decoder: &OfficialDecoder,
+    variable: &str,
+    times: &[DateTime<Utc>],
+    latitudes: &[f64],
+    longitudes: &[f64],
+) -> Result<Option<Vec<Vec<f32>>>> {
+    match read_direct_grid_series(
+        snapshot, decoder, variable, times, latitudes, longitudes, false,
+    ) {
+        Ok(values) => Ok(Some(values)),
+        Err(_) => Ok(None),
+    }
+}
+
+fn read_weather_code_grid_series(
+    snapshot: &OmDataSnapshot,
+    decoder: &OfficialDecoder,
+    times: &[DateTime<Utc>],
+    latitudes: &[f64],
+    longitudes: &[f64],
+) -> Result<Vec<Vec<f32>>> {
+    let cloudcover = read_direct_grid_series(
+        snapshot,
+        decoder,
+        "cloud_cover",
+        times,
+        latitudes,
+        longitudes,
+        true,
+    )?;
+    let precipitation = read_direct_grid_series(
+        snapshot,
+        decoder,
+        "precipitation",
+        times,
+        latitudes,
+        longitudes,
+        true,
+    )?;
+    let snowfall = read_direct_grid_series(
+        snapshot,
+        decoder,
+        "snowfall_water_equivalent",
+        times,
+        latitudes,
+        longitudes,
+        true,
+    )?;
+    let showers = read_direct_grid_series(
+        snapshot, decoder, "showers", times, latitudes, longitudes, false,
+    )?;
+    let cape = read_optional_direct_grid_series_unrounded(
+        snapshot, decoder, "cape", times, latitudes, longitudes,
+    )?;
+    let gusts = read_optional_direct_grid_series_unrounded(
+        snapshot,
+        decoder,
+        "wind_gusts_10m",
+        times,
+        latitudes,
+        longitudes,
+    )?;
+    let visibility = read_optional_direct_grid_series_unrounded(
+        snapshot,
+        decoder,
+        "visibility",
+        times,
+        latitudes,
+        longitudes,
+    )?;
+    let freezing_rain = read_optional_direct_grid_series_unrounded(
+        snapshot,
+        decoder,
+        "categorical_freezing_rain",
+        times,
+        latitudes,
+        longitudes,
+    )?;
+    let lifted_index = read_optional_direct_grid_series_unrounded(
+        snapshot,
+        decoder,
+        "lifted_index",
+        times,
+        latitudes,
+        longitudes,
+    )?;
+    let cin = read_optional_direct_grid_series_unrounded(
+        snapshot,
+        decoder,
+        "convective_inhibition",
+        times,
+        latitudes,
+        longitudes,
+    )?;
+    let pbl = read_optional_direct_grid_series_unrounded(
+        snapshot,
+        decoder,
+        "boundary_layer_height",
+        times,
+        latitudes,
+        longitudes,
+    )?;
+
+    let (product_name, raw_variable) = product_for_variable(snapshot, "cloud_cover")?;
+    let products = snapshot.product_snapshots(product_name);
+    let exact_cloud_times = times
+        .iter()
+        .map(|time| {
+            products.iter().any(|product| {
+                product.entries.contains_key(&EntryKey {
+                    variable: raw_variable.clone(),
+                    valid_time_utc: *time,
+                })
+            })
+        })
+        .collect::<Vec<_>>();
+    let entry = times
+        .iter()
+        .find_map(|time| {
+            products.iter().find_map(|product| {
+                product.entries.get(&EntryKey {
+                    variable: raw_variable.clone(),
+                    valid_time_utc: *time,
+                })
+            })
+        })
+        .context("weather-code series has no cloud-cover grid entry")?;
+    let model_latitudes = latitudes
+        .iter()
+        .map(|latitude| {
+            let (y, _) = grid_index_for_lat_lon(
+                &entry.array,
+                entry.native_grid.as_ref(),
+                *latitude,
+                longitudes[0],
+            )?;
+            grid_latitude_for_index(&entry.array, entry.native_grid.as_ref(), y)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let width = longitudes.len();
+    let mut output = Vec::with_capacity(times.len());
+    for time_index in 0..times.len() {
+        if !exact_cloud_times[time_index] {
+            output.push(vec![f32::NAN; cloudcover[time_index].len()]);
+            continue;
+        }
+        let mut values = Vec::with_capacity(cloudcover[time_index].len());
+        for index in 0..cloudcover[time_index].len() {
+            let optional = |series: &Option<Vec<Vec<f32>>>| {
+                series.as_ref().map(|series| series[time_index][index])
+            };
+            values.push(
+                weather_code(
+                    cloudcover[time_index][index],
+                    precipitation[time_index][index],
+                    Some(showers[time_index][index]),
+                    snowfall[time_index][index] * 0.7,
+                    optional(&gusts),
+                    optional(&cape),
+                    optional(&lifted_index),
+                    optional(&cin),
+                    optional(&pbl),
+                    optional(&visibility),
+                    optional(&freezing_rain),
+                    3600,
+                    model_latitudes[index / width],
+                )
+                .unwrap_or(f32::NAN),
+            );
+        }
+        output.push(values);
+    }
+    Ok(output)
+}
+
+fn read_optional_direct_grid_unrounded(
+    snapshot: &OmDataSnapshot,
+    decoder: &OfficialDecoder,
+    variable: &str,
+    time: DateTime<Utc>,
+    latitudes: &[f64],
+    longitudes: &[f64],
+) -> Result<Option<Vec<f32>>> {
+    match read_direct_grid(
+        snapshot, decoder, variable, time, latitudes, longitudes, false,
+    ) {
+        Ok(values) => Ok(Some(values)),
+        Err(_) => Ok(None),
+    }
+}
+
+fn read_weather_code_grid(
+    snapshot: &OmDataSnapshot,
+    decoder: &OfficialDecoder,
+    time: DateTime<Utc>,
+    latitudes: &[f64],
+    longitudes: &[f64],
+) -> Result<Vec<f32>> {
+    let cloudcover = read_direct_grid(
+        snapshot,
+        decoder,
+        "cloud_cover",
+        time,
+        latitudes,
+        longitudes,
+        true,
+    )?;
+    let precipitation = read_direct_grid(
+        snapshot,
+        decoder,
+        "precipitation",
+        time,
+        latitudes,
+        longitudes,
+        true,
+    )?;
+    let snowfall = read_direct_grid(
+        snapshot,
+        decoder,
+        "snowfall_water_equivalent",
+        time,
+        latitudes,
+        longitudes,
+        true,
+    )?;
+    let showers = read_direct_grid(
+        snapshot, decoder, "showers", time, latitudes, longitudes, false,
+    )?;
+    let cape = read_optional_direct_grid_unrounded(
+        snapshot, decoder, "cape", time, latitudes, longitudes,
+    )?;
+    let gusts = read_optional_direct_grid_unrounded(
+        snapshot,
+        decoder,
+        "wind_gusts_10m",
+        time,
+        latitudes,
+        longitudes,
+    )?;
+    let visibility = read_optional_direct_grid_unrounded(
+        snapshot,
+        decoder,
+        "visibility",
+        time,
+        latitudes,
+        longitudes,
+    )?;
+    let freezing_rain = read_optional_direct_grid_unrounded(
+        snapshot,
+        decoder,
+        "categorical_freezing_rain",
+        time,
+        latitudes,
+        longitudes,
+    )?;
+    let lifted_index = read_optional_direct_grid_unrounded(
+        snapshot,
+        decoder,
+        "lifted_index",
+        time,
+        latitudes,
+        longitudes,
+    )?;
+    let cin = read_optional_direct_grid_unrounded(
+        snapshot,
+        decoder,
+        "convective_inhibition",
+        time,
+        latitudes,
+        longitudes,
+    )?;
+    let pbl = read_optional_direct_grid_unrounded(
+        snapshot,
+        decoder,
+        "boundary_layer_height",
+        time,
+        latitudes,
+        longitudes,
+    )?;
+    let (product_name, raw_variable) = product_for_variable(snapshot, "cloud_cover")?;
+    let products = snapshot.product_snapshots(product_name);
+    let entry = products
+        .iter()
+        .find_map(|product| {
+            product.entries.get(&EntryKey {
+                variable: raw_variable.clone(),
+                valid_time_utc: time,
+            })
+        })
+        .with_context(|| format!("variable/time is not available: cloud_cover {}", time))?;
+    let model_latitudes = latitudes
+        .iter()
+        .map(|latitude| {
+            let (y, _) = grid_index_for_lat_lon(
+                &entry.array,
+                entry.native_grid.as_ref(),
+                *latitude,
+                longitudes[0],
+            )?;
+            grid_latitude_for_index(&entry.array, entry.native_grid.as_ref(), y)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let width = longitudes.len();
+    let mut values = Vec::with_capacity(cloudcover.len());
+    for index in 0..cloudcover.len() {
+        let optional = |values: &Option<Vec<f32>>| values.as_ref().map(|values| values[index]);
+        values.push(
+            weather_code(
+                cloudcover[index],
+                precipitation[index],
+                Some(showers[index]),
+                snowfall[index] * 0.7,
+                optional(&gusts),
+                optional(&cape),
+                optional(&lifted_index),
+                optional(&cin),
+                optional(&pbl),
+                optional(&visibility),
+                optional(&freezing_rain),
+                3600,
+                model_latitudes[index / width],
+            )
+            .unwrap_or(f32::NAN),
+        );
+    }
+    Ok(values)
+}
+
+fn read_weather_code(
+    snapshot: &OmDataSnapshot,
+    decoder: Option<&OfficialDecoder>,
+    time: DateTime<Utc>,
+    latitude: f64,
+    longitude: f64,
+) -> Result<f32> {
+    let model_latitude =
+        model_latitude_for_variable(snapshot, "cloud_cover", time, latitude, longitude)?;
+    let cloudcover = read_direct(snapshot, decoder, "cloud_cover", time, latitude, longitude)?;
+    let precipitation = read_direct(
+        snapshot,
+        decoder,
+        "precipitation",
+        time,
+        latitude,
+        longitude,
+    )?;
+    let snowfall = read_direct(
+        snapshot,
+        decoder,
+        "snowfall_water_equivalent",
+        time,
+        latitude,
+        longitude,
+    )? * 0.7;
+    let showers = read_direct_unrounded(snapshot, decoder, "showers", time, latitude, longitude)?;
+    let cape =
+        read_optional_direct_unrounded(snapshot, decoder, "cape", time, latitude, longitude)?;
+    let gusts = read_optional_direct_unrounded(
+        snapshot,
+        decoder,
+        "wind_gusts_10m",
+        time,
+        latitude,
+        longitude,
+    )?;
+    let visibility =
+        read_optional_direct_unrounded(snapshot, decoder, "visibility", time, latitude, longitude)?;
+    let freezing_rain = read_optional_direct_unrounded(
+        snapshot,
+        decoder,
+        "categorical_freezing_rain",
+        time,
+        latitude,
+        longitude,
+    )?;
+    let lifted_index = read_optional_direct_unrounded(
+        snapshot,
+        decoder,
+        "lifted_index",
+        time,
+        latitude,
+        longitude,
+    )?;
+    let cin = read_optional_direct_unrounded(
+        snapshot,
+        decoder,
+        "convective_inhibition",
+        time,
+        latitude,
+        longitude,
+    )?;
+    let pbl = read_optional_direct_unrounded(
+        snapshot,
+        decoder,
+        "boundary_layer_height",
+        time,
+        latitude,
+        longitude,
+    )?;
+    Ok(weather_code(
+        cloudcover,
+        precipitation,
+        Some(showers),
+        snowfall,
+        gusts,
+        cape,
+        lifted_index,
+        cin,
+        pbl,
+        visibility,
+        freezing_rain,
+        3600,
+        model_latitude,
+    )
+    .unwrap_or(f32::NAN))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn weather_code(
+    cloudcover: f32,
+    precipitation: f32,
+    convective_precipitation: Option<f32>,
+    snowfall_centimeters: f32,
+    gusts: Option<f32>,
+    cape: Option<f32>,
+    lifted_index: Option<f32>,
+    convective_inhibition: Option<f32>,
+    pbl_height: Option<f32>,
+    visibility_meters: Option<f32>,
+    categorical_freezing_rain: Option<f32>,
+    model_dt_seconds: i32,
+    latitude: f32,
+) -> Option<f32> {
+    if !cloudcover.is_finite() || !precipitation.is_finite() || !snowfall_centimeters.is_finite() {
+        return None;
+    }
+    let model_dt_hours = model_dt_seconds as f32 / 3600.0;
+    if let Some(cape_value) = cape {
+        // Exact port of Open-Meteo WeatherCode.swift at 3a64572c7797738300a5d1d87081a7cbd8f35b3c.
+        let thunderstorms = thunderstorm_probability(
+            convective_precipitation,
+            precipitation,
+            cloudcover,
+            gusts,
+            cape_value,
+            lifted_index,
+            convective_inhibition,
+            pbl_height,
+            model_dt_seconds,
+            latitude,
+        );
+        if thunderstorms > 85.0 {
+            return Some(96.0);
+        }
+        if thunderstorms > 60.0 {
+            return Some(95.0);
+        }
+    }
+    if categorical_freezing_rain.unwrap_or(0.0) >= 1.0 {
+        match precipitation / model_dt_hours {
+            x if (0.01..0.5).contains(&x) => return Some(56.0),
+            x if (0.5..1.3).contains(&x) => return Some(57.0),
+            x if (1.3..2.5).contains(&x) => return Some(66.0),
+            x if x >= 2.5 => return Some(67.0),
+            _ => {}
+        }
+    }
+    if convective_precipitation.unwrap_or(0.0) > 0.0 || cape.unwrap_or(0.0) >= 800.0 {
+        match snowfall_centimeters / model_dt_hours {
+            x if (0.01..0.8).contains(&x) => return Some(85.0),
+            x if x >= 0.8 => return Some(86.0),
+            _ => {}
+        }
+        match precipitation / model_dt_hours {
+            x if (1.3..2.5).contains(&x) => return Some(80.0),
+            x if (2.5..7.6).contains(&x) => return Some(81.0),
+            x if x >= 7.6 => return Some(82.0),
+            _ => {}
+        }
+    }
+    match snowfall_centimeters / model_dt_hours {
+        x if (0.01..0.2).contains(&x) => return Some(71.0),
+        x if (0.2..0.8).contains(&x) => return Some(73.0),
+        x if x >= 0.8 => return Some(75.0),
+        _ => {}
+    }
+    match precipitation / model_dt_hours {
+        x if (0.01..0.5).contains(&x) => return Some(51.0),
+        x if (0.5..1.0).contains(&x) => return Some(53.0),
+        x if (1.0..1.3).contains(&x) => return Some(55.0),
+        x if (1.3..2.5).contains(&x) => return Some(61.0),
+        x if (2.5..7.6).contains(&x) => return Some(63.0),
+        x if x >= 7.6 => return Some(65.0),
+        _ => {}
+    }
+    if visibility_meters.is_some_and(|value| value <= 1000.0) {
+        return Some(45.0);
+    }
+    match cloudcover {
+        x if (0.0..20.0).contains(&x) => Some(0.0),
+        x if (20.0..50.0).contains(&x) => Some(1.0),
+        x if (50.0..80.0).contains(&x) => Some(2.0),
+        x if x >= 80.0 => Some(3.0),
+        _ => None,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn thunderstorm_probability(
+    convective_precipitation: Option<f32>,
+    precipitation: f32,
+    cloudcover: f32,
+    gusts: Option<f32>,
+    cape: f32,
+    lifted_index: Option<f32>,
+    convective_inhibition: Option<f32>,
+    pbl_height: Option<f32>,
+    model_dt_seconds: i32,
+    latitude: f32,
+) -> f32 {
+    if cape <= 10.0 {
+        return 0.0;
+    }
+    if cloudcover < 30.0 {
+        return 0.0;
+    }
+    if convective_inhibition.is_some_and(|value| value > 250.0) {
+        return 0.0;
+    }
+    if lifted_index.is_some_and(|value| value > 2.0) {
+        return 0.0;
+    }
+    let abs_lat = latitude.abs();
+    let latitude_factor = if abs_lat >= 30.0 {
+        1.0
+    } else {
+        0.8 + (0.2 * (abs_lat / 30.0))
+    };
+    let mut accumulated_score = 0.0;
+    let mut total_weight = 0.0;
+
+    let cape_weight = 0.25;
+    let max_cape_threshold = 2500.0 + (1500.0 * (1.0 - (abs_lat.min(30.0) / 30.0)));
+    let cape_score = ((cape - 300.0) / (max_cape_threshold - 300.0)).clamp(0.0, 1.0);
+    accumulated_score += cape_score * cape_weight;
+    total_weight += cape_weight;
+
+    if let Some(cin) = convective_inhibition {
+        let cin_weight = 0.15;
+        let cin_score = if cin <= 15.0 {
+            1.0
+        } else {
+            (1.0 - ((cin - 15.0) / 135.0)).clamp(0.0, 1.0)
+        };
+        accumulated_score += cin_score * cin_weight;
+        total_weight += cin_weight;
+    }
+    if let Some(li) = lifted_index {
+        let li_weight = 0.15;
+        let li_score = ((0.0 - li) / 8.0).clamp(0.0, 1.0);
+        accumulated_score += li_score * li_weight;
+        total_weight += li_weight;
+    }
+    let dt_hours = model_dt_seconds as f32 / 3600.0;
+    let reference_precip_per_hour = 2.0 + (3.0 * (1.0 - (abs_lat.min(30.0) / 30.0)));
+    let reference_precip = reference_precip_per_hour * dt_hours;
+    let precip_weight = 0.25;
+    if let Some(showers) = convective_precipitation.filter(|value| *value > 0.0) {
+        let precip_score = (showers / reference_precip).clamp(0.0, 1.0);
+        accumulated_score += precip_score * precip_weight;
+        total_weight += precip_weight;
+    } else {
+        let fallback_reference_precip = reference_precip * 1.6;
+        let fallback_precip_score = (precipitation / fallback_reference_precip).clamp(0.0, 1.0);
+        accumulated_score += fallback_precip_score * precip_weight * 0.6;
+        total_weight += precip_weight * 0.6;
+    }
+    if let Some(pbl) = pbl_height {
+        let pbl_weight = 0.075;
+        let pbl_score = ((pbl - 300.0) / 1200.0).clamp(0.0, 1.0);
+        accumulated_score += pbl_score * pbl_weight;
+        total_weight += pbl_weight;
+    }
+    if let Some(gust) = gusts {
+        let gust_weight = 0.075;
+        let gust_score = ((gust - 5.0) / 13.0).clamp(0.0, 1.0);
+        accumulated_score += gust_score * gust_weight;
+        total_weight += gust_weight;
+    }
+    let mut base_probability = (accumulated_score / total_weight) * 100.0;
+    if let (Some(precip), Some(cin)) = (convective_precipitation, convective_inhibition) {
+        let trigger_rain_threshold = 0.1 * dt_hours;
+        if precip > trigger_rain_threshold && cape > 300.0 && cin < 50.0 {
+            base_probability = (base_probability * 1.3).min(100.0);
+        }
+    }
+    if convective_precipitation.unwrap_or(precipitation) <= 0.0 {
+        base_probability *= 0.7;
+    }
+    if convective_inhibition.is_some_and(|cin| cin > 100.0) {
+        base_probability *= 0.3;
+    }
+    let cloud_cover_factor = if cloudcover >= 60.0 {
+        1.0
+    } else {
+        0.6 + (0.4 * ((cloudcover - 30.0) / 30.0))
+    };
+    (base_probability * cloud_cover_factor * latitude_factor).clamp(0.0, 100.0)
+}
+
+fn wind_direction(u: f32, v: f32) -> f32 {
+    if v == 0.0 {
+        return if u < 0.0 { 90.0 } else { 270.0 };
+    }
+    if u == 0.0 {
+        return if v < 0.0 { 360.0 } else { 180.0 };
+    }
+    180.0 + u.atan2(v).to_degrees()
+}
+
+fn wind_scale_factor(from: f32, to: f32) -> f32 {
+    let factor_from = 4.87 / (67.8 * from - 5.42).ln();
+    let factor_to = 4.87 / (67.8 * to - 5.42).ln();
+    factor_from / factor_to
+}
+
+fn gfs013_sampling(
+    snapshot: &OmDataSnapshot,
+    decoder: Option<&OfficialDecoder>,
+    latitude: f64,
+    longitude: f64,
+) -> Result<ModelSampling> {
+    if let Some(sampling) = current_product_sampling("gfs013_surface") {
+        return Ok(sampling);
+    }
+    let (latitude, longitude, elevation) =
+        gfs013_model_location(snapshot, decoder, latitude, longitude)?
+            .context("GFS013 sampling is not available")?;
+    Ok(ModelSampling {
+        latitude,
+        longitude,
+        model_elevation: elevation,
+        target_elevation: elevation,
+    })
+}
+
+fn precip_phase(code: f32) -> f32 {
+    match code as i32 {
+        51 | 53 | 55 | 61 | 63 | 65 | 80 | 81 | 82 => 1.0,
+        71 | 73 | 75 | 77 | 85 | 86 => 2.0,
+        56 | 57 | 66 | 67 => 4.0,
+        _ => 0.0,
+    }
+}
+
+fn dew_point(temperature: f32, relative_humidity: f32) -> f32 {
+    let beta = 17.625_f32;
+    let lambda = 243.04_f32;
+    let x = (relative_humidity / 100.0).ln() + ((beta * temperature) / (lambda + temperature));
+    lambda * x / (beta - x)
+}
+
+fn wet_bulb_temperature(temperature: f32, relative_humidity: f32) -> f32 {
+    let wet = temperature * (0.151977 * (relative_humidity + 8.313659).sqrt()).atan()
+        + (temperature + relative_humidity).atan()
+        - (relative_humidity - 1.676331).atan()
+        + 0.00391838 * relative_humidity.powf(1.5) * (0.023101 * relative_humidity).atan()
+        - 4.686035;
+    wet.min(temperature)
+}
+
+fn evapotranspiration(latent_heat_flux: f32) -> f32 {
+    (latent_heat_flux * -3600.0 / 2.5e6).max(0.0)
+}
+
+fn vapor_pressure_deficit(temperature: f32, dewpoint: f32) -> f32 {
+    let saturated = 0.6108 * ((17.27 * temperature) / (temperature + 237.3)).exp();
+    let actual = 0.6108 * ((17.27 * dewpoint) / (dewpoint + 237.3)).exp();
+    (saturated - actual).max(0.0)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn et0_evapotranspiration(
+    temperature: f32,
+    wind_speed_10m: f32,
+    dewpoint: f32,
+    shortwave_radiation: f32,
+    elevation: f32,
+    extraterrestrial_radiation: f32,
+    dt_seconds: i64,
+) -> f32 {
+    let wind_speed_2m = wind_scale_factor(10.0, 2.0) * wind_speed_10m;
+    let beta = 17.27_f32;
+    let lambda = 237.3_f32;
+    let slope = 4098.0 * (0.6108 * (beta * temperature / (temperature + lambda)).exp())
+        / (temperature + lambda).powi(2);
+    let atmospheric_pressure = 101.3 * ((293.0 - 0.0065 * elevation) / 293.0).powf(5.26);
+    let psychrometric = 0.000665 * atmospheric_pressure;
+    let saturated = 0.6108 * ((beta * temperature) / (temperature + lambda)).exp();
+    let actual = 0.6108 * ((beta * dewpoint) / (dewpoint + lambda)).exp();
+    let deficit = saturated - actual;
+    let net_shortwave = shortwave_radiation * (1.0 - 0.23) * 0.0864 / 24.0;
+    let clear_sky = (0.75 + 0.00002 * elevation) * extraterrestrial_radiation;
+    let relative_humidity = (100.0 * ((17.625 * dewpoint) / (243.04 + dewpoint)).exp()
+        / ((17.625 * temperature) / (243.04 + temperature)).exp())
+    .clamp(0.0, 100.0);
+    let relative_approximation = 0.4 + relative_humidity / 100.0 * 0.4;
+    let relative_radiation = if extraterrestrial_radiation <= 0.0 {
+        relative_approximation
+    } else {
+        (shortwave_radiation / clear_sky).min(1.0)
+    };
+    let net_longwave = 0.20429166e-9
+        * (temperature + 273.16).powi(4)
+        * (0.34 - 0.14 * actual.sqrt())
+        * (1.35 * relative_radiation - 0.35);
+    let net_radiation = net_shortwave - net_longwave;
+    let soil_heat_flux = if shortwave_radiation <= 0.0 {
+        0.5 * net_radiation
+    } else {
+        0.1 * net_radiation
+    };
+    let et0 = (0.408 * slope * (net_radiation - soil_heat_flux)
+        + psychrometric * (37.0 / (temperature + 273.0)) * wind_speed_2m * deficit)
+        / (slope + psychrometric * (1.0 + 0.34 * wind_speed_2m));
+    (et0 * (dt_seconds / 3600) as f32).max(0.0)
+}
+
+fn apparent_temperature(
+    temperature_2m: f32,
+    relative_humidity_2m: f32,
+    wind_speed_10m: f32,
+    shortwave_radiation: Option<f32>,
+) -> f32 {
+    let wind_speed_2m = wind_speed_10m * 0.75;
+    let vapor_pressure = relative_humidity_2m / 100.0
+        * 6.105
+        * (17.27 * temperature_2m / (237.7 + temperature_2m)).exp();
+    let radiation = (0.1 * (shortwave_radiation.unwrap_or(550.0) - 550.0)).max(0.0);
+    temperature_2m + 0.348 * vapor_pressure - 0.70 * wind_speed_2m
+        + 0.70 * (radiation / (wind_speed_2m + 10.0))
+        - 4.25
+}
+
+fn unit_for_variable(variable: &str) -> &'static str {
+    if variable.ends_with("hPa") {
+        if variable.starts_with("temperature_") {
+            return "°C";
+        }
+        if variable.starts_with("dew_point_") || variable.starts_with("dewpoint_") {
+            return "°C";
+        }
+        if variable.starts_with("wind_speed_") || variable.starts_with("windspeed_") {
+            return "m/s";
+        }
+        if variable.starts_with("wind_direction_") || variable.starts_with("winddirection_") {
+            return "°";
+        }
+        if variable.starts_with("relative_humidity_") || variable.starts_with("cloud_cover_") {
+            return "%";
+        }
+        if variable.starts_with("wind_u_component_")
+            || variable.starts_with("wind_v_component_")
+            || variable.starts_with("vertical_velocity_")
+        {
+            return "m/s";
+        }
+        if variable.starts_with("geopotential_height_") {
+            return "m";
+        }
+    }
+    match variable {
+        "temperature_2m"
+        | "apparent_temperature"
+        | "temperature_80m"
+        | "temperature_100m"
+        | "temperature_120m"
+        | "dew_point_2m"
+        | "dewpoint_2m"
+        | "wet_bulb_temperature_2m"
+        | "surface_temperature"
+        | "soil_temperature_0_to_10cm"
+        | "soil_temperature_10_to_40cm"
+        | "soil_temperature_40_to_100cm"
+        | "soil_temperature_100_to_200cm" => "°C",
+        "relative_humidity_2m"
+        | "relativehumidity_2m"
+        | "cloud_cover"
+        | "cloudcover"
+        | "cloud_cover_low"
+        | "cloudcover_low"
+        | "cloud_cover_mid"
+        | "cloudcover_mid"
+        | "cloud_cover_high"
+        | "cloudcover_high" => "%",
+        "precipitation" | "showers" | "rain" | "snowfall_water_equivalent" => "mm",
+        "snowfall" => "cm",
+        "wind_u_component_10m"
+        | "wind_v_component_10m"
+        | "wind_u_component_80m"
+        | "wind_v_component_80m"
+        | "wind_u_component_100m"
+        | "wind_v_component_100m"
+        | "wind_speed_10m"
+        | "windspeed_10m"
+        | "wind_speed_80m"
+        | "windspeed_80m"
+        | "wind_speed_100m"
+        | "windspeed_100m"
+        | "wind_speed_120m"
+        | "windspeed_120m"
+        | "wind_gusts_10m" => "m/s",
+        "wind_direction_10m"
+        | "winddirection_10m"
+        | "wind_direction_80m"
+        | "winddirection_80m"
+        | "wind_direction_100m"
+        | "winddirection_100m"
+        | "wind_direction_120m"
+        | "winddirection_120m" => "°",
+        "pressure_msl" | "surface_pressure" => "hPa",
+        "visibility" => "m",
+        "freezing_level_height" | "boundary_layer_height" | "snow_depth" => "m",
+        "weather_code" | "weathercode" => "wmo code",
+        "precip_phase" | "thunderstorm_code" => "",
+        "pm2_5"
+        | "pm10"
+        | "dust"
+        | "carbon_monoxide"
+        | "nitrogen_dioxide"
+        | "ozone"
+        | "sulphur_dioxide"
+        | "pm2_5_mean"
+        | "pm10_mean"
+        | "nitrogen_dioxide_mean"
+        | "ozone_maximum_8h_mean"
+        | "sulphur_dioxide_mean" => "μg/m³",
+        "carbon_monoxide_mean" => "mg/m³",
+        "aerosol_optical_depth" => "",
+        "european_aqi"
+        | "european_aqi_pm2_5"
+        | "european_aqi_pm10"
+        | "european_aqi_no2"
+        | "european_aqi_o3"
+        | "european_aqi_so2"
+        | "european_aqi_nitrogen_dioxide"
+        | "european_aqi_ozone"
+        | "european_aqi_sulphur_dioxide" => "EAQI",
+        "us_aqi"
+        | "us_aqi_pm2_5"
+        | "us_aqi_pm10"
+        | "us_aqi_no2"
+        | "us_aqi_o3"
+        | "us_aqi_so2"
+        | "us_aqi_co"
+        | "us_aqi_nitrogen_dioxide"
+        | "us_aqi_ozone"
+        | "us_aqi_sulphur_dioxide"
+        | "us_aqi_carbon_monoxide" => "USAQI",
+        "chinese_aqi"
+        | "chinese_aqi_pm2_5"
+        | "chinese_aqi_pm10"
+        | "chinese_aqi_no2"
+        | "chinese_aqi_o3"
+        | "chinese_aqi_so2"
+        | "chinese_aqi_co"
+        | "chinese_aqi_nitrogen_dioxide"
+        | "chinese_aqi_ozone"
+        | "chinese_aqi_sulphur_dioxide"
+        | "chinese_aqi_carbon_monoxide" => "Chinese AQI",
+        "uv_index"
+        | "uv_index_clear_sky"
+        | "lifted_index"
+        | "categorical_freezing_rain"
+        | "is_day" => "",
+        "cape" | "convective_inhibition" => "J/kg",
+        "shortwave_radiation"
+        | "diffuse_radiation"
+        | "direct_radiation"
+        | "shortwave_radiation_instant"
+        | "diffuse_radiation_instant"
+        | "direct_radiation_instant"
+        | "direct_normal_irradiance"
+        | "direct_normal_irradiance_instant"
+        | "global_tilted_irradiance"
+        | "global_tilted_irradiance_instant"
+        | "latent_heat_flux"
+        | "sensible_heat_flux" => "W/m\u{00B2}",
+        "sunshine_duration" => "s",
+        "evapotranspiration" | "et0_fao_evapotranspiration" => "mm",
+        "vapour_pressure_deficit" | "vapor_pressure_deficit" => "kPa",
+        "soil_moisture_0_to_10cm"
+        | "soil_moisture_10_to_40cm"
+        | "soil_moisture_40_to_100cm"
+        | "soil_moisture_100_to_200cm" => "m\u{00B3}/m\u{00B3}",
+        "total_column_integrated_water_vapour" => "kg/m\u{00B2}",
+        _ => "unknown",
+    }
+}
+
+fn json_array_for_daily_variable(
+    variable: &str,
+    aggregation: DailyWeatherAggregation,
+    values: Vec<f32>,
+) -> serde_json::Value {
+    let decimals = match variable {
+        "wind_gusts_10m_mean" | "windgusts_10m_mean" | "visibility_mean" => Some(2),
+        _ => None,
+    };
+    match decimals {
+        Some(decimals) => serde_json::Value::Array(
+            values
+                .into_iter()
+                .map(|value| json_value_with_decimals(value, decimals))
+                .collect(),
+        ),
+        None => json_array_for_variable(aggregation.output_variable(), values),
+    }
+}
+
+fn json_value_with_decimals(value: f32, decimals: u8) -> serde_json::Value {
+    if !value.is_finite() {
+        return serde_json::Value::Null;
+    }
+    let factor = 10_f32.powi(decimals as i32);
+    serde_json::json!(((value * factor).round() as i64) as f64 / factor as f64)
+}
+
+fn json_array_for_variable(variable: &str, values: Vec<f32>) -> serde_json::Value {
+    serde_json::Value::Array(
+        values
+            .into_iter()
+            .map(|value| json_value_for_variable(variable, value))
+            .collect(),
+    )
+}
+
+fn json_value_for_variable(variable: &str, value: f32) -> serde_json::Value {
+    if !value.is_finite() {
+        return serde_json::Value::Null;
+    }
+    match output_decimals_for_variable(variable) {
+        OutputDecimals::Integer => serde_json::json!(value.round() as i64),
+        OutputDecimals::Fixed(decimals) => {
+            let factor = 10_f32.powi(decimals as i32);
+            let abs_value = if value < 0.0 { -value } else { value };
+            let scaled = (abs_value * factor).round() as i64;
+            let rounded = scaled as f64 / factor as f64;
+            let rounded = if value < 0.0 { -rounded } else { rounded };
+            serde_json::json!(rounded)
+        }
+    }
+}
+
+pub fn round_variable_output_value(variable: &str, value: f32) -> f32 {
+    if !value.is_finite() {
+        return value;
+    }
+    match output_decimals_for_variable(variable) {
+        OutputDecimals::Integer => value.round(),
+        OutputDecimals::Fixed(decimals) => {
+            let factor = 10_f32.powi(decimals as i32);
+            let abs_value = if value < 0.0 { -value } else { value };
+            let rounded = (abs_value * factor).round() / factor;
+            if value < 0.0 {
+                -rounded
+            } else {
+                rounded
+            }
+        }
+    }
+}
+
+enum OutputDecimals {
+    Integer,
+    Fixed(u8),
+}
+
+#[cfg(test)]
+mod output_tests {
+    use super::*;
+
+    #[test]
+    fn public_hourly_scope_keeps_core_outputs_and_hides_internal_inputs() {
+        for variable in [
+            "temperature_2m",
+            "apparent_temperature",
+            "sunshine_duration",
+            "uv_index",
+            "is_day",
+            "wind_speed_850hPa",
+            "vertical_velocity_500hPa",
+            "chinese_aqi_pm2_5",
+            "soil_moisture_0_to_10cm",
+            "soil_temperature_0_to_10cm",
+        ] {
+            assert!(is_public_hourly_variable(variable), "{variable}");
+        }
+        for variable in [
+            "shortwave_radiation",
+            "direct_normal_irradiance",
+            "et0_fao_evapotranspiration",
+            "wind_u_component_10m",
+            "wind_u_component_850hPa",
+            "temperature_875hPa",
+            "european_aqi",
+        ] {
+            assert!(!is_public_hourly_variable(variable), "{variable}");
+        }
+    }
+
+    #[test]
+    fn removed_daily_radiation_and_cape_are_rejected() {
+        assert!(daily_weather_aggregation("shortwave_radiation_sum").is_err());
+        assert!(daily_weather_aggregation("cape_max").is_err());
+        assert!(daily_weather_aggregation("uv_index_max").is_ok());
+    }
+
+    #[test]
+    fn daily_mean_precision_matches_official_output() {
+        let value = json_array_for_daily_variable(
+            "wind_gusts_10m_mean",
+            DailyWeatherAggregation::Mean("wind_gusts_10m"),
+            vec![5.158],
+        );
+        assert_eq!(value, serde_json::json!([5.16]));
+    }
+
+    #[test]
+    fn snow_depth_uses_official_two_decimal_precision() {
+        assert_eq!(
+            json_array_for_variable("snow_depth", vec![0.006]),
+            serde_json::json!([0.01])
+        );
+    }
+}
+
+fn output_decimals_for_variable(variable: &str) -> OutputDecimals {
+    if variable.ends_with("hPa") {
+        if variable.starts_with("geopotential_height_") {
+            return OutputDecimals::Fixed(2);
+        }
+        if variable.starts_with("temperature_") {
+            return OutputDecimals::Fixed(1);
+        }
+        if variable.starts_with("dew_point_") || variable.starts_with("dewpoint_") {
+            return OutputDecimals::Fixed(1);
+        }
+        if variable.starts_with("wind_speed_") || variable.starts_with("windspeed_") {
+            return OutputDecimals::Fixed(2);
+        }
+        if variable.starts_with("wind_direction_") || variable.starts_with("winddirection_") {
+            return OutputDecimals::Integer;
+        }
+        if variable.starts_with("relativehumidity_") || variable.starts_with("cloudcover_") {
+            return OutputDecimals::Integer;
+        }
+        if variable.starts_with("relative_humidity_") || variable.starts_with("cloud_cover_") {
+            return OutputDecimals::Integer;
+        }
+        if variable.starts_with("wind_u_component_")
+            || variable.starts_with("wind_v_component_")
+            || variable.starts_with("vertical_velocity_")
+        {
+            return OutputDecimals::Fixed(2);
+        }
+    }
+    match variable {
+        "european_aqi"
+        | "european_aqi_pm2_5"
+        | "european_aqi_pm10"
+        | "european_aqi_no2"
+        | "european_aqi_o3"
+        | "european_aqi_so2"
+        | "european_aqi_nitrogen_dioxide"
+        | "european_aqi_ozone"
+        | "european_aqi_sulphur_dioxide"
+        | "us_aqi"
+        | "us_aqi_pm2_5"
+        | "us_aqi_pm10"
+        | "us_aqi_no2"
+        | "us_aqi_o3"
+        | "us_aqi_so2"
+        | "us_aqi_co"
+        | "us_aqi_nitrogen_dioxide"
+        | "us_aqi_ozone"
+        | "us_aqi_sulphur_dioxide"
+        | "us_aqi_carbon_monoxide" => OutputDecimals::Integer,
+        "chinese_aqi"
+        | "chinese_aqi_pm2_5"
+        | "chinese_aqi_pm10"
+        | "chinese_aqi_no2"
+        | "chinese_aqi_o3"
+        | "chinese_aqi_so2"
+        | "chinese_aqi_co"
+        | "chinese_aqi_nitrogen_dioxide"
+        | "chinese_aqi_ozone"
+        | "chinese_aqi_sulphur_dioxide"
+        | "chinese_aqi_carbon_monoxide" => OutputDecimals::Integer,
+        "weather_code"
+        | "weathercode"
+        | "relative_humidity_2m"
+        | "relativehumidity_2m"
+        | "cloud_cover"
+        | "cloudcover"
+        | "cloud_cover_low"
+        | "cloudcover_low"
+        | "cloud_cover_mid"
+        | "cloudcover_mid"
+        | "cloud_cover_high"
+        | "cloudcover_high"
+        | "wind_direction_10m"
+        | "winddirection_10m"
+        | "wind_direction_80m"
+        | "winddirection_80m"
+        | "wind_direction_100m"
+        | "winddirection_100m"
+        | "wind_direction_120m"
+        | "winddirection_120m"
+        | "categorical_freezing_rain"
+        | "is_day" => OutputDecimals::Integer,
+        "wind_speed_10m"
+        | "windspeed_10m"
+        | "wind_speed_80m"
+        | "windspeed_80m"
+        | "wind_speed_100m"
+        | "windspeed_100m"
+        | "wind_speed_120m"
+        | "windspeed_120m"
+        | "wind_u_component_10m"
+        | "wind_v_component_10m"
+        | "wind_u_component_80m"
+        | "wind_v_component_80m"
+        | "wind_u_component_100m"
+        | "wind_v_component_100m"
+        | "vertical_velocity"
+        | "aerosol_optical_depth" => OutputDecimals::Fixed(2),
+        "soil_moisture_0_to_10cm"
+        | "soil_moisture_10_to_40cm"
+        | "soil_moisture_40_to_100cm"
+        | "soil_moisture_100_to_200cm" => OutputDecimals::Fixed(3),
+        "snowfall"
+        | "snow_depth"
+        | "uv_index"
+        | "uv_index_clear_sky"
+        | "sunshine_duration"
+        | "evapotranspiration"
+        | "et0_fao_evapotranspiration"
+        | "vapour_pressure_deficit"
+        | "vapor_pressure_deficit" => OutputDecimals::Fixed(2),
+        "direct_radiation"
+        | "shortwave_radiation_instant"
+        | "diffuse_radiation_instant"
+        | "direct_radiation_instant"
+        | "direct_normal_irradiance"
+        | "direct_normal_irradiance_instant"
+        | "global_tilted_irradiance"
+        | "global_tilted_irradiance_instant" => OutputDecimals::Fixed(1),
+        "temperature_2m"
+        | "apparent_temperature"
+        | "temperature_80m"
+        | "temperature_100m"
+        | "temperature_120m"
+        | "dew_point_2m"
+        | "dewpoint_2m"
+        | "wet_bulb_temperature_2m"
+        | "surface_temperature"
+        | "soil_temperature_0_to_10cm"
+        | "soil_temperature_10_to_40cm"
+        | "soil_temperature_40_to_100cm"
+        | "soil_temperature_100_to_200cm"
+        | "precipitation"
+        | "showers"
+        | "rain"
+        | "snowfall_water_equivalent"
+        | "wind_gusts_10m"
+        | "pressure_msl"
+        | "visibility"
+        | "freezing_level_height"
+        | "boundary_layer_height"
+        | "cape"
+        | "convective_inhibition"
+        | "lifted_index"
+        | "pm2_5"
+        | "pm10"
+        | "dust"
+        | "carbon_monoxide"
+        | "nitrogen_dioxide"
+        | "ozone"
+        | "sulphur_dioxide" => OutputDecimals::Fixed(1),
+        "pm2_5_mean"
+        | "pm10_mean"
+        | "nitrogen_dioxide_mean"
+        | "ozone_maximum_8h_mean"
+        | "sulphur_dioxide_mean" => OutputDecimals::Integer,
+        "carbon_monoxide_mean" => OutputDecimals::Fixed(1),
+        _ => OutputDecimals::Fixed(1),
+    }
+}

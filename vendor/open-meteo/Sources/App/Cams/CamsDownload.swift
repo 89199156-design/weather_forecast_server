@@ -154,10 +154,6 @@ struct DownloadCamsCommand: AsyncCommand {
                 guard let meta = variable.getCamsGlobalMeta() else {
                     return nil
                 }
-                if meta.isMultiLevel && hour % 3 != 0 {
-                    return nil
-                }
-
                 let levelType = meta.isMultiLevel ? "ml137" : "sfc"
                 let dir = meta.isMultiLevel ? remoteDirAdditional : remoteDir
                 let remoteFile = "\(dir)z_cams_c_ecmf_\(dateRun)0000_prod_fc_\(levelType)_\(hour.zeroPadded(len: 3))_\(meta.gribname).nc"

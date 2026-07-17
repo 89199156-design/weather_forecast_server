@@ -1,0 +1,386 @@
+import hashlib
+import json
+import os
+from pathlib import Path
+import shutil
+import signal
+import subprocess
+import textwrap
+
+import pytest
+
+
+ROOT = Path(__file__).resolve().parents[1]
+ARTIFACTS = {
+    "om-api",
+    "om-raw-point",
+    "om-webp",
+    "om-grid-verify",
+    "om-webp-api-verify",
+    "om-webp-inspect",
+}
+
+pytestmark = pytest.mark.skipif(os.name != "posix", reason="Linux deployment scripts")
+
+
+def run(command: list[str], *, cwd: Path, env: dict[str, str], check: bool = True):
+    return subprocess.run(
+        command,
+        cwd=cwd,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=check,
+    )
+
+
+def write_executable(path: Path, source: str) -> None:
+    path.write_text(textwrap.dedent(source).lstrip(), encoding="utf-8")
+    path.chmod(0o755)
+
+
+def git(cwd: Path, *args: str) -> str:
+    completed = subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    return completed.stdout.strip()
+
+
+def prepare_repository(tmp_path: Path) -> tuple[Path, Path]:
+    app = tmp_path / "app"
+    (app / "scripts").mkdir(parents=True)
+    (app / "om_api").mkdir()
+    (app / "om_webp").mkdir()
+    shutil.copy2(ROOT / "scripts/build_native_rust_artifacts.sh", app / "scripts")
+    shutil.copy2(ROOT / "scripts/deploy_native_rust_artifacts.sh", app / "scripts")
+    shutil.copy2(ROOT / "rust-toolchain.toml", app)
+    (app / "om_api/Cargo.toml").write_text("[package]\nname='om-api'\nversion='0.1.0'\n", encoding="utf-8")
+    (app / "om_webp/Cargo.toml").write_text("[package]\nname='om-webp'\nversion='0.1.0'\n", encoding="utf-8")
+
+    git(app, "init", "-b", "main")
+    git(app, "config", "user.name", "Rust Deployment Test")
+    git(app, "config", "user.email", "rust-deploy-test@example.invalid")
+    git(app, "add", ".")
+    git(app, "commit", "-m", "test source")
+
+    origin = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "--bare", str(origin)], check=True, capture_output=True)
+    git(app, "remote", "add", "origin", str(origin))
+    git(app, "push", "-u", "origin", "main")
+    return app, origin
+
+
+def prepare_fake_tools(tmp_path: Path) -> tuple[Path, Path]:
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    pid_file = tmp_path / "api.pid"
+    write_executable(
+        fake_bin / "cargo",
+        r"""
+        #!/usr/bin/env bash
+        set -euo pipefail
+        if [[ "${1:-}" == "--version" ]]; then
+          echo "cargo 1.97.1 (test)"
+          exit 0
+        fi
+        printf '%s\n' "$PWD" >> "$TEST_CARGO_PWD_LOG"
+        mkdir -p "$CARGO_TARGET_DIR/release"
+        for artifact in om-api om-raw-point om-webp om-grid-verify om-webp-api-verify om-webp-inspect; do
+          install -m 0755 /bin/sleep "$CARGO_TARGET_DIR/release/$artifact"
+        done
+        """,
+    )
+    write_executable(
+        fake_bin / "rustc",
+        r"""
+        #!/usr/bin/env bash
+        if [[ "${1:-}" == "-Vv" ]]; then
+          printf '%s\n' \
+            'rustc 1.97.1 (test)' \
+            'binary: rustc' \
+            'commit-hash: 0000000000000000000000000000000000000000' \
+            'host: x86_64-unknown-linux-gnu' \
+            'release: 1.97.1'
+        else
+          echo 'rustc 1.97.1 (test)'
+        fi
+        """,
+    )
+    write_executable(
+        fake_bin / "sudo",
+        r"""
+        #!/usr/bin/env bash
+        set -euo pipefail
+        [[ "${1:-}" == "-n" ]]
+        shift
+        exec "$@"
+        """,
+    )
+    write_executable(
+        fake_bin / "systemctl",
+        r"""
+        #!/usr/bin/env bash
+        set -euo pipefail
+        command_name="${1:?missing systemctl command}"
+        shift
+        case "$command_name" in
+          restart)
+            if [[ -s "$TEST_PID_FILE" ]]; then
+              old_pid="$(cat "$TEST_PID_FILE")"
+              kill "$old_pid" 2>/dev/null || true
+            fi
+            nohup "$WEATHER_OM_API_ROOT/bin/om-api" 300 >/dev/null 2>&1 9>&- &
+            echo "$!" > "$TEST_PID_FILE"
+            ;;
+          is-active)
+            pid="$(cat "$TEST_PID_FILE")"
+            kill -0 "$pid"
+            ;;
+          show)
+            cat "$TEST_PID_FILE"
+            ;;
+          *)
+            echo "unexpected systemctl command: $command_name" >&2
+            exit 2
+            ;;
+        esac
+        """,
+    )
+    write_executable(
+        fake_bin / "curl",
+        r"""
+        #!/usr/bin/env bash
+        if [[ "${TEST_CURL_FAIL:-0}" == "1" ]]; then
+          exit 22
+        fi
+        exit 0
+        """,
+    )
+    return fake_bin, pid_file
+
+
+def deployment_env(tmp_path: Path, origin: Path, fake_bin: Path, pid_file: Path) -> dict[str, str]:
+    env = os.environ.copy()
+    env.update(
+        {
+            "PATH": f"{fake_bin}{os.pathsep}{env['PATH']}",
+            "TEST_CARGO_PWD_LOG": str(tmp_path / "cargo-pwd.log"),
+            "TEST_PID_FILE": str(pid_file),
+            "WEATHER_RUST_EXPECTED_REMOTE_URL": str(origin),
+            "WEATHER_RUST_TARGET_DIR": str(tmp_path / "target"),
+            "WEATHER_RUST_BUILD_ROOT": str(tmp_path / "build"),
+            "WEATHER_RUST_BUILD_LOCK_FILE": str(tmp_path / "build.lock"),
+            "WEATHER_OM_PIPELINE_LOCK_FILE": str(tmp_path / "pipeline.lock"),
+            "WEATHER_OM_API_ROOT": str(tmp_path / "api-root"),
+            "WEATHER_OM_WEBP_ROOT": str(tmp_path / "webp-root"),
+            "WEATHER_SUDO_BIN": str(fake_bin / "sudo"),
+            "WEATHER_SYSTEMCTL_BIN": str(fake_bin / "systemctl"),
+            "WEATHER_CURL_BIN": str(fake_bin / "curl"),
+        }
+    )
+    return env
+
+
+def install_old_links(env: dict[str, str]) -> dict[Path, str]:
+    api_root = Path(env["WEATHER_OM_API_ROOT"])
+    webp_root = Path(env["WEATHER_OM_WEBP_ROOT"])
+    old_targets: dict[Path, str] = {}
+    for root, artifacts in (
+        (api_root, ("om-api", "om-raw-point")),
+        (webp_root, ("om-webp", "om-grid-verify", "om-webp-api-verify", "om-webp-inspect")),
+    ):
+        release = root / "releases/old"
+        binary_root = root / "bin"
+        release.mkdir(parents=True)
+        binary_root.mkdir(parents=True)
+        for artifact in artifacts:
+            target = release / artifact
+            shutil.copy2("/bin/sleep", target)
+            target.chmod(0o755)
+            link = binary_root / artifact
+            link.symlink_to(target)
+            old_targets[link] = str(target)
+    return old_targets
+
+
+def stop_fake_service(pid_file: Path) -> None:
+    if not pid_file.exists():
+        return
+    try:
+        os.kill(int(pid_file.read_text(encoding="utf-8")), signal.SIGTERM)
+    except (ProcessLookupError, ValueError):
+        pass
+
+
+def sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def test_build_rejects_untracked_source(tmp_path: Path):
+    app, origin = prepare_repository(tmp_path)
+    fake_bin, pid_file = prepare_fake_tools(tmp_path)
+    env = deployment_env(tmp_path, origin, fake_bin, pid_file)
+    (app / "untracked.rs").write_text("not committed\n", encoding="utf-8")
+
+    completed = run(
+        ["bash", "scripts/build_native_rust_artifacts.sh", str(tmp_path / "build")],
+        cwd=app,
+        env=env,
+        check=False,
+    )
+
+    assert completed.returncode != 0
+    assert "dirty worktree" in completed.stderr
+    assert not Path(env["TEST_CARGO_PWD_LOG"]).exists()
+
+
+def test_build_records_all_artifacts_from_exact_remote_main(tmp_path: Path):
+    app, origin = prepare_repository(tmp_path)
+    fake_bin, pid_file = prepare_fake_tools(tmp_path)
+    env = deployment_env(tmp_path, origin, fake_bin, pid_file)
+    output = Path(env["WEATHER_RUST_BUILD_ROOT"])
+
+    run(
+        ["bash", str(app / "scripts/build_native_rust_artifacts.sh"), str(output)],
+        cwd=tmp_path,
+        env=env,
+    )
+
+    manifest = json.loads((output / "build.json").read_text(encoding="utf-8"))
+    assert set(manifest["artifacts"]) == ARTIFACTS
+    assert manifest["source_branch"] == "main"
+    assert manifest["remote_url"] == str(origin)
+    assert manifest["revision"] == git(app, "rev-parse", "origin/main")
+    assert "release: 1.97.1" in manifest["rustc"]
+    for artifact in ARTIFACTS:
+        assert manifest["artifacts"][artifact]["sha256"] == sha256(output / artifact)
+    assert set(Path(env["TEST_CARGO_PWD_LOG"]).read_text(encoding="utf-8").splitlines()) == {str(app)}
+
+
+def test_deploy_uses_one_immutable_release_and_verifies_running_api(tmp_path: Path):
+    app, origin = prepare_repository(tmp_path)
+    fake_bin, pid_file = prepare_fake_tools(tmp_path)
+    env = deployment_env(tmp_path, origin, fake_bin, pid_file)
+    install_old_links(env)
+    try:
+        first = run(
+            ["bash", str(app / "scripts/deploy_native_rust_artifacts.sh")],
+            cwd=tmp_path,
+            env=env,
+        )
+        release_id = next(
+            line.split("=", 1)[1]
+            for line in first.stdout.splitlines()
+            if line.startswith("release_id=")
+        )
+        api_root = Path(env["WEATHER_OM_API_ROOT"])
+        webp_root = Path(env["WEATHER_OM_WEBP_ROOT"])
+        api_release = api_root / "releases" / release_id
+        webp_release = webp_root / "releases" / release_id
+        assert {path.name for path in api_release.iterdir()} == {"build.json", "om-api", "om-raw-point"}
+        assert {path.name for path in webp_release.iterdir()} == {
+            "build.json",
+            "om-webp",
+            "om-grid-verify",
+            "om-webp-api-verify",
+            "om-webp-inspect",
+        }
+        assert (api_root / "bin/om-api").resolve() == api_release / "om-api"
+        assert (api_root / "bin/om-raw-point").resolve() == api_release / "om-raw-point"
+        for artifact in ARTIFACTS - {"om-api", "om-raw-point"}:
+            assert (webp_root / "bin" / artifact).resolve() == webp_release / artifact
+
+        original_stat = (api_release / "om-api").stat()
+        repeated = run(
+            ["bash", str(app / "scripts/deploy_native_rust_artifacts.sh")],
+            cwd=tmp_path,
+            env=env,
+            check=False,
+        )
+        assert repeated.returncode == 0, repeated.stderr
+        repeated_stat = (api_release / "om-api").stat()
+        assert (repeated_stat.st_ino, repeated_stat.st_mtime_ns) == (
+            original_stat.st_ino,
+            original_stat.st_mtime_ns,
+        )
+
+        (api_release / "om-raw-point").write_bytes(b"corrupt immutable release")
+        failed = run(
+            ["bash", str(app / "scripts/deploy_native_rust_artifacts.sh")],
+            cwd=tmp_path,
+            env=env,
+            check=False,
+        )
+        assert failed.returncode != 0
+        assert "checksum mismatch" in failed.stderr
+        assert (api_release / "om-raw-point").read_bytes() == b"corrupt immutable release"
+    finally:
+        stop_fake_service(pid_file)
+
+
+def test_deploy_rolls_back_every_link_when_health_check_fails(tmp_path: Path):
+    app, origin = prepare_repository(tmp_path)
+    fake_bin, pid_file = prepare_fake_tools(tmp_path)
+    env = deployment_env(tmp_path, origin, fake_bin, pid_file)
+    old_targets = install_old_links(env)
+    env["TEST_CURL_FAIL"] = "1"
+    try:
+        completed = run(
+            ["bash", str(app / "scripts/deploy_native_rust_artifacts.sh")],
+            cwd=tmp_path,
+            env=env,
+            check=False,
+        )
+
+        assert completed.returncode != 0
+        assert "restoring previous Rust executable links" in completed.stderr
+        for link, old_target in old_targets.items():
+            assert link.is_symlink()
+            assert os.readlink(link) == old_target
+        running_executable = Path(f"/proc/{pid_file.read_text(encoding='utf-8').strip()}/exe").resolve()
+        assert running_executable == Path(old_targets[Path(env["WEATHER_OM_API_ROOT"]) / "bin/om-api"])
+    finally:
+        stop_fake_service(pid_file)
+
+
+def test_deploy_refuses_to_overlap_the_native_pipeline(tmp_path: Path):
+    import fcntl
+
+    app, origin = prepare_repository(tmp_path)
+    fake_bin, pid_file = prepare_fake_tools(tmp_path)
+    env = deployment_env(tmp_path, origin, fake_bin, pid_file)
+    old_targets = install_old_links(env)
+    lock_path = Path(env["WEATHER_OM_PIPELINE_LOCK_FILE"])
+    with lock_path.open("w", encoding="utf-8") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        completed = run(
+            ["bash", str(app / "scripts/deploy_native_rust_artifacts.sh")],
+            cwd=tmp_path,
+            env=env,
+            check=False,
+        )
+
+    assert completed.returncode != 0
+    assert "native model pipeline is active" in completed.stderr
+    for link, old_target in old_targets.items():
+        assert os.readlink(link) == old_target
+    assert not pid_file.exists()
+
+
+def test_scripts_are_valid_bash_and_toolchain_is_pinned():
+    subprocess.run(
+        [
+            "bash",
+            "-n",
+            str(ROOT / "scripts/build_native_rust_artifacts.sh"),
+            str(ROOT / "scripts/deploy_native_rust_artifacts.sh"),
+        ],
+        check=True,
+    )
+    toolchain = (ROOT / "rust-toolchain.toml").read_text(encoding="utf-8")
+    assert 'channel = "1.97.1"' in toolchain
+    assert 'channel = "stable"' not in toolchain

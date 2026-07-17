@@ -27,13 +27,6 @@ from native_grid_contract import cams_domain_grids
 
 
 UTC = timezone.utc
-CAMS_THREE_HOUR_VARIABLES = {
-    "carbon_monoxide",
-    "dust",
-    "nitrogen_dioxide",
-    "ozone",
-    "sulphur_dioxide",
-}
 DEFAULT_CAMS_REQUIRED_VARIABLES = "pm2_5,pm10,aerosol_optical_depth,dust,carbon_monoxide,nitrogen_dioxide,ozone,sulphur_dioxide"
 DEFAULT_GREENHOUSE_REQUIRED_VARIABLES = "carbon_monoxide"
 
@@ -59,6 +52,8 @@ def publish_cams_coverage(args: argparse.Namespace) -> dict[str, Any]:
     if len(source_runs) != 3:
         raise ValueError(f"CAMS coverage must contain three source runs, got {len(source_runs)}")
     parsed_runs = [datetime.strptime(run, "%Y%m%d%H").replace(tzinfo=UTC) for run in source_runs]
+    if any(run.hour not in (0, 12) for run in parsed_runs):
+        raise ValueError("CAMS source runs must use the official 00/12 UTC cycles")
     if parsed_runs[-1].strftime("%Y%m%d%H") != args.run:
         raise ValueError("latest CAMS run must be the final source run")
     if any(right - left != timedelta(hours=12) for left, right in zip(parsed_runs, parsed_runs[1:])):
@@ -125,9 +120,7 @@ def publish_cams_coverage(args: argparse.Namespace) -> dict[str, Any]:
                 f"{','.join(missing_variables)}"
             )
         stored_counts = {
-            variable: (args.latest_max_forecast_hour // 3 + 1)
-            if variable in CAMS_THREE_HOUR_VARIABLES
-            else args.latest_max_forecast_hour + 1
+            variable: args.latest_max_forecast_hour + 1
             for variable in run_meta["variables"]
         }
         validate_run_metadata(
@@ -226,6 +219,7 @@ def publish_cams_coverage(args: argparse.Namespace) -> dict[str, Any]:
         "latest_complete_run": args.run,
         "source_runs": source_runs,
         "greenhouse_source_runs": greenhouse_source_runs,
+        "latest_max_forecast_hour": args.latest_max_forecast_hour,
         "public_start_utc": coverage_manifest["public_start_utc"],
         "local_day_start_utc": args.local_day_start_utc,
         "public_end_utc": coverage_manifest["public_end_utc"],

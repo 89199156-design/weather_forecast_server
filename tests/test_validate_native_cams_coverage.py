@@ -56,6 +56,7 @@ def make_cams_coverage(root: Path) -> Path:
         "latest_complete_run": source_runs[-1],
         "source_runs": source_runs,
         "greenhouse_source_runs": greenhouse_source_runs,
+        "latest_max_forecast_hour": 120,
         "public_start_utc": "2026-07-12T12:00:00Z",
         "local_day_start_utc": "2026-07-12T16:00:00Z",
         "public_end_utc": "2026-07-18T12:00:00Z",
@@ -69,7 +70,7 @@ def make_cams_coverage(root: Path) -> Path:
         base = datetime.strptime(source_run, "%Y%m%d%H").replace(tzinfo=timezone.utc)
         run_dir = coverage / "data_run" / "cams_global" / base.strftime("%Y/%m/%d/%H00Z")
         run_dir.mkdir(parents=True)
-        (run_dir / "pm2_5.om").write_bytes(b"cams")
+        write_fake_om(run_dir / "pm2_5.om", (2, 3, 121))
         write_json(
             run_dir / "meta.json",
             {
@@ -136,6 +137,40 @@ class ValidateNativeCamsCoverageTests(unittest.TestCase):
             missing.rmdir()
 
             with self.assertRaisesRegex(ValueError, "missing retained run metadata"):
+                validate_cams_contract(root)
+
+    def test_rejects_nonstandard_main_cycle_hours(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "producer"
+            coverage = make_cams_coverage(root)
+            marker_path = root / "groups" / "cams" / "current" / "ready_for_processing.json"
+            manifest_path = coverage / "coverage.json"
+            marker = json.loads(marker_path.read_text(encoding="utf-8"))
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            source_runs = ["2026071203", "2026071215", "2026071303"]
+            for payload in (marker, manifest):
+                payload["source_runs"] = source_runs
+                payload["latest_complete_run"] = source_runs[-1]
+            write_json(marker_path, marker)
+            write_json(manifest_path, manifest)
+
+            with self.assertRaisesRegex(ValueError, "official 00/12 UTC cycles"):
+                validate_cams_contract(root)
+
+    def test_rejects_three_hour_main_variable_storage(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "producer"
+            coverage = make_cams_coverage(root)
+            variable = (
+                coverage
+                / "data_run"
+                / "cams_global"
+                / "2026/07/13/1200Z"
+                / "pm2_5.om"
+            )
+            write_fake_om(variable, (2, 3, 41))
+
+            with self.assertRaisesRegex(ValueError, "stored time count 41, expected 121"):
                 validate_cams_contract(root)
 
 

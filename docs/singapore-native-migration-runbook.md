@@ -3,13 +3,15 @@
 This runbook is for the Singapore node only. Shanghai is a read-only parity
 baseline. During the current development phase, Singapore is validated in the
 real production paths and ports because no client traffic is present. Published
-snapshots and the previous API container remain available for rollback.
+snapshots and the previous immutable API/WebP binary releases remain available
+for rollback.
 
 ## Invariants
 
 - OM is published below the real Singapore producer root.
 - API and WebP validation uses the real Singapore services and paths.
-- The old Singapore API container is preserved and is not modified or deleted.
+- The previous Singapore API/WebP release targets are preserved until the new
+  binaries pass health and parity gates.
 - No fixed free-disk threshold is used.
 - No local process/directory completion polling is installed.
 - A batch is one synchronous chain: OM publish, WebP publish, one API reload.
@@ -26,18 +28,18 @@ snapshots and the previous API container remain available for rollback.
 ## 1. Prepare production artifacts
 
 Build the patched Swift image with a `native-*` source-identity tag. Do not tag
-or replace `latest`. Build the Rust `om-api`, `om-webp` and official
+or replace `latest`. Build the Rust `om-api` and `om-webp` from this repository
+and build the official
 `libomfileformat.so` artifacts in Linux. Record SHA-256 for all artifacts.
 Build the decoder at the exact `om-file-format` revision pinned by the vendored
 Open-Meteo `Package.swift`; an unpinned repository HEAD is not acceptable. Keep
 the generated `libomfileformat.build.json` beside the shared library.
 
-Publish or otherwise freeze the final `om-api` source revision before building
-`om-webp`, then pin WebP's `om-api` dependency to that exact revision. A local
-path override is allowed only for workstation tests and must not remain in the
-production source tree. Record the Swift source identity, API Git revision,
-WebP Git revision, decoder revision and the four resulting artifact hashes in
-the acceptance evidence; a binary built from an older API revision is invalid.
+`om-webp` uses the sibling `../om_api` path from this repository, so both
+binaries must be built from the same checked-out Git revision. Record that
+single repository revision, the Swift image identity, decoder revision and the
+four resulting artifact hashes in the acceptance evidence; binaries built from
+different source revisions are invalid.
 
 Reference the existing private CAMS credential file without printing or copying
 its values into logs.
@@ -110,9 +112,10 @@ domain `latest.json` files after any history repair,
 validates every required surface and 22-level pressure file, and removes
 raw/cache data after successful publication. If no explicit revision is set,
 same-run repair publishes the distinct `three-short-two-full-v1` coverage rather than
-colliding with the existing immutable coverage. The CAMS cycle imports missing members of the latest
-three-run window, validates the mixed 121/41-frame variable contract, and then
-removes raw/cache data.
+colliding with the existing immutable coverage. The CAMS cycle imports missing
+members of the latest three-run window, validates 121 direct hourly frames for
+every main forecast variable and 41 native three-hour frames for the separate
+greenhouse product, and then removes raw/cache data.
 
 `uv_index_clear_sky` is a required official GFS `CDUVB` field because the API
 also exposes `uv_index_clear_sky_max`. For a one-time upgrade of retained runs,

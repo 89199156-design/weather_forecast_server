@@ -90,32 +90,119 @@ PY
   prepare_openmeteo_staging_permissions "$STAGING_DIR"
   export WEATHER_OPENMETEO_DATA_DIR="$STAGING_DIR"
 
+  validate_staged_cams_run() {
+    local source_run="$1"
+    local required_variables="${WEATHER_CAMS_VARIABLES:-}"
+    PYTHONPATH="$APP_DIR/scripts${PYTHONPATH:+:$PYTHONPATH}" python3 - \
+      "$STAGING_DIR" "$source_run" "$required_variables" <<'PY'
+from pathlib import Path
+import sys
+
+from publish_native_cams_coverage import DEFAULT_CAMS_REQUIRED_VARIABLES
+from publish_native_om_coverage import validate_run_metadata
+
+staging = Path(sys.argv[1])
+source_run = sys.argv[2]
+required = {
+    item.strip()
+    for item in (sys.argv[3] or DEFAULT_CAMS_REQUIRED_VARIABLES).split(",")
+    if item.strip()
+}
+meta = validate_run_metadata(staging, "cams_global", source_run, list(range(121)))
+available = set(meta["variables"])
+missing = sorted(required - available)
+if missing:
+    raise SystemExit(
+        f"cams_global run {source_run} is missing required variables: {','.join(missing)}"
+    )
+validate_run_metadata(
+    staging,
+    "cams_global",
+    source_run,
+    list(range(121)),
+    {variable: 121 for variable in meta["variables"]},
+)
+PY
+  }
+
+  validate_staged_greenhouse_run() {
+    local source_run="$1"
+    local required_variables="${WEATHER_CAMS_GREENHOUSE_VARIABLES:-carbon_monoxide}"
+    PYTHONPATH="$APP_DIR/scripts${PYTHONPATH:+:$PYTHONPATH}" python3 - \
+      "$STAGING_DIR" "$source_run" "$required_variables" <<'PY'
+from pathlib import Path
+import sys
+
+from publish_native_om_coverage import validate_run_metadata
+
+staging = Path(sys.argv[1])
+source_run = sys.argv[2]
+required = {item.strip() for item in sys.argv[3].split(",") if item.strip()}
+hours = list(range(0, 121, 3))
+meta = validate_run_metadata(
+    staging,
+    "cams_global_greenhouse_gases",
+    source_run,
+    hours,
+)
+available = set(meta["variables"])
+missing = sorted(required - available)
+if missing:
+    raise SystemExit(
+        "cams_global_greenhouse_gases run "
+        f"{source_run} is missing required variables: {','.join(missing)}"
+    )
+validate_run_metadata(
+    staging,
+    "cams_global_greenhouse_gases",
+    source_run,
+    hours,
+    {variable: 41 for variable in meta["variables"]},
+)
+PY
+  }
+
+  restore_cams_latest_metadata() {
+    local source_run="$1"
+    local relative="${source_run:0:4}/${source_run:4:2}/${source_run:6:2}/${source_run:8:2}00Z"
+    local source="$STAGING_DIR/data_run/cams_global/$relative/meta.json"
+    local latest="$STAGING_DIR/data_run/cams_global/latest.json"
+    if [[ ! -s "$source" ]]; then
+      echo "missing latest CAMS run metadata: $source" >&2
+      return 1
+    fi
+    cp -- "$source" "$latest.tmp.$$"
+    mv -f -- "$latest.tmp.$$" "$latest"
+  }
+
   IFS=',' read -ra PLANNED_SOURCE_RUNS <<< "$SOURCE_RUNS"
   for SOURCE_RUN in "${PLANNED_SOURCE_RUNS[@]:0:${#PLANNED_SOURCE_RUNS[@]}-1}"; do
     if [[ ",$REUSED_SOURCE_RUNS," == *",$SOURCE_RUN,"* ]]; then
-      echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_OM] reuse history run=$SOURCE_RUN"
-      continue
+      if validate_staged_cams_run "$SOURCE_RUN"; then
+        echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_OM] reuse validated history run=$SOURCE_RUN"
+        continue
+      fi
+      echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_OM] repair invalid history run=$SOURCE_RUN"
     fi
     echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_OM] history run=$SOURCE_RUN horizon=$MAX_FORECAST_HOUR"
     WEATHER_CAMS_RUN="$SOURCE_RUN" \
     WEATHER_CAMS_MAX_FORECAST_HOUR="$MAX_FORECAST_HOUR" \
       bash scripts/download_openmeteo_cams_data.sh
-
-    python3 scripts/validate_openmeteo_latest_run.py \
-      --data-dir "$STAGING_DIR" \
-      --run "$SOURCE_RUN" \
-      --domains cams_global \
-      --min-frames "$((MAX_FORECAST_HOUR + 1))"
+    validate_staged_cams_run "$SOURCE_RUN"
   done
 
-  if [[ ",$REUSED_SOURCE_RUNS," == *",$RUN,"* ]]; then
-    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_OM] reuse latest run=$RUN"
+  if [[ ",$REUSED_SOURCE_RUNS," == *",$RUN,"* ]] \
+    && validate_staged_cams_run "$RUN"; then
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_OM] reuse validated latest run=$RUN"
   else
     echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_OM] latest run=$RUN horizon=$MAX_FORECAST_HOUR"
     WEATHER_CAMS_RUN="$RUN" \
     WEATHER_CAMS_MAX_FORECAST_HOUR="$MAX_FORECAST_HOUR" \
       bash scripts/download_openmeteo_cams_data.sh
+    validate_staged_cams_run "$RUN"
   fi
+
+  restore_cams_latest_metadata "$RUN"
 
   python3 scripts/validate_openmeteo_latest_run.py \
     --data-dir "$STAGING_DIR" \
@@ -125,14 +212,14 @@ PY
 
   IFS=',' read -ra PLANNED_GREENHOUSE_RUNS <<< "$GREENHOUSE_SOURCE_RUNS"
   for GREENHOUSE_RUN in "${PLANNED_GREENHOUSE_RUNS[@]}"; do
-    GREENHOUSE_RUN_DIR="$STAGING_DIR/data_run/cams_global_greenhouse_gases/${GREENHOUSE_RUN:0:4}/${GREENHOUSE_RUN:4:2}/${GREENHOUSE_RUN:6:2}/${GREENHOUSE_RUN:8:2}00Z"
-    if [[ -s "$GREENHOUSE_RUN_DIR/meta.json" && -s "$GREENHOUSE_RUN_DIR/carbon_monoxide.om" ]]; then
-      echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_OM] reuse greenhouse run=$GREENHOUSE_RUN"
+    if validate_staged_greenhouse_run "$GREENHOUSE_RUN"; then
+      echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_OM] reuse validated greenhouse run=$GREENHOUSE_RUN"
       continue
     fi
     echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_OM] greenhouse run=$GREENHOUSE_RUN horizon=$GREENHOUSE_MAX_FORECAST_HOUR"
     WEATHER_CAMS_GREENHOUSE_RUN="$GREENHOUSE_RUN" \
       bash scripts/download_openmeteo_cams_greenhouse_data.sh
+    validate_staged_greenhouse_run "$GREENHOUSE_RUN"
   done
 
   # A repair may download an older missing run while reusing the newest run.

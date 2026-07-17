@@ -89,7 +89,14 @@ INSERT INTO cronjobs (
 
 with sqlite3.connect(panel_db) as conn:
     conn.execute("BEGIN IMMEDIATE")
-    conn.execute("DELETE FROM cronjobs WHERE name LIKE 'weather_%' OR name LIKE 'openmeteo_%'")
+    conn.execute(
+        """
+        DELETE FROM cronjobs
+        WHERE name LIKE 'weather_%'
+           OR name LIKE 'openmeteo_%'
+           OR name IN ('OM_GFS_WEBP_BUILD', 'OM_CAMS_WEBP_BUILD')
+        """
+    )
     # The Singapore host and 1Panel scheduler use UTC+8 local time. Probe once per
     # upstream model cycle, after the complete forecast horizon is normally ready:
     # GFS 00/06/12/18 UTC + 4h17m, CAMS 00/12 UTC + 8h37m.

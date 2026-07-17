@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build and compare exact Shanghai/Singapore WebP release inventories."""
+"""Build and compare Shanghai/Singapore WebP inventories at comparable source hours."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,7 @@ SCOPE_CONTRACT = {
     "cams": {"product": "cams_global", "manifest": "cams_global_data.json", "layers": 4},
 }
 EXPECTED_FRAMES = 121
+CAMS_THREE_HOURLY_COMPARISON_LAYERS = frozenset({"dust"})
 
 
 def atomic_json(path: Path, payload: dict[str, Any]) -> None:
@@ -96,8 +98,43 @@ def build_inventory(output_root: Path, strict: bool = True) -> dict[str, Any]:
     }
 
 
+def webp_forecast_hour(path: str, run: str) -> int:
+    parts = Path(path).parts
+    if len(parts) != 2 or not parts[1].endswith(".webp"):
+        raise ValueError(f"invalid WebP inventory path: {path}")
+    stem_parts = Path(parts[1]).stem.split("_")
+    if len(stem_parts) != 2 or not all(part.isdigit() for part in stem_parts):
+        raise ValueError(f"invalid WebP frame name: {path}")
+    valid_epoch, batch_epoch = (int(part) for part in stem_parts)
+    run_epoch = int(
+        datetime.strptime(run, "%Y%m%d%H")
+        .replace(tzinfo=timezone.utc)
+        .timestamp()
+    )
+    if batch_epoch != run_epoch:
+        raise ValueError(f"WebP frame batch does not match run {run}: {path}")
+    delta = valid_epoch - run_epoch
+    if delta < 0 or delta % 3600:
+        raise ValueError(f"WebP frame is not aligned to the source run: {path}")
+    forecast_hour = delta // 3600
+    if forecast_hour >= EXPECTED_FRAMES:
+        raise ValueError(f"WebP frame is outside f000...f120: {path}")
+    return forecast_hour
+
+
+def is_expected_cams_hourly_difference(scope: str, path: str, run: str) -> bool:
+    if scope != "cams":
+        return False
+    layer = Path(path).parts[0] if Path(path).parts else ""
+    if layer not in CAMS_THREE_HOURLY_COMPARISON_LAYERS:
+        return False
+    return webp_forecast_hour(path, run) % 3 != 0
+
+
 def compare_inventories(shanghai: dict[str, Any], singapore: dict[str, Any]) -> dict[str, Any]:
     mismatches: list[dict[str, Any]] = []
+    excluded_semantic_frames: list[dict[str, Any]] = []
+    compared_webp_files = 0
     for scope in SCOPE_CONTRACT:
         left = shanghai.get("scopes", {}).get(scope)
         right = singapore.get("scopes", {}).get(scope)
@@ -112,7 +149,29 @@ def compare_inventories(shanghai: dict[str, Any], singapore: dict[str, Any]) -> 
             mismatches.append({"scope": scope, "reason": "manifest_mismatch"})
         left_files = left.get("files") or {}
         right_files = right.get("files") or {}
+        run = str(left.get("run") or "")
         for path in sorted(set(left_files) | set(right_files)):
+            if path not in left_files or path not in right_files:
+                mismatches.append(
+                    {
+                        "scope": scope,
+                        "reason": "missing_webp_file",
+                        "path": path,
+                        "shanghai_present": path in left_files,
+                        "singapore_present": path in right_files,
+                    }
+                )
+                continue
+            if is_expected_cams_hourly_difference(scope, path, run):
+                excluded_semantic_frames.append(
+                    {
+                        "scope": scope,
+                        "path": path,
+                        "reason": "shanghai_interpolated_hour_singapore_direct_hour",
+                    }
+                )
+                continue
+            compared_webp_files += 1
             if left_files.get(path) != right_files.get(path):
                 mismatches.append(
                     {
@@ -125,7 +184,11 @@ def compare_inventories(shanghai: dict[str, Any], singapore: dict[str, Any]) -> 
                 )
     return {
         "passed": not mismatches,
-        "exact_webp_bytes": True,
+        "exact_webp_bytes": not excluded_semantic_frames,
+        "strict_comparable_webp_bytes": True,
+        "compared_webp_file_count": compared_webp_files,
+        "excluded_semantic_frame_count": len(excluded_semantic_frames),
+        "excluded_semantic_frames": excluded_semantic_frames[:100],
         "shanghai_total_webp_count": shanghai.get("total_webp_count"),
         "singapore_total_webp_count": singapore.get("total_webp_count"),
         "mismatch_count": len(mismatches),

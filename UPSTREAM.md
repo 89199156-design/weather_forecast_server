@@ -11,6 +11,10 @@ updated whenever upstream code is imported, rebased, or patched.
   `4efb9c49fb4a3718ed385fb22580d2e0fc56bdb2`
 - Commit subject:
   `fix: weather codes slightly less thunderstorm lat scaling`
+- Official GFS importer backport:
+  `6059e2bd7e009b765caadd6a619002af3fd9ee21`
+- Backport subject:
+  `fix: GFS precipitation deaccumulation past 1-hourly data`
 - Reason for this baseline:
   Validation against the current public Open-Meteo API showed that the older
   `acfb7eb13ffdca9d3772c57716c240d3a7d73da5` baseline missed thunderstorm
@@ -20,7 +24,8 @@ updated whenever upstream code is imported, rebased, or patched.
   later thunderstorm-suppression changes that also mismatched the public API on
   the same data inputs. The vendored tree must not mix reader, weather-code,
   writer, interpolation, or model-fallback files from different Open-Meteo
-  commits.
+  commits. The later official GFS importer fix above is backported unchanged so
+  precipitation and showers use the real one- or three-hour forecast interval.
 
 ## Open-Meteo SDK
 
@@ -68,14 +73,14 @@ paths, not from a separately maintained Python clone or local formula.
 
 ## Local Patches In Vendored Open-Meteo
 
-There are no intentional local patches inside `vendor/open-meteo`.
+The vendored directory starts from upstream
+`4efb9c49fb4a3718ed385fb22580d2e0fc56bdb2`. The GFS precipitation interval
+change is copied verbatim from upstream commit
+`6059e2bd7e009b765caadd6a619002af3fd9ee21`; it is not a locally invented
+formula. Product-source changes for the regional NOMADS path, regional grids,
+CAMS hourly files, and selected outputs are the project-specific boundary.
 
-The vendored directory is imported as a whole from upstream
-`4efb9c49fb4a3718ed385fb22580d2e0fc56bdb2`. Production code that adapts data
-source credentials, China/surrounding-region handling, WebP generation,
-mirroring, scheduling, or project-specific API output must live outside the
-vendored Open-Meteo source tree.
-
-Any future change under `vendor/open-meteo` must be a full upstream baseline
-replacement, not a hand-written patch or a mix of files from different upstream
-commits.
+Every future change under `vendor/open-meteo` must be either a recorded
+upstream commit or one of the explicitly allowed product-source boundaries
+above. Reader and API semantics must never be silently mixed or compensated in
+the Rust adapter.
