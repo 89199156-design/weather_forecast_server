@@ -17,6 +17,7 @@ trap cleanup_sensitive_artifacts EXIT
 
 GFS_SKIP_GFS013="${WEATHER_GFS_SKIP_GFS013:-false}"
 GFS_SKIP_GFS025="${WEATHER_GFS_SKIP_GFS025:-false}"
+GFS_SKIP_GFS025_UPPER_LEVELS="${WEATHER_GFS_SKIP_GFS025_UPPER_LEVELS:-false}"
 GFS_PRESERVE_HTTP_CACHE="${WEATHER_GFS_PRESERVE_HTTP_CACHE:-false}"
 if ! is_truthy "$GFS_PRESERVE_HTTP_CACHE"; then
   cleanup_openmeteo_http_cache
@@ -25,15 +26,42 @@ prepare_openmeteo_http_cache
 
 GFS_MAX_FORECAST_HOUR="${WEATHER_GFS_MAX_FORECAST_HOUR:-384}"
 GFS_CONCURRENT="${WEATHER_GFS_DOWNLOAD_CONCURRENT:-4}"
-GFS013_SURFACE_VARIABLES="${WEATHER_GFS013_SURFACE_VARIABLES:-temperature_2m,cloud_cover,cloud_cover_low,cloud_cover_mid,cloud_cover_high,pressure_msl,relative_humidity_2m,precipitation,wind_v_component_10m,wind_u_component_10m,snow_depth,showers,frozen_precipitation_percent,uv_index,uv_index_clear_sky,boundary_layer_height,shortwave_radiation,latent_heat_flux}"
-# The public API exposes uv_index_clear_sky and its 3-day maximum. Keep this
-# official GFS CDUVB field mandatory even when an older deployed env override
-# still contains the pre-migration surface allowlist.
-case ",$GFS013_SURFACE_VARIABLES," in
-  *,uv_index_clear_sky,*) ;;
-  *) GFS013_SURFACE_VARIABLES="${GFS013_SURFACE_VARIABLES},uv_index_clear_sky" ;;
-esac
-GFS025_SURFACE_VARIABLES="${WEATHER_GFS025_SURFACE_VARIABLES:-pressure_msl,categorical_freezing_rain,wind_gusts_10m,cape,lifted_index,convective_inhibition,visibility,latent_heat_flux}"
+GFS013_SURFACE_VARIABLES="${WEATHER_GFS013_SURFACE_VARIABLES:-temperature_2m,surface_temperature,cloud_cover,cloud_cover_low,cloud_cover_mid,cloud_cover_high,pressure_msl,relative_humidity_2m,precipitation,wind_v_component_10m,wind_u_component_10m,snow_depth,showers,frozen_precipitation_percent,uv_index,uv_index_clear_sky,boundary_layer_height,shortwave_radiation,latent_heat_flux,sensible_heat_flux,diffuse_radiation,total_column_integrated_water_vapour,soil_temperature_0_to_10cm,soil_temperature_10_to_40cm,soil_temperature_40_to_100cm,soil_temperature_100_to_200cm,soil_moisture_0_to_10cm,soil_moisture_10_to_40cm,soil_moisture_40_to_100cm,soil_moisture_100_to_200cm}"
+GFS025_SURFACE_VARIABLES="${WEATHER_GFS025_SURFACE_VARIABLES:-pressure_msl,categorical_freezing_rain,temperature_80m,temperature_100m,wind_v_component_80m,wind_u_component_80m,wind_v_component_100m,wind_u_component_100m,wind_gusts_10m,freezing_level_height,cape,lifted_index,convective_inhibition,visibility}"
+
+ensure_csv_variable() {
+  local list_name="$1"
+  local variable="$2"
+  local current="${!list_name}"
+  case ",$current," in
+    *,"$variable",*) ;;
+    *) printf -v "$list_name" '%s' "${current},${variable}" ;;
+  esac
+}
+
+# Older private environments may still carry the former WebP-only allowlists.
+# Always restore every official GFS input required by the public API while
+# retaining explicitly configured ordering and any additional variables.
+for variable in \
+  temperature_2m surface_temperature cloud_cover cloud_cover_low cloud_cover_mid \
+  cloud_cover_high pressure_msl relative_humidity_2m precipitation \
+  wind_v_component_10m wind_u_component_10m snow_depth showers \
+  frozen_precipitation_percent uv_index uv_index_clear_sky boundary_layer_height \
+  shortwave_radiation latent_heat_flux sensible_heat_flux diffuse_radiation \
+  total_column_integrated_water_vapour soil_temperature_0_to_10cm \
+  soil_temperature_10_to_40cm soil_temperature_40_to_100cm \
+  soil_temperature_100_to_200cm soil_moisture_0_to_10cm \
+  soil_moisture_10_to_40cm soil_moisture_40_to_100cm \
+  soil_moisture_100_to_200cm; do
+  ensure_csv_variable GFS013_SURFACE_VARIABLES "$variable"
+done
+for variable in \
+  pressure_msl categorical_freezing_rain temperature_80m temperature_100m \
+  wind_v_component_80m wind_u_component_80m wind_v_component_100m \
+  wind_u_component_100m wind_gusts_10m freezing_level_height cape lifted_index \
+  convective_inhibition visibility; do
+  ensure_csv_variable GFS025_SURFACE_VARIABLES "$variable"
+done
 GFS_UPPER_LEVELS="${WEATHER_GFS_UPPER_LEVELS:-1000,975,950,925,900,850,800,750,700,650,600,550,500,450,400,350,300,250,200,150,100,50}"
 GFS_UPPER_LEVEL_VARIABLES="${WEATHER_GFS_UPPER_LEVEL_VARIABLES:-temperature,wind_u_component,wind_v_component,geopotential_height,cloud_cover,relative_humidity,vertical_velocity}"
 GFS_UPPER_LEVEL_CONCURRENT="${WEATHER_GFS_UPPER_LEVEL_DOWNLOAD_CONCURRENT:-4}"
@@ -148,7 +176,11 @@ else
   cleanup_download_work_dirs "$DATA_DIR/download-ncep_gfs025"
   cleanup_openmeteo_http_cache
 
-  download_gfs025_upper_level_variables
+  if is_truthy "$GFS_SKIP_GFS025_UPPER_LEVELS"; then
+    echo "Skipping unchanged GFS upper-level variables for repair run=$GFS_RUN"
+  else
+    download_gfs025_upper_level_variables
+  fi
 fi
 
 cleanup_download_work_dirs \

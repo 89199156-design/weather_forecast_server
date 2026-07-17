@@ -323,7 +323,7 @@ def test_gfs_upper_level_download_does_not_break_run_argument_splitting():
     assert '$(append_run_arg "$GFS_RUN")' in upper_function
 
 
-def test_gfs_surface_download_uses_explicit_minimal_allowlists():
+def test_gfs_surface_download_uses_complete_official_api_input_allowlists():
     script = (ROOT / "scripts" / "download_openmeteo_gfs_data.sh").read_text(encoding="utf-8")
     config = (ROOT / "config" / "singapore.example.env").read_text(encoding="utf-8")
 
@@ -333,21 +333,27 @@ def test_gfs_surface_download_uses_explicit_minimal_allowlists():
     assert "WEATHER_GFS025_SURFACE_VARIABLES=" in config
 
     gfs013_default = (
-        "temperature_2m,cloud_cover,cloud_cover_low,cloud_cover_mid,cloud_cover_high,"
+        "temperature_2m,surface_temperature,cloud_cover,cloud_cover_low,cloud_cover_mid,cloud_cover_high,"
         "pressure_msl,relative_humidity_2m,precipitation,wind_v_component_10m,"
         "wind_u_component_10m,snow_depth,showers,frozen_precipitation_percent,"
-        "uv_index,uv_index_clear_sky,boundary_layer_height,shortwave_radiation,latent_heat_flux"
+        "uv_index,uv_index_clear_sky,boundary_layer_height,shortwave_radiation,latent_heat_flux,"
+        "sensible_heat_flux,diffuse_radiation,total_column_integrated_water_vapour,"
+        "soil_temperature_0_to_10cm,soil_temperature_10_to_40cm,soil_temperature_40_to_100cm,"
+        "soil_temperature_100_to_200cm,soil_moisture_0_to_10cm,soil_moisture_10_to_40cm,"
+        "soil_moisture_40_to_100cm,soil_moisture_100_to_200cm"
     )
     gfs025_default = (
-        "pressure_msl,categorical_freezing_rain,wind_gusts_10m,cape,lifted_index,"
-        "convective_inhibition,visibility,latent_heat_flux"
+        "pressure_msl,categorical_freezing_rain,temperature_80m,temperature_100m,"
+        "wind_v_component_80m,wind_u_component_80m,wind_v_component_100m,"
+        "wind_u_component_100m,wind_gusts_10m,freezing_level_height,cape,lifted_index,"
+        "convective_inhibition,visibility"
     )
     assert gfs013_default in script
     assert gfs025_default in script
     assert f"WEATHER_GFS013_SURFACE_VARIABLES={gfs013_default}" in config
     assert f"WEATHER_GFS025_SURFACE_VARIABLES={gfs025_default}" in config
-    assert '*,uv_index_clear_sky,*)' in script
-    assert 'GFS013_SURFACE_VARIABLES="${GFS013_SURFACE_VARIABLES},uv_index_clear_sky"' in script
+    assert "ensure_csv_variable GFS013_SURFACE_VARIABLES" in script
+    assert "ensure_csv_variable GFS025_SURFACE_VARIABLES" in script
     assert 'GFS_SKIP_GFS025="${WEATHER_GFS_SKIP_GFS025:-false}"' in script
     assert 'if is_truthy "$GFS_SKIP_GFS025"; then' in script
 
@@ -362,7 +368,7 @@ def test_gfs_surface_download_uses_explicit_minimal_allowlists():
     assert '--only-variables "$GFS013_SURFACE_VARIABLES"' in gfs013_block
     assert '--only-variables "$GFS025_SURFACE_VARIABLES"' in gfs025_block
 
-    unused_surface_variables = (
+    required_surface_variables = (
         "temperature_80m",
         "temperature_100m",
         "wind_v_component_80m",
@@ -382,11 +388,13 @@ def test_gfs_surface_download_uses_explicit_minimal_allowlists():
         "freezing_level_height",
         "diffuse_radiation",
         "total_column_integrated_water_vapour",
-        "mass_density_8m",
     )
     configured_surface = f"{gfs013_default},{gfs025_default}"
-    for variable in unused_surface_variables:
-        assert variable not in configured_surface
+    for variable in required_surface_variables:
+        assert variable in configured_surface
+
+    assert 'GFS_SKIP_GFS025_UPPER_LEVELS="${WEATHER_GFS_SKIP_GFS025_UPPER_LEVELS:-false}"' in script
+    assert 'if is_truthy "$GFS_SKIP_GFS025_UPPER_LEVELS"; then' in script
 
 
 def test_gfs_repair_mode_can_refresh_reused_surface_runs_without_gfs025():
