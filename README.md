@@ -276,9 +276,9 @@ acceptance.
 ## Legacy Layer Export
 
 The former Python WebP builders and local Open-Meteo HTTP validation path remain
-temporarily as rollback and parity-test tooling. They are not called by the
-scheduled native pipeline. Rust API/WebP replaces them only after shadow output
-validation succeeds. The legacy layer scripts ultimately call
+only as rollback and parity-test tooling. They are not called by the scheduled
+native pipeline; the Rust API and WebP renderer are the production path. The
+legacy layer scripts ultimately call
 `scripts/build_webp.py`; this is documentation of the rollback path, not a
 scheduled native-pipeline step.
 
@@ -296,9 +296,9 @@ dataset `cams-global-greenhouse-gas-forecasts`; production requests its
 credentials only in `config/singapore.private.env` or a host `.cdsapirc`; the
 tracked example config contains empty credential values.
 
-For CAMS ECPDS, the low-priority scheduler runs every two hours; GFS runs once
-per hour. Both probe the newest remote run first and never poll a local process
-for completion.
+No legacy layer scheduler is installed. Production scheduling is defined below:
+one GFS trigger per six-hour source cycle and one CAMS trigger per twelve-hour
+source cycle, with no local completion polling.
 
 Point-output parity also requires Open-Meteo's Copernicus DEM90 static data for
 land elevation correction. For production, keep the runtime data local and
