@@ -391,6 +391,11 @@ CRON_TZ=UTC
 37 8,20 * * * WEATHER_FORECAST_APP_DIR=/opt/1panel/apps/weather_forecast_server nice -n 15 ionice -c 3 /bin/bash /opt/1panel/apps/weather_forecast_server/scripts/run_cams_ftp_scheduled_cycle.sh
 ```
 
+When code is deployed from an immutable release checkout, install with
+`WEATHER_FORECAST_APP_DIR=/home/ubuntu/weather_releases/main`; the generated
+jobs export that code root while keeping the private environment and OM data
+under `/opt/1panel/apps/weather_forecast_server`.
+
 The 1Panel installer stores equivalent UTC+8 local-time schedules
 (`17 0,6,12,18 * * *` and `37 4,16 * * *`). Download, OM conversion, WebP
 generation, and the single API reload remain one event-driven process chain;

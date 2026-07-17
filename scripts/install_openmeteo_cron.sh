@@ -2,6 +2,9 @@
 set -euo pipefail
 
 APP_DIR="${WEATHER_FORECAST_APP_DIR:-/opt/1panel/apps/weather_forecast_server}"
+RUNTIME_ROOT="${WEATHER_FORECAST_RUNTIME_ROOT:-/opt/1panel/apps/weather_forecast_server}"
+ENV_FILE="${WEATHER_OPENMETEO_ENV_FILE:-$RUNTIME_ROOT/config/singapore.private.env}"
+PRODUCER_ROOT="${WEATHER_OM_PRODUCER_ROOT:-$RUNTIME_ROOT/data/om_producer}"
 PANEL_DB="${WEATHER_1PANEL_DB:-/opt/1panel/db/1Panel.db}"
 PANEL_DB_BACKUP_DIR="${WEATHER_1PANEL_DB_BACKUP_DIR:-/opt/1panel/db}"
 PANEL_SERVICE="${WEATHER_1PANEL_SERVICE:-1panel.service}"
@@ -33,6 +36,9 @@ fi
 gfs_script=$(cat <<EOF
 #!/bin/bash
 set -euo pipefail
+export WEATHER_FORECAST_APP_DIR=$APP_DIR
+export WEATHER_OPENMETEO_ENV_FILE=$ENV_FILE
+export WEATHER_OM_PRODUCER_ROOT=$PRODUCER_ROOT
 cd $APP_DIR
 exec nice -n 15 ionice -c 3 bash scripts/run_gfs_probe_and_cycle.sh
 EOF
@@ -41,6 +47,9 @@ EOF
 cams_ftp_script=$(cat <<EOF
 #!/bin/bash
 set -euo pipefail
+export WEATHER_FORECAST_APP_DIR=$APP_DIR
+export WEATHER_OPENMETEO_ENV_FILE=$ENV_FILE
+export WEATHER_OM_PRODUCER_ROOT=$PRODUCER_ROOT
 cd $APP_DIR
 exec nice -n 15 ionice -c 3 bash scripts/run_cams_ftp_scheduled_cycle.sh
 EOF

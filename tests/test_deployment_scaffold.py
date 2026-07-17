@@ -1134,6 +1134,12 @@ def test_openmeteo_cron_installer_installs_1panel_jobs_only_for_gfs_and_cams_ftp
     assert '"17 * * * *"' not in script
     assert '"37 */2 * * *"' not in script
     assert "nice -n 15 ionice -c 3" in script
+    assert 'RUNTIME_ROOT="${WEATHER_FORECAST_RUNTIME_ROOT:-/opt/1panel/apps/weather_forecast_server}"' in script
+    assert 'ENV_FILE="${WEATHER_OPENMETEO_ENV_FILE:-$RUNTIME_ROOT/config/singapore.private.env}"' in script
+    assert 'PRODUCER_ROOT="${WEATHER_OM_PRODUCER_ROOT:-$RUNTIME_ROOT/data/om_producer}"' in script
+    assert "export WEATHER_FORECAST_APP_DIR=$APP_DIR" in script
+    assert "export WEATHER_OPENMETEO_ENV_FILE=$ENV_FILE" in script
+    assert "export WEATHER_OM_PRODUCER_ROOT=$PRODUCER_ROOT" in script
     assert "scripts/run_gfs_probe_and_cycle.sh" in script
     assert "scripts/run_cams_ftp_scheduled_cycle.sh" in script
     assert "scripts/run_cams_ads_scheduled_cycle.sh" not in script
