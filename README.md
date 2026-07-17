@@ -292,7 +292,9 @@ The standard CAMS Global air-quality domain uses ECMWF's authenticated ECPDS
 distribution paths `CAMS_GLOBAL` and `CAMS_GLOBAL_ADDITIONAL`. Open-Meteo's
 separate official `cams_global_greenhouse_gases` product uses the Copernicus ADS
 dataset `cams-global-greenhouse-gas-forecasts`; production requests its
-`carbon_monoxide` field for official API parity. Put real ECPDS and ADS
+`carbon_monoxide` field for official API parity. The published CAMS group uses
+the same two-UTC-day greenhouse release lag as the Open-Meteo bucket instead of
+mixing a newer ADS cycle into an older CAMS release. Put real ECPDS and ADS
 credentials only in `config/singapore.private.env` or a host `.cdsapirc`; the
 tracked example config contains empty credential values.
 
@@ -374,8 +376,10 @@ first/final `0,120h` files for each configured variable. The importer still
 validates the complete run before publication. It normally reuses two
 historical full runs and downloads only the newest full run; first start or a damaged history causes the
 missing runs in the three-run window to be downloaded. After that event,
-the same cycle downloads only missing daily 00 UTC greenhouse runs from ADS,
-retains three complete greenhouse runs, and publishes both domains atomically.
+the same cycle downloads only missing daily 00 UTC greenhouse runs from ADS.
+That three-run window ends two UTC days before the CAMS run, matching the
+official grouped release while preserving two prior complete fallback runs.
+Both domains are then published atomically.
 There is no separate high-frequency greenhouse poller.
 
 ```bash
