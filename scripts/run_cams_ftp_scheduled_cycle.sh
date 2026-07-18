@@ -38,18 +38,19 @@ mkdir -p "$LOG_DIR"
   } 8>"$CYCLE_LOCK_FILE"
 
   probe_output=""
-  if ! probe_output="$(python3 scripts/probe_cams_ftp_run.py --data-dir "$data_dir" 2>&1)"; then
+  probe_rc=0
+  probe_output="$(python3 scripts/probe_cams_ftp_run.py --data-dir "$data_dir" 2>&1)" || probe_rc=$?
+  ready_line="$(printf '%s\n' "$probe_output" | awk '$1 == "READY" && $2 != "" { line = $0 } END { print line }')"
+  if [[ -z "$ready_line" ]]; then
     echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_FTP_SCHEDULE] $probe_output"
     exit 0
   fi
-
-  set -- $probe_output
-  if [[ "${1:-}" != "READY" || -z "${2:-}" ]]; then
-    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_FTP_SCHEDULE] $probe_output"
+  read -r ready_marker run ready_reference_time <<< "$ready_line"
+  if [[ "$ready_marker" != "READY" || -z "$run" ]]; then
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_FTP_SCHEDULE] invalid probe output rc=$probe_rc: $probe_output"
     exit 0
   fi
-  run="$2"
 
-  echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_FTP_SCHEDULE] start run=$run"
+  echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_FTP_SCHEDULE] start run=$run reference_time=$ready_reference_time"
   WEATHER_CAMS_RUN="$run" bash scripts/run_native_model_pipeline.sh cams "$run"
 } 9>"$LOCK_FILE" >> "$LOG_DIR/openmeteo_cams_ftp_schedule.log" 2>&1

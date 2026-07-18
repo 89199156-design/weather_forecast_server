@@ -66,6 +66,16 @@ class NativeModelPipelineTests(unittest.TestCase):
         self.assertNotIn("while true", gfs + cams)
         self.assertNotIn("curl 127.0.0.1", gfs + cams)
 
+    def test_cams_scheduler_selects_ready_line_after_newer_incomplete_run(self):
+        cams = (ROOT / "scripts" / "run_cams_ftp_scheduled_cycle.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("ready_line=", cams)
+        self.assertIn('$1 == "READY"', cams)
+        self.assertIn('read -r ready_marker run ready_reference_time', cams)
+        self.assertNotIn("set -- $probe_output", cams)
+
     def test_runbook_forbids_client_facing_refresh_polling(self):
         runbook = (ROOT / "docs" / "singapore-native-migration-runbook.md").read_text(
             encoding="utf-8"
