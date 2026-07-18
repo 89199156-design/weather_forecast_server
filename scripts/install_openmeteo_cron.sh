@@ -82,7 +82,9 @@ if command -v systemctl >/dev/null 2>&1 \
 fi
 if command -v systemctl >/dev/null 2>&1 \
   && "${SUDO[@]}" systemctl is-active --quiet cron.service; then
-  "${SUDO[@]}" systemctl reload cron.service
+  if ! "${SUDO[@]}" systemctl reload cron.service; then
+    "${SUDO[@]}" systemctl restart cron.service
+  fi
 fi
 
 printf '%s\n' "Installed system Open-Meteo cronjobs: $SYSTEM_CRON_FILE"

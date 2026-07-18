@@ -1206,6 +1206,7 @@ def test_openmeteo_cron_installer_uses_one_system_scheduler_for_gfs_and_cams_ftp
     assert "CRON_TZ=UTC" not in script
     assert 'PANEL_SERVICE="${WEATHER_1PANEL_SERVICE:-1panel.service}"' in script
     assert 'systemctl restart "$PANEL_SERVICE"' in script
+    assert 'systemctl restart cron.service' in script
     assert "CST" not in script
 
 

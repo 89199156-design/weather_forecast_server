@@ -406,7 +406,7 @@ The installer uses the host cron daemon as the single scheduler because direct
 1Panel database inserts do not register runnable entry IDs in every 1Panel
 release. It removes legacy/high-frequency weather rows from 1Panel, restarts
 only the control panel to retire any in-memory entries, installs the system cron
-file atomically, and reloads `cron.service`. Download, OM conversion, WebP
+file atomically, and reloads or restarts `cron.service` as supported. Download, OM conversion, WebP
 generation, and the single API reload remain one event-driven process chain;
 no cron job polls local completion state and no weather data service is
 restarted by the scheduler installer.
