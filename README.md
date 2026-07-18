@@ -409,4 +409,7 @@ only the control panel to retire any in-memory entries, installs the system cron
 file atomically, and reloads or restarts `cron.service` as supported. Download, OM conversion, WebP
 generation, and the single API reload remain one event-driven process chain;
 no cron job polls local completion state and no weather data service is
-restarted by the scheduler installer.
+restarted by the scheduler installer. The chain raises only the Rust WebP
+renderer process's soft open-file limit to 65,536 so the immutable GFS and CAMS
+OM histories can be decoded together; it does not raise worker count or add
+background scanning.

@@ -12,11 +12,13 @@ class NativeModelPipelineTests(unittest.TestCase):
     def test_pipeline_is_event_driven_and_strictly_ordered(self):
         source = (ROOT / "scripts" / "run_native_model_pipeline.sh").read_text(encoding="utf-8")
         om = source.index("run_gfs_om_production_cycle.sh")
+        nofile = source.index('ulimit -S -n "$WEBP_NOFILE_LIMIT"')
         webp = source.index("nice -n 10 ionice")
         signal = source.index("systemctl reload")
         prune = source.index("prune_native_coverage_history.py")
 
         self.assertLess(om, webp)
+        self.assertLess(nofile, webp)
         self.assertLess(webp, signal)
         self.assertLess(signal, prune)
         self.assertIn("published_identity", source)
@@ -26,6 +28,7 @@ class NativeModelPipelineTests(unittest.TestCase):
         self.assertNotIn("find ", source)
         self.assertIn('--public-root "$WEBP_PUBLIC_ROOT"', source)
         self.assertIn('--workers "$WEBP_WORKERS"', source)
+        self.assertIn('WEATHER_OM_WEBP_NOFILE_LIMIT:-65536', source)
         self.assertIn("--show-cursor", source)
         self.assertIn('--after-cursor="$journal_cursor"', source)
         self.assertIn("--follow", source)

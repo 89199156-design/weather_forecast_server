@@ -18,6 +18,7 @@ WEBP_BIN="${WEATHER_OM_WEBP_BIN:-/opt/1panel/apps/weather_om_webp/bin/om-webp}"
 WEBP_OUTPUT_ROOT="${WEATHER_OM_WEBP_DATA_ROOT:-/opt/1panel/apps/weather_om_webp/data}"
 WEBP_PUBLIC_ROOT="${WEATHER_OM_WEBP_PUBLIC_ROOT:-/opt/1panel/apps/weather/data}"
 WEBP_WORKERS="${WEATHER_OM_WEBP_WORKERS:-1}"
+WEBP_NOFILE_LIMIT="${WEATHER_OM_WEBP_NOFILE_LIMIT:-65536}"
 OMFILE_LIB="${WEATHER_OMFILE_LIB:-/opt/1panel/apps/weather_om_api/native/libomfileformat.so}"
 API_SERVICE="${WEATHER_OM_API_SERVICE:-weather-om-api.service}"
 API_RELOAD_CONFIRM_TIMEOUT_SECONDS="${WEATHER_OM_API_RELOAD_CONFIRM_TIMEOUT_SECONDS:-60}"
@@ -66,6 +67,14 @@ PY
   fi
   if [[ ! -f "$OMFILE_LIB" ]]; then
     printf '%s\n' "Missing OM decoder library: $OMFILE_LIB" >&2
+    exit 1
+  fi
+  if [[ ! "$WEBP_NOFILE_LIMIT" =~ ^[1-9][0-9]*$ ]]; then
+    printf '%s\n' "WEATHER_OM_WEBP_NOFILE_LIMIT must be a positive integer" >&2
+    exit 2
+  fi
+  if ! ulimit -S -n "$WEBP_NOFILE_LIMIT"; then
+    printf '%s\n' "Could not raise WebP open-file limit to $WEBP_NOFILE_LIMIT" >&2
     exit 1
   fi
   echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [NATIVE_PIPELINE] OM complete; render WebP scope=$SCOPE run=$RUN"
