@@ -481,7 +481,84 @@ class ShanghaiSingaporeApiComparisonTests(unittest.TestCase):
 
         self.assertIn('parser.add_argument("--workers", type=int, default=1)', source)
         self.assertIn('parser.add_argument("--request-pause", type=float, default=0.2)', source)
-        self.assertIn('parser.add_argument("--hour-batch-size", type=int, default=48)', source)
+        self.assertIn('parser.add_argument("--point-batch-size", type=int, default=200)', source)
+        self.assertIn('parser.add_argument("--variable-batch-size", type=int, default=10)', source)
+        self.assertIn('parser.add_argument("--hour-batch-size", type=int, default=12)', source)
+        self.assertIn('parser.add_argument("--checkpoint-every", type=int, default=1)', source)
+
+    def test_completed_jobs_are_checkpointed_and_skipped_on_resume(self):
+        with __import__("tempfile").TemporaryDirectory() as directory:
+            root = Path(directory)
+            identity = root / "identity.json"
+            output = root / "report.json"
+            identity.write_text(json.dumps({
+                "passed": True,
+                "same_source_runs": True,
+                "live_snapshot_verified": True,
+                "matched_latest_runs": {
+                    "gfs": "2026071300",
+                    "cams": "2026071212",
+                },
+                "compared_at": int(time.time()),
+                "inventory_collected_at": {
+                    "shanghai": int(time.time()),
+                    "singapore": int(time.time()),
+                },
+            }), encoding="utf-8")
+            arguments = [
+                str(SCRIPT),
+                "--shanghai-url", "http://shanghai",
+                "--singapore-url", "http://singapore",
+                "--gfs-run", "2026071300",
+                "--cams-run", "2026071212",
+                "--run-identity-report", str(identity),
+                "--output-report", str(output),
+                "--point-count", "1",
+                "--hours", "1",
+                "--allow-reduced-test",
+                "--progress-every", "1",
+            ]
+            shared_window = {
+                "shared_start": "2026-07-12T16:00",
+                "shared_end": "2026-07-12T16:00",
+                "shared_hours": 1,
+            }
+
+            def variables(scope):
+                return ["temperature_2m"] if scope == "gfs" else ["pm2_5"]
+
+            def result(job, *_args):
+                return {
+                    "job_id": job["job_id"],
+                    "scope": job["scope"],
+                    "equal": True,
+                    "values": 1,
+                    "excluded_interpolated_values": 0,
+                    "semantic_waiver_values": 0,
+                    "semantic_waiver_mismatches": 0,
+                    "gfs_single_batch_boundary_values_excluded": 0,
+                }
+
+            common_patches = (
+                patch.object(sys, "argv", arguments),
+                patch.object(module, "random_points", return_value=[{
+                    "latitude": 31.2,
+                    "longitude": 121.5,
+                }]),
+                patch.object(module, "discover_shared_gfs_window", return_value=shared_window),
+                patch.object(module, "preflight_public_variable_contracts", return_value=0),
+                patch.object(module, "variables_for_scope", side_effect=variables),
+            )
+            with common_patches[0], common_patches[1], common_patches[2], common_patches[3], common_patches[4], patch.object(module, "compare_job", side_effect=result) as compared:
+                self.assertEqual(module.main(), 0)
+                self.assertEqual(compared.call_count, 2)
+
+            checkpoint = Path(str(output) + ".checkpoint.json")
+            self.assertEqual(json.loads(checkpoint.read_text())["jobs_completed"], 2)
+
+            with patch.object(sys, "argv", arguments), patch.object(module, "random_points", return_value=[{"latitude": 31.2, "longitude": 121.5}]), patch.object(module, "discover_shared_gfs_window", return_value=shared_window), patch.object(module, "preflight_public_variable_contracts", return_value=0), patch.object(module, "variables_for_scope", side_effect=variables), patch.object(module, "compare_job") as compared:
+                self.assertEqual(module.main(), 0)
+                compared.assert_not_called()
 
     def test_api_gate_requires_passed_identity_report_for_exact_runs(self):
         with __import__("tempfile").TemporaryDirectory() as directory:

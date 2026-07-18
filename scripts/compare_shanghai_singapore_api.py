@@ -806,6 +806,16 @@ def compare_job(
             time.sleep(request_pause)
 
 
+def atomic_write_json(path: Path, payload: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    temporary.replace(path)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--shanghai-url", required=True)
@@ -822,12 +832,18 @@ def main() -> int:
         help="reduced diagnostic hours for both products; forbidden in acceptance mode",
     )
     parser.add_argument("--seed", type=int, default=20260713)
-    parser.add_argument("--point-batch-size", type=int, default=50)
-    parser.add_argument("--variable-batch-size", type=int, default=50)
-    parser.add_argument("--hour-batch-size", type=int, default=48)
+    parser.add_argument("--point-batch-size", type=int, default=200)
+    parser.add_argument("--variable-batch-size", type=int, default=10)
+    parser.add_argument("--hour-batch-size", type=int, default=12)
     parser.add_argument("--workers", type=int, default=1)
     parser.add_argument("--request-pause", type=float, default=0.2)
     parser.add_argument("--timeout", type=float, default=120.0)
+    parser.add_argument(
+        "--checkpoint-report",
+        help="resumable progress file; defaults to OUTPUT_REPORT.checkpoint.json",
+    )
+    parser.add_argument("--checkpoint-every", type=int, default=1)
+    parser.add_argument("--progress-every", type=int, default=10)
     parser.add_argument("--bounds", nargs=4, type=float, default=(70.0, 140.0, 0.0, 58.0), metavar=("LEFT", "RIGHT", "BOTTOM", "TOP"))
     parser.add_argument("--allow-reduced-test", action="store_true")
     args = parser.parse_args()
@@ -839,6 +855,10 @@ def main() -> int:
         parser.error("--workers must be positive")
     if args.hour_batch_size <= 0:
         parser.error("--hour-batch-size must be positive")
+    if args.point_batch_size <= 0 or args.variable_batch_size <= 0:
+        parser.error("point and variable batch sizes must be positive")
+    if args.checkpoint_every <= 0 or args.progress_every <= 0:
+        parser.error("checkpoint and progress intervals must be positive")
     if args.request_pause < 0:
         parser.error("--request-pause must not be negative")
     try:
@@ -906,26 +926,128 @@ def main() -> int:
                         "variables": variable_group,
                     })
 
-    results: list[dict[str, Any]] = []
+    point_digest = hashlib.sha256(canonical_bytes(points)).hexdigest()
+    output = Path(args.output_report)
+    checkpoint = (
+        Path(args.checkpoint_report)
+        if args.checkpoint_report
+        else Path(str(output) + ".checkpoint.json")
+    )
+    checkpoint_contract = {
+        "version": 1,
+        "comparator_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        "shanghai_url": args.shanghai_url.rstrip("/"),
+        "singapore_url": args.singapore_url.rstrip("/"),
+        "gfs_run": args.gfs_run,
+        "cams_run": args.cams_run,
+        "point_count": args.point_count,
+        "point_sha256": point_digest,
+        "bounds": list(args.bounds),
+        "seed": args.seed,
+        "gfs_start": format_hour(gfs_start),
+        "gfs_hours": scope_hours["gfs"],
+        "cams_hours": scope_hours["cams"],
+        "point_batch_size": args.point_batch_size,
+        "variable_batch_size": args.variable_batch_size,
+        "hour_batch_size": args.hour_batch_size,
+        "job_ids_sha256": hashlib.sha256(
+            canonical_bytes([job["job_id"] for job in jobs])
+        ).hexdigest(),
+    }
+    checkpoint_contract_sha256 = hashlib.sha256(
+        canonical_bytes(checkpoint_contract)
+    ).hexdigest()
+    results_by_id: dict[str, dict[str, Any]] = {}
+    if checkpoint.exists():
+        saved = json.loads(checkpoint.read_text(encoding="utf-8"))
+        if saved.get("contract_sha256") != checkpoint_contract_sha256:
+            parser.error(
+                "checkpoint contract does not match this run; use a different "
+                "--checkpoint-report or remove the stale checkpoint"
+            )
+        valid_job_ids = {job["job_id"] for job in jobs}
+        for item in saved.get("results", []):
+            job_id = item.get("job_id")
+            if job_id not in valid_job_ids or job_id in results_by_id:
+                parser.error("checkpoint contains an unknown or duplicate job_id")
+            results_by_id[job_id] = item
+
+    def persist_checkpoint() -> None:
+        atomic_write_json(checkpoint, {
+            "contract": checkpoint_contract,
+            "contract_sha256": checkpoint_contract_sha256,
+            "jobs_expected": len(jobs),
+            "jobs_completed": len(results_by_id),
+            "updated_at": int(time.time()),
+            "results": sorted(results_by_id.values(), key=lambda item: item["job_id"]),
+        })
+
+    pending_jobs = [job for job in jobs if job["job_id"] not in results_by_id]
     errors: list[dict[str, str]] = []
-    with ThreadPoolExecutor(max_workers=args.workers) as executor:
-        futures = {
-            executor.submit(
-                compare_job,
-                job,
-                args.shanghai_url,
-                args.singapore_url,
-                args.timeout,
-                args.request_pause,
-            ): job
-            for job in jobs
-        }
-        for future in as_completed(futures):
-            job = futures[future]
+    completed_this_run = 0
+
+    def record(
+        job: dict[str, Any],
+        result: dict[str, Any] | None,
+        error: Exception | None,
+    ) -> None:
+        nonlocal completed_this_run
+        if result is not None:
+            results_by_id[job["job_id"]] = result
+        elif error is not None:
+            errors.append({
+                "job_id": job["job_id"],
+                "error": f"{type(error).__name__}: {error}",
+            })
+        completed_this_run += 1
+        if result is not None and completed_this_run % args.checkpoint_every == 0:
+            persist_checkpoint()
+        if completed_this_run % args.progress_every == 0:
+            print(json.dumps({
+                "progress": len(results_by_id),
+                "jobs_expected": len(jobs),
+                "errors_this_run": len(errors),
+            }), flush=True)
+
+    if args.workers == 1:
+        for job in pending_jobs:
             try:
-                results.append(future.result())
+                record(
+                    job,
+                    compare_job(
+                        job,
+                        args.shanghai_url,
+                        args.singapore_url,
+                        args.timeout,
+                        args.request_pause,
+                    ),
+                    None,
+                )
             except Exception as exc:  # noqa: BLE001 - every failed request must be reported.
-                errors.append({"job_id": job["job_id"], "error": f"{type(exc).__name__}: {exc}"})
+                record(job, None, exc)
+    else:
+        with ThreadPoolExecutor(max_workers=args.workers) as executor:
+            futures = {
+                executor.submit(
+                    compare_job,
+                    job,
+                    args.shanghai_url,
+                    args.singapore_url,
+                    args.timeout,
+                    args.request_pause,
+                ): job
+                for job in pending_jobs
+            }
+            for future in as_completed(futures):
+                job = futures[future]
+                try:
+                    record(job, future.result(), None)
+                except Exception as exc:  # noqa: BLE001 - every failed request must be reported.
+                    record(job, None, exc)
+    if results_by_id:
+        persist_checkpoint()
+
+    results = list(results_by_id.values())
 
     results.sort(key=lambda item: item["job_id"])
     mismatches = [item for item in results if not item["equal"]]
@@ -963,7 +1085,6 @@ def main() -> int:
             if len(gfs_single_batch_examples) >= 100:
                 break
             gfs_single_batch_examples.append({"job_id": item["job_id"], **example})
-    point_digest = hashlib.sha256(canonical_bytes(points)).hexdigest()
     cams_cadence_by_variable = {
         variable: direct_source_cadence_hours("cams", variable)
         for variable in variables_for_scope("cams")
@@ -1044,11 +1165,7 @@ def main() -> int:
         "errors": errors[:100],
         "job_digests": results,
     }
-    output = Path(args.output_report)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    temporary = output.with_suffix(output.suffix + ".tmp")
-    temporary.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    temporary.replace(output)
+    atomic_write_json(output, report)
     print(json.dumps({key: report[key] for key in ("passed", "point_count", "gfs_hours", "cams_hours", "jobs_completed", "values_compared")}, ensure_ascii=False))
     return 0 if passed else 1
 
