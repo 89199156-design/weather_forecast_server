@@ -34,9 +34,10 @@ if [[ -z "${WEATHER_CAMS_ADS_KEY:-}" && -z "${WEATHER_CAMS_CDS_KEY:-}" ]]; then
 fi
 
 WEATHER_OPENMETEO_HTTP_CACHE_DIR="/app/data/http_cache/cams_greenhouse"
+WEATHER_OPENMETEO_HTTP_CACHE_ENABLED="${WEATHER_CAMS_GREENHOUSE_HTTP_CACHE_ENABLED:-false}"
 export WEATHER_OPENMETEO_HTTP_CACHE_DIR
-HTTP_CACHE="/app/data/http_cache/cams_greenhouse"
-export HTTP_CACHE
+export WEATHER_OPENMETEO_HTTP_CACHE_ENABLED
+unset HTTP_CACHE
 openmeteo_set_runtime_defaults
 write_sanitized_env_file
 cleanup_sensitive_artifacts() {

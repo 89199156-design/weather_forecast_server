@@ -480,25 +480,36 @@ def test_latest_run_validation_requires_configured_pressure_dirs(tmp_path):
     assert "OK 2026-07-03T18:00:00Z ncep_gfs025" in present.stdout
 
 
-def test_singapore_config_enables_temporary_openmeteo_http_cache():
+def test_model_downloaders_disable_large_debug_http_caches_by_default():
     config = (ROOT / "config" / "singapore.example.env").read_text(encoding="utf-8")
     common = (ROOT / "scripts" / "openmeteo_runtime_common.sh").read_text(encoding="utf-8")
     gfs_script = (ROOT / "scripts" / "download_openmeteo_gfs_data.sh").read_text(encoding="utf-8")
     cams_script = (ROOT / "scripts" / "download_openmeteo_cams_data.sh").read_text(encoding="utf-8")
+    greenhouse_script = (ROOT / "scripts" / "download_openmeteo_cams_greenhouse_data.sh").read_text(encoding="utf-8")
 
     assert "WEATHER_OPENMETEO_HTTP_CACHE_ENABLED=true" in config
     assert "WEATHER_OPENMETEO_HTTP_CACHE_DIR=/app/data/http_cache" in config
     assert "WEATHER_OPENMETEO_HTTP_CACHE_CLEANUP=true" in config
+    assert "WEATHER_GFS_HTTP_CACHE_ENABLED=false" in config
+    assert "WEATHER_CAMS_HTTP_CACHE_ENABLED=false" in config
+    assert "WEATHER_CAMS_GREENHOUSE_HTTP_CACHE_ENABLED=false" in config
     assert "HTTP_CACHE=" in common
     assert "host_http_cache_dir" in common
     assert 'chmod 0777 "$cache_dir_host"' in common
     assert 'cache_entries=("$cache_dir_host"/*)' in common
     assert 'rm -rf -- "${cache_entries[@]}"' in common
 
-    for script in (gfs_script, cams_script):
+    model_cache_switches = {
+        gfs_script: "WEATHER_GFS_HTTP_CACHE_ENABLED",
+        cams_script: "WEATHER_CAMS_HTTP_CACHE_ENABLED",
+        greenhouse_script: "WEATHER_CAMS_GREENHOUSE_HTTP_CACHE_ENABLED",
+    }
+    for script, cache_switch in model_cache_switches.items():
         assert "cleanup_sensitive_artifacts()" in script
         assert "cleanup_openmeteo_http_cache" in script
         assert "trap cleanup_sensitive_artifacts EXIT" in script
+        assert f'WEATHER_OPENMETEO_HTTP_CACHE_ENABLED="${{{cache_switch}:-false}}"' in script
+        assert "unset HTTP_CACHE" in script
         assert "trap cleanup_download_artifacts EXIT" not in script
         assert "cleanup_download_artifacts()" not in script
         trap_index = script.index("trap cleanup_sensitive_artifacts EXIT")
@@ -507,11 +518,12 @@ def test_singapore_config_enables_temporary_openmeteo_http_cache():
             for match in re.finditer(r"(?m)^\s*cleanup_openmeteo_http_cache\s*$", script)
             if match.start() > trap_index
         )
-        first_download_index = (
-            script.index("run_openmeteo download-gfs gfs013")
-            if script is gfs_script
-            else script.index("run_openmeteo download-cams cams_global")
-        )
+        if script is gfs_script:
+            first_download_index = script.index("run_openmeteo download-gfs gfs013")
+        elif script is cams_script:
+            first_download_index = script.index("run_openmeteo download-cams cams_global")
+        else:
+            first_download_index = script.index("run_openmeteo download-cams cams_global_greenhouse_gases")
         assert trap_index < start_cleanup_index < first_download_index
         success_cleanup_index = script.rindex("\ncleanup_openmeteo_http_cache\n")
         assert first_download_index < success_cleanup_index
@@ -519,12 +531,13 @@ def test_singapore_config_enables_temporary_openmeteo_http_cache():
     expected_cache_dirs = {
         gfs_script: "/app/data/http_cache/gfs",
         cams_script: "/app/data/http_cache/cams_ftp",
+        greenhouse_script: "/app/data/http_cache/cams_greenhouse",
     }
     for script, cache_dir in expected_cache_dirs.items():
         cache_index = script.index(f'WEATHER_OPENMETEO_HTTP_CACHE_DIR="{cache_dir}"')
-        http_cache_index = script.index(f'HTTP_CACHE="{cache_dir}"')
+        unset_cache_index = script.index("unset HTTP_CACHE")
         defaults_index = script.index("openmeteo_set_runtime_defaults")
-        assert cache_index < http_cache_index < defaults_index
+        assert cache_index < unset_cache_index < defaults_index
 
 
 def test_downloaders_clean_source_cache_only_at_start_and_after_success():

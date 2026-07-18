@@ -5,9 +5,10 @@ source "$(dirname "$0")/openmeteo_runtime_common.sh"
 
 load_weather_env
 WEATHER_OPENMETEO_HTTP_CACHE_DIR="/app/data/http_cache/cams_ftp"
+WEATHER_OPENMETEO_HTTP_CACHE_ENABLED="${WEATHER_CAMS_HTTP_CACHE_ENABLED:-false}"
 export WEATHER_OPENMETEO_HTTP_CACHE_DIR
-HTTP_CACHE="/app/data/http_cache/cams_ftp"
-export HTTP_CACHE
+export WEATHER_OPENMETEO_HTTP_CACHE_ENABLED
+unset HTTP_CACHE
 openmeteo_set_runtime_defaults
 write_sanitized_env_file
 cleanup_sensitive_artifacts() {

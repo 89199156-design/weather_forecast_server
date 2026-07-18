@@ -177,6 +177,8 @@ available for rollback until retirement is explicitly authorized.
 
 ## 8. Cleanup
 
-Raw downloads and HTTP cache are already removed by successful model
-cycles. Docker build cache or obsolete images may be reclaimed only after an
+Raw downloads are removed by successful model cycles. The GFS, CAMS main, and
+greenhouse source-range debug caches are disabled by default, preventing a full
+horizon from accumulating tens of gigabytes before the command-level cleanup
+point. Docker build cache or obsolete images may be reclaimed only after an
 explicit cleanup approval; active images and rollback releases are excluded.
