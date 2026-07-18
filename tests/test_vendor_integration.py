@@ -126,6 +126,10 @@ def test_vendored_openmeteo_only_has_required_region_patches():
     assert "filter_gfs_sflux.pl" in regional_download
     assert "filter_gfs_0p25.pl" in regional_download
     assert "filter_gfs_0p25b.pl" in regional_download
+    assert 'case "0-0.1 m below ground"' in regional_download
+    assert 'case "0.4-1 m below ground"' in regional_download
+    assert 'case "80 m above ground"' in regional_download
+    assert 'case "0C isotherm"' in regional_download
     assert "RegularGrid(nx: 1440, ny: 721, latMin: -90, lonMin: -180, dx: 0.25, dy: 0.25)" in domain
     assert "return RegionalRegularGrid(base: base" in domain
 

@@ -56,6 +56,20 @@ private enum GfsNomadsRegionalDownload {
             return "lev_2_m_above_ground"
         case "10 m above ground":
             return "lev_10_m_above_ground"
+        case "80 m above ground":
+            return "lev_80_m_above_ground"
+        case "100 m above ground":
+            return "lev_100_m_above_ground"
+        case "0-0.1 m below ground":
+            return "lev_0-0.1_m_below_ground"
+        case "0.1-0.4 m below ground":
+            return "lev_0.1-0.4_m_below_ground"
+        case "0.4-1 m below ground":
+            return "lev_0.4-1_m_below_ground"
+        case "1-2 m below ground":
+            return "lev_1-2_m_below_ground"
+        case "0C isotherm":
+            return "lev_0C_isotherm"
         case "entire atmosphere":
             return "lev_entire_atmosphere"
         case "entire atmosphere (considered as a single layer)":
