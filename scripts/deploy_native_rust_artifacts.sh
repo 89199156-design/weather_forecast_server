@@ -9,6 +9,7 @@ API_SERVICE="${WEATHER_OM_API_SERVICE:-weather-om-api.service}"
 API_HEALTHCHECK_URL="${WEATHER_OM_API_HEALTHCHECK_URL:-http://127.0.0.1:8088/v1/forecast?latitude=31.2304&longitude=121.4737&hourly=temperature_2m&forecast_hours=1&timezone=GMT}"
 BUILD_ROOT="${WEATHER_RUST_BUILD_ROOT:-$APP_ROOT/.build/native-rust-artifacts}"
 PIPELINE_LOCK="${WEATHER_OM_PIPELINE_LOCK_FILE:-/tmp/weather_native_model_pipeline.lock}"
+PIPELINE_LOCK_GROUP="${WEATHER_OM_PIPELINE_LOCK_GROUP:-$(id -gn)}"
 SOURCE_REMOTE="${WEATHER_RUST_SOURCE_REMOTE:-origin}"
 SOURCE_BRANCH="${WEATHER_RUST_SOURCE_BRANCH:-main}"
 EXPECTED_REMOTE_URL="${WEATHER_RUST_EXPECTED_REMOTE_URL:-https://github.com/89199156-design/weather_forecast_server.git}"
@@ -33,6 +34,23 @@ require_command() {
     echo "$command_name is required" >&2
     exit 1
   fi
+}
+
+prepare_shared_pipeline_lock() {
+  local lock_dir
+  lock_dir="$(dirname "$PIPELINE_LOCK")"
+  mkdir -p "$lock_dir"
+  if [[ -L "$PIPELINE_LOCK" ]]; then
+    echo "refusing symlink pipeline lock: $PIPELINE_LOCK" >&2
+    return 1
+  fi
+  "$SUDO_BIN" -n touch "$PIPELINE_LOCK"
+  if [[ ! -f "$PIPELINE_LOCK" || -L "$PIPELINE_LOCK" ]]; then
+    echo "pipeline lock is not a regular file: $PIPELINE_LOCK" >&2
+    return 1
+  fi
+  "$SUDO_BIN" -n chgrp "$PIPELINE_LOCK_GROUP" "$PIPELINE_LOCK"
+  "$SUDO_BIN" -n chmod 0660 "$PIPELINE_LOCK"
 }
 
 sudo_systemctl() {
@@ -247,7 +265,7 @@ manifest_sha256="$(sha256sum "$BUILD_ROOT/build.json" | awk '{print $1}')"
 release_id="${revision}-${manifest_sha256:0:16}"
 api_release="$API_ROOT/releases/$release_id"
 webp_release="$WEBP_ROOT/releases/$release_id"
-mkdir -p "$(dirname "$PIPELINE_LOCK")"
+prepare_shared_pipeline_lock
 trap cleanup_release_temps EXIT
 
 {

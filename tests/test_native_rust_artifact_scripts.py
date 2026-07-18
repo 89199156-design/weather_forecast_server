@@ -322,6 +322,28 @@ def test_deploy_uses_one_immutable_release_and_verifies_running_api(tmp_path: Pa
         stop_fake_service(pid_file)
 
 
+def test_deploy_repairs_a_read_only_pipeline_lock(tmp_path: Path):
+    app, origin = prepare_repository(tmp_path)
+    fake_bin, pid_file = prepare_fake_tools(tmp_path)
+    env = deployment_env(tmp_path, origin, fake_bin, pid_file)
+    install_old_links(env)
+    lock_path = Path(env["WEATHER_OM_PIPELINE_LOCK_FILE"])
+    lock_path.touch()
+    lock_path.chmod(0o400)
+    try:
+        completed = run(
+            ["bash", str(app / "scripts/deploy_native_rust_artifacts.sh")],
+            cwd=tmp_path,
+            env=env,
+            check=False,
+        )
+
+        assert completed.returncode == 0, completed.stderr
+        assert lock_path.stat().st_mode & 0o060 == 0o060
+    finally:
+        stop_fake_service(pid_file)
+
+
 def test_deploy_rolls_back_every_link_when_health_check_fails(tmp_path: Path):
     app, origin = prepare_repository(tmp_path)
     fake_bin, pid_file = prepare_fake_tools(tmp_path)
