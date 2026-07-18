@@ -69,9 +69,8 @@ fi
 GFS_UPPER_LEVELS="${WEATHER_GFS_UPPER_LEVELS:-1000,975,950,925,900,850,800,750,700,650,600,550,500,450,400,350,300,250,200,150,100,50}"
 GFS_UPPER_LEVEL_VARIABLES="${WEATHER_GFS_UPPER_LEVEL_VARIABLES:-temperature,wind_u_component,wind_v_component,geopotential_height,cloud_cover,relative_humidity,vertical_velocity}"
 GFS_UPPER_LEVEL_CONCURRENT="${WEATHER_GFS_UPPER_LEVEL_DOWNLOAD_CONCURRENT:-4}"
-GFS_UPPER_LEVEL_BATCH_SIZE="${WEATHER_GFS_UPPER_LEVEL_BATCH_SIZE:-4}"
 GFS_RUN="${WEATHER_GFS_RUN:-}"
-GFS_DOWNLOAD_MODE="${WEATHER_GFS_DOWNLOAD_MODE:-s3-range-region}"
+GFS_DOWNLOAD_MODE="${WEATHER_GFS_DOWNLOAD_MODE:-nomads-region}"
 GFS_DOWNLOAD_SOURCE_ARGS=()
 if [[ "$GFS_DOWNLOAD_MODE" == "s3-range-region" || "$GFS_DOWNLOAD_MODE" == "aws-global" ]]; then
   GFS_DOWNLOAD_SOURCE_ARGS=(--download-from-aws)
@@ -120,34 +119,24 @@ gfs025_upper_level_only_variables() {
 
 download_gfs025_upper_level_variables() {
   local GFS025_UPPER_LEVEL_ONLY_VARIABLES
-  local start
-  local batch_levels
-  local levels=()
-
-  if ! [[ "$GFS_UPPER_LEVEL_BATCH_SIZE" =~ ^[1-9][0-9]*$ ]]; then
-    printf '%s\n' "WEATHER_GFS_UPPER_LEVEL_BATCH_SIZE must be a positive integer" >&2
-    exit 2
+  GFS025_UPPER_LEVEL_ONLY_VARIABLES="$(gfs025_upper_level_only_variables "$GFS_UPPER_LEVELS")"
+  if [[ -z "$GFS025_UPPER_LEVEL_ONLY_VARIABLES" ]]; then
+    return 0
   fi
-  IFS=',' read -ra levels <<< "$GFS_UPPER_LEVELS"
 
-  for ((start = 0; start < ${#levels[@]}; start += GFS_UPPER_LEVEL_BATCH_SIZE)); do
-    batch_levels="$(join_by_comma "${levels[@]:start:GFS_UPPER_LEVEL_BATCH_SIZE}")"
-    GFS025_UPPER_LEVEL_ONLY_VARIABLES="$(gfs025_upper_level_only_variables "$batch_levels")"
-    if [[ -z "$GFS025_UPPER_LEVEL_ONLY_VARIABLES" ]]; then
-      continue
-    fi
+  # One regional response per native forecast frame contains every requested
+  # pressure variable and level. Keep this as a separate input group from the
+  # gfs025 surface response so its future time schedule can change alone.
+  echo "Downloading GFS input group=gfs025_pressure levels=$GFS_UPPER_LEVELS run=$GFS_RUN"
+  run_openmeteo download-gfs gfs025 \
+    "${GFS_DOWNLOAD_SOURCE_ARGS[@]}" \
+    --only-variables "$GFS025_UPPER_LEVEL_ONLY_VARIABLES" \
+    $(append_run_arg "$GFS_RUN") \
+    --max-forecast-hour "$GFS_MAX_FORECAST_HOUR" \
+    --concurrent "$GFS_UPPER_LEVEL_CONCURRENT"
 
-    echo "Downloading GFS upper-level batch levels=$batch_levels run=$GFS_RUN"
-    run_openmeteo download-gfs gfs025 \
-      "${GFS_DOWNLOAD_SOURCE_ARGS[@]}" \
-      --only-variables "$GFS025_UPPER_LEVEL_ONLY_VARIABLES" \
-      $(append_run_arg "$GFS_RUN") \
-      --max-forecast-hour "$GFS_MAX_FORECAST_HOUR" \
-      --concurrent "$GFS_UPPER_LEVEL_CONCURRENT"
-
-    cleanup_download_work_dirs "$DATA_DIR/download-ncep_gfs025"
-    cleanup_openmeteo_http_cache
-  done
+  cleanup_download_work_dirs "$DATA_DIR/download-ncep_gfs025"
+  cleanup_openmeteo_http_cache
 }
 
 require_dem_source
@@ -158,6 +147,7 @@ cleanup_download_work_dirs \
 if is_truthy "$GFS_SKIP_GFS013"; then
   echo "Skipping validated gfs013 component for resumed run=$GFS_RUN"
 else
+  echo "Downloading GFS input group=gfs013_surface run=$GFS_RUN"
   run_openmeteo download-gfs gfs013 \
     "${GFS_DOWNLOAD_SOURCE_ARGS[@]}" \
     --only-variables "$GFS013_SURFACE_VARIABLES" \
@@ -171,6 +161,7 @@ fi
 if is_truthy "$GFS_SKIP_GFS025"; then
   echo "Skipping unchanged gfs025 component for repair run=$GFS_RUN"
 else
+  echo "Downloading GFS input group=gfs025_surface run=$GFS_RUN"
   run_openmeteo download-gfs gfs025 \
     "${GFS_DOWNLOAD_SOURCE_ARGS[@]}" \
     --only-variables "$GFS025_SURFACE_VARIABLES" \

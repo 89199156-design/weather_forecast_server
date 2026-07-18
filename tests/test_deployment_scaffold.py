@@ -268,7 +268,7 @@ def test_split_downloaders_source_env_before_runtime_defaults():
         assert script.index("load_weather_env") < script.index("openmeteo_set_runtime_defaults")
 
 
-def test_runtime_data_download_batches_gfs025_upper_levels_without_splitting_variables():
+def test_runtime_data_download_combines_all_gfs025_upper_levels_per_frame():
     script = (ROOT / "scripts" / "download_openmeteo_gfs_data.sh").read_text(encoding="utf-8")
     common = (ROOT / "scripts" / "openmeteo_runtime_common.sh").read_text(encoding="utf-8")
     config = (ROOT / "config" / "singapore.example.env").read_text(encoding="utf-8")
@@ -300,9 +300,9 @@ def test_runtime_data_download_batches_gfs025_upper_levels_without_splitting_var
     assert "WEATHER_SKIP_GFS025_UPPER_LEVEL_DOWNLOAD" not in script
     assert "WEATHER_SKIP_CAMS_DOWNLOAD" not in script
     assert "is_truthy" in common
-    assert 'GFS025_UPPER_LEVEL_ONLY_VARIABLES="$(gfs025_upper_level_only_variables "$batch_levels")"' in upper_function
-    assert 'IFS=\',\' read -ra levels <<< "$GFS_UPPER_LEVELS"' in upper_function
-    assert "start += GFS_UPPER_LEVEL_BATCH_SIZE" in upper_function
+    assert 'GFS025_UPPER_LEVEL_ONLY_VARIABLES="$(gfs025_upper_level_only_variables "$GFS_UPPER_LEVELS")"' in upper_function
+    assert 'IFS=\',\' read -ra levels <<< "$GFS_UPPER_LEVELS"' not in upper_function
+    assert "GFS_UPPER_LEVEL_BATCH_SIZE" not in upper_function
     assert upper_function.index("run_openmeteo download-gfs gfs025") < upper_function.index(
         "cleanup_openmeteo_http_cache"
     )
@@ -1073,14 +1073,16 @@ def test_gfs_probe_cycle_uses_official_indices_before_gfs_only_production():
     assert "pgrb2.0p25.f{fff}.idx" in probe
     assert "pgrb2b.0p25.f{fff}.idx" in probe
     assert "WEATHER_GFS_DOWNLOAD_MODE" in download
-    assert 'GFS_DOWNLOAD_MODE:-s3-range-region' in download
+    assert 'GFS_DOWNLOAD_MODE:-nomads-region' in download
     assert '"s3-range-region" || "$GFS_DOWNLOAD_MODE" == "aws-global"' in download
     assert 'GFS_DOWNLOAD_SOURCE_ARGS=(--download-from-aws)' in download
-    assert 'WEATHER_GFS_DOWNLOAD_MODE:-s3-range-region' in production
-    assert 'WEATHER_GFS_UPPER_LEVEL_BATCH_SIZE:-4' in download
-    assert 'start += GFS_UPPER_LEVEL_BATCH_SIZE' in download
-    assert 'gfs025_upper_level_only_variables "$batch_levels"' in download
-    assert 'Downloading GFS upper-level batch levels=$batch_levels run=$GFS_RUN' in download
+    assert 'WEATHER_GFS_DOWNLOAD_MODE:-nomads-region' in production
+    assert "Production GFS requires NOMADS server-side regional cropping" in production
+    assert 'gfs025_upper_level_only_variables "$GFS_UPPER_LEVELS"' in download
+    assert 'input group=gfs013_surface' in download
+    assert 'input group=gfs025_surface' in download
+    assert 'input group=gfs025_pressure' in download
+    assert 'start += GFS_UPPER_LEVEL_BATCH_SIZE' not in download
     assert "datetime.now(UTC)" in probe
     assert "scripts/probe_gfs_official_run.py" in cycle
     assert "CYCLE_LOCK_FILE" in cycle

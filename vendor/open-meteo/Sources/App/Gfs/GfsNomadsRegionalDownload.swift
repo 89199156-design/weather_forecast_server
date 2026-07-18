@@ -196,7 +196,7 @@ extension Curl {
             let filteredUrl = try GfsNomadsRegionalDownload.filterUrl(sourceUrl: sourceUrl, records: desiredRecords)
             let delay = WeatherForecastServerSourceConfig.double(
                 "WEATHER_NOMADS_REQUEST_DELAY_SECONDS",
-                fallback: 10
+                fallback: 2
             )
             let cachedFilterResponse = Curl.cacheDirectory.map {
                 FileManager.default.fileExists(atPath: $0 + "/" + filteredUrl.sha256)
