@@ -1176,7 +1176,7 @@ def test_gfs_probe_cycle_starts_latest_ready_run_after_newer_not_ready(tmp_path)
     assert run_file.read_text(encoding="utf-8").strip() == "2026070600"
 
 
-def test_openmeteo_cron_installer_installs_1panel_jobs_only_for_gfs_and_cams_ftp():
+def test_openmeteo_cron_installer_uses_one_system_scheduler_for_gfs_and_cams_ftp():
     script = (ROOT / "scripts" / "install_openmeteo_cron.sh").read_text(encoding="utf-8")
 
     assert "PANEL_DB=" in script
@@ -1185,26 +1185,25 @@ def test_openmeteo_cron_installer_installs_1panel_jobs_only_for_gfs_and_cams_ftp
     assert "name LIKE 'openmeteo_%'" in script
     assert "OM_GFS_WEBP_BUILD" in script
     assert "OM_CAMS_WEBP_BUILD" in script
-    assert "openmeteo_gfs_probe_cycle" in script
-    assert "openmeteo_cams_ftp_probe_cycle" in script
-    assert '"17 0,6,12,18 * * *"' in script
-    assert '"37 4,16 * * *"' in script
+    assert "/etc/cron.d/weather-openmeteo" in script
+    assert "17 0,6,12,18 * * * root" in script
+    assert "37 4,16 * * * root" in script
+    assert "INSERT INTO cronjobs" not in script
     assert '"17 * * * *"' not in script
     assert '"37 */2 * * *"' not in script
-    assert "nice -n 15 ionice -c 3" in script
+    assert "/usr/bin/nice -n 15 /usr/bin/ionice -c 3" in script
     assert 'RUNTIME_ROOT="${WEATHER_FORECAST_RUNTIME_ROOT:-/opt/1panel/apps/weather_forecast_server}"' in script
     assert 'ENV_FILE="${WEATHER_OPENMETEO_ENV_FILE:-$RUNTIME_ROOT/config/singapore.private.env}"' in script
     assert 'PRODUCER_ROOT="${WEATHER_OM_PRODUCER_ROOT:-$RUNTIME_ROOT/data/om_producer}"' in script
-    assert "export WEATHER_FORECAST_APP_DIR=$APP_DIR" in script
-    assert "export WEATHER_OPENMETEO_ENV_FILE=$ENV_FILE" in script
-    assert "export WEATHER_OM_PRODUCER_ROOT=$PRODUCER_ROOT" in script
+    assert "WEATHER_FORECAST_APP_DIR=$APP_DIR" in script
+    assert "WEATHER_OPENMETEO_ENV_FILE=$ENV_FILE" in script
+    assert "WEATHER_OM_PRODUCER_ROOT=$PRODUCER_ROOT" in script
     assert "scripts/run_gfs_probe_and_cycle.sh" in script
     assert "scripts/run_cams_ftp_scheduled_cycle.sh" in script
     assert "scripts/run_cams_ads_scheduled_cycle.sh" not in script
     assert "0 10,22 * * *" not in script
-    assert "cat >" not in script
+    assert "install -o root -g root -m 0644" in script
     assert "CRON_TZ=UTC" not in script
-    assert "rm -f \"$SYSTEM_CRON_FILE\"" in script
     assert 'PANEL_SERVICE="${WEATHER_1PANEL_SERVICE:-1panel.service}"' in script
     assert 'systemctl restart "$PANEL_SERVICE"' in script
     assert "CST" not in script

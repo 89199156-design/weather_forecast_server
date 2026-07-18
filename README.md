@@ -352,8 +352,8 @@ diagnostic only and cannot satisfy deployment acceptance.
 
 ## Production Scheduling
 
-Production schedules follow upstream UTC model cycles. The installed 1Panel
-cron expressions are converted to the Singapore host's UTC+8 local time.
+Production schedules follow upstream UTC model cycles. The installed system
+cron expressions use the Singapore host's UTC+8 local time.
 
 GFS uses one low-priority official-source probe per six-hour model cycle. The probe checks
 only boundary/sentinel NOAA `.idx` files (`0,5,120,123,384h`) for `gfs013`
@@ -388,13 +388,13 @@ There is no separate high-frequency greenhouse poller.
 bash scripts/run_cams_ftp_scheduled_cycle.sh
 ```
 
-The production crontab should probe only once per upstream model cycle, after
-the complete forecast horizon is normally available. In UTC, use:
+The production crontab probes only once per upstream model cycle, after the
+complete forecast horizon is normally available. `/etc/cron.d/weather-openmeteo`
+contains these host-local schedules:
 
 ```cron
-CRON_TZ=UTC
-17 4,10,16,22 * * * WEATHER_FORECAST_APP_DIR=/opt/1panel/apps/weather_forecast_server nice -n 15 ionice -c 3 /bin/bash /opt/1panel/apps/weather_forecast_server/scripts/run_gfs_probe_and_cycle.sh
-37 8,20 * * * WEATHER_FORECAST_APP_DIR=/opt/1panel/apps/weather_forecast_server nice -n 15 ionice -c 3 /bin/bash /opt/1panel/apps/weather_forecast_server/scripts/run_cams_ftp_scheduled_cycle.sh
+17 0,6,12,18 * * * root ... run_gfs_probe_and_cycle.sh
+37 4,16 * * * root ... run_cams_ftp_scheduled_cycle.sh
 ```
 
 When code is deployed from an immutable release checkout, install with
@@ -402,10 +402,11 @@ When code is deployed from an immutable release checkout, install with
 jobs export that code root while keeping the private environment and OM data
 under `/opt/1panel/apps/weather_forecast_server`.
 
-The 1Panel installer stores equivalent UTC+8 local-time schedules
-(`17 0,6,12,18 * * *` and `37 4,16 * * *`). Download, OM conversion, WebP
+The installer uses the host cron daemon as the single scheduler because direct
+1Panel database inserts do not register runnable entry IDs in every 1Panel
+release. It removes legacy/high-frequency weather rows from 1Panel, restarts
+only the control panel to retire any in-memory entries, installs the system cron
+file atomically, and reloads `cron.service`. Download, OM conversion, WebP
 generation, and the single API reload remain one event-driven process chain;
-no cron job polls local completion state. The installer reloads the 1Panel
-scheduler once after its database transaction so an older in-memory schedule
-cannot keep firing until the next machine reboot; weather data services are not
-restarted.
+no cron job polls local completion state and no weather data service is
+restarted by the scheduler installer.
