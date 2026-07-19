@@ -39,6 +39,25 @@ def _marker_coverage_ids(marker: dict[str, Any]) -> list[str]:
     return sorted(coverage_ids)
 
 
+def snapshot_identity_matches(
+    coverage_ids: list[str],
+    loaded_coverage_ids: list[str],
+    latest_complete_run: str,
+    loaded_source_runs: set[str],
+) -> tuple[bool, str]:
+    """Validate the live API snapshot for native and official-bucket layouts.
+
+    Native Singapore publications have immutable coverage IDs, which are the
+    strongest identity proof. Shanghai's official OM bucket publications do
+    not expose those IDs in their marker or file paths; their immutable
+    coverage paths instead embed the model cycle. In that layout the marker's
+    complete run must be present in an OM file currently opened by the API.
+    """
+    if coverage_ids:
+        return set(coverage_ids) <= set(loaded_coverage_ids), "coverage_id"
+    return latest_complete_run in loaded_source_runs, "source_run"
+
+
 def inspect_live_snapshot(process_pid: int, groups: dict[str, Any]) -> dict[str, Any]:
     fd_root = Path("/proc") / str(process_pid) / "fd"
     if process_pid <= 0 or not fd_root.is_dir():
@@ -69,7 +88,12 @@ def inspect_live_snapshot(process_pid: int, groups: dict[str, Any]) -> dict[str,
             match = RUN_IN_NATIVE_PATH.search(target)
             if match:
                 source_runs.add("".join(match.groups()))
-        consistent = bool(expected) and set(expected) <= set(loaded)
+        consistent, identity_mode = snapshot_identity_matches(
+            expected,
+            loaded,
+            str(marker.get("latest_complete_run") or ""),
+            source_runs,
+        )
         all_consistent &= consistent
         by_group[group] = {
             "expected_coverage_ids": expected,
@@ -77,6 +101,7 @@ def inspect_live_snapshot(process_pid: int, groups: dict[str, Any]) -> dict[str,
             "source_runs": sorted(source_runs),
             "open_coverage_files": len(relevant),
             "deleted_coverage_files": sum(target.endswith(" (deleted)") for target in relevant),
+            "identity_mode": identity_mode,
             "marker_matches_live_snapshot": consistent,
         }
     return {

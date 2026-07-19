@@ -3,7 +3,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.compare_model_run_identities import build_identity, compare_identities
+from scripts.compare_model_run_identities import (
+    build_identity,
+    compare_identities,
+    snapshot_identity_matches,
+)
 
 
 def write_marker(root: Path, group: str, run: str, native: bool) -> None:
@@ -23,6 +27,36 @@ def write_marker(root: Path, group: str, run: str, native: bool) -> None:
 
 
 class ModelRunIdentityComparisonTests(unittest.TestCase):
+    def test_native_snapshot_requires_its_immutable_coverage_id(self):
+        self.assertEqual(
+            snapshot_identity_matches(
+                ["gfs_native_2026071812_v1"],
+                ["gfs_native_2026071812_v1"],
+                "2026071812",
+                {"2026071812"},
+            ),
+            (True, "coverage_id"),
+        )
+        self.assertEqual(
+            snapshot_identity_matches(
+                ["gfs_native_2026071812_v1"],
+                [],
+                "2026071812",
+                {"2026071812"},
+            ),
+            (False, "coverage_id"),
+        )
+
+    def test_official_bucket_snapshot_uses_the_loaded_model_run(self):
+        self.assertEqual(
+            snapshot_identity_matches([], [], "2026071812", {"2026071812"}),
+            (True, "source_run"),
+        )
+        self.assertEqual(
+            snapshot_identity_matches([], [], "2026071812", {"2026071806"}),
+            (False, "source_run"),
+        )
+
     def test_native_and_legacy_markers_match_by_latest_model_run(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
