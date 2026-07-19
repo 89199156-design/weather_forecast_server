@@ -632,8 +632,13 @@ class NativeOmProducerTests(unittest.TestCase):
         self.assertIn("run_gfs_om_production_cycle.sh", pipeline)
         self.assertNotIn("run_gfs_production_cycle.sh", scheduler)
         self.assertIn('GFS_SKIP_GFS013="${WEATHER_GFS_SKIP_GFS013:-false}"', downloader)
+        self.assertIn('GFS_SKIP_GFS025_SURFACE="${WEATHER_GFS_SKIP_GFS025_SURFACE:-false}"', downloader)
         self.assertIn('GFS_PRESERVE_HTTP_CACHE="${WEATHER_GFS_PRESERVE_HTTP_CACHE:-false}"', downloader)
         self.assertIn('if is_truthy "$GFS_SKIP_GFS013"', downloader)
+        self.assertIn('if is_truthy "$GFS_SKIP_GFS025_SURFACE"', downloader)
+        self.assertIn('REPAIR_PRESSURE_ONLY="${WEATHER_OM_GFS_REPAIR_PRESSURE_ONLY:-false}"', producer)
+        self.assertIn('export WEATHER_GFS_SKIP_GFS025_SURFACE=true', producer)
+        self.assertIn('for domain in ncep_gfs013 ncep_gfs025; do', producer)
 
     def test_vendored_swift_importer_preserves_existing_om_time_offsets(self):
         splitter = (

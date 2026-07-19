@@ -18,6 +18,7 @@ trap cleanup_sensitive_artifacts EXIT
 
 GFS_SKIP_GFS013="${WEATHER_GFS_SKIP_GFS013:-false}"
 GFS_SKIP_GFS025="${WEATHER_GFS_SKIP_GFS025:-false}"
+GFS_SKIP_GFS025_SURFACE="${WEATHER_GFS_SKIP_GFS025_SURFACE:-false}"
 GFS_SKIP_GFS025_UPPER_LEVELS="${WEATHER_GFS_SKIP_GFS025_UPPER_LEVELS:-false}"
 GFS_ENFORCE_COMPLETE_SURFACE_VARIABLES="${WEATHER_GFS_ENFORCE_COMPLETE_SURFACE_VARIABLES:-true}"
 GFS_PRESERVE_HTTP_CACHE="${WEATHER_GFS_PRESERVE_HTTP_CACHE:-false}"
@@ -161,15 +162,19 @@ fi
 if is_truthy "$GFS_SKIP_GFS025"; then
   echo "Skipping unchanged gfs025 component for repair run=$GFS_RUN"
 else
-  echo "Downloading GFS input group=gfs025_surface run=$GFS_RUN"
-  run_openmeteo download-gfs gfs025 \
-    "${GFS_DOWNLOAD_SOURCE_ARGS[@]}" \
-    --only-variables "$GFS025_SURFACE_VARIABLES" \
-    $(append_run_arg "$GFS_RUN") \
-    --max-forecast-hour "$GFS_MAX_FORECAST_HOUR" \
-    --concurrent "$GFS_CONCURRENT"
-  cleanup_download_work_dirs "$DATA_DIR/download-ncep_gfs025"
-  cleanup_openmeteo_http_cache
+  if is_truthy "$GFS_SKIP_GFS025_SURFACE"; then
+    echo "Skipping unchanged GFS025 surface variables for repair run=$GFS_RUN"
+  else
+    echo "Downloading GFS input group=gfs025_surface run=$GFS_RUN"
+    run_openmeteo download-gfs gfs025 \
+      "${GFS_DOWNLOAD_SOURCE_ARGS[@]}" \
+      --only-variables "$GFS025_SURFACE_VARIABLES" \
+      $(append_run_arg "$GFS_RUN") \
+      --max-forecast-hour "$GFS_MAX_FORECAST_HOUR" \
+      --concurrent "$GFS_CONCURRENT"
+    cleanup_download_work_dirs "$DATA_DIR/download-ncep_gfs025"
+    cleanup_openmeteo_http_cache
+  fi
 
   if is_truthy "$GFS_SKIP_GFS025_UPPER_LEVELS"; then
     echo "Skipping unchanged GFS upper-level variables for repair run=$GFS_RUN"

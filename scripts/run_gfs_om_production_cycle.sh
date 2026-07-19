@@ -16,6 +16,7 @@ PRODUCER_ROOT="${WEATHER_OM_PRODUCER_ROOT:-$APP_DIR/data/om_producer}"
 RESUME_STAGING="${WEATHER_OM_GFS_RESUME_STAGING:-}"
 FORCE_REUSED_DOWNLOAD="${WEATHER_OM_GFS_FORCE_REUSED_DOWNLOAD:-false}"
 REPAIR_SURFACE_ONLY="${WEATHER_OM_GFS_REPAIR_SURFACE_ONLY:-false}"
+REPAIR_PRESSURE_ONLY="${WEATHER_OM_GFS_REPAIR_PRESSURE_ONLY:-false}"
 COVERAGE_REVISION="${WEATHER_OM_GFS_COVERAGE_REVISION:-}"
 SAME_RUN_COVERAGE_REVISION="${WEATHER_OM_GFS_SAME_RUN_COVERAGE_REVISION:-three-short-two-full-v1}"
 LATEST_MAX_FORECAST_HOUR="${WEATHER_GFS_REQUIRED_MAX_FORECAST_HOUR:-384}"
@@ -46,6 +47,20 @@ export WEATHER_REGION_RIGHT_LON="$GFS_STORAGE_RIGHT_LON"
 export WEATHER_REGION_BOTTOM_LAT="$GFS_STORAGE_BOTTOM_LAT"
 export WEATHER_REGION_TOP_LAT="$GFS_STORAGE_TOP_LAT"
 export WEATHER_GFS_UPPER_LEVELS="$GFS_UPPER_LEVELS"
+if is_truthy "$REPAIR_SURFACE_ONLY" && is_truthy "$REPAIR_PRESSURE_ONLY"; then
+  printf '%s\n' "GFS surface-only and pressure-only repair modes are mutually exclusive" >&2
+  exit 2
+fi
+if is_truthy "$REPAIR_PRESSURE_ONLY"; then
+  export WEATHER_GFS_SKIP_GFS013=true
+  export WEATHER_GFS_SKIP_GFS025=false
+  export WEATHER_GFS_SKIP_GFS025_SURFACE=true
+  export WEATHER_GFS_SKIP_GFS025_UPPER_LEVELS=false
+fi
+PARTIAL_REPAIR=false
+if is_truthy "$REPAIR_SURFACE_ONLY" || is_truthy "$REPAIR_PRESSURE_ONLY"; then
+  PARTIAL_REPAIR=true
+fi
 
 mkdir -p "$LOG_DIR" "$PRODUCER_ROOT/staging"
 
@@ -179,18 +194,26 @@ PY
   preserve_run_metadata() {
     local source_run="$1"
     local relative="${source_run:0:4}/${source_run:4:2}/${source_run:6:2}/${source_run:8:2}00Z"
-    local current="$STAGING_DIR/data_run/ncep_gfs013/$relative/meta.json"
-    local original="$STAGING_DIR/.repair_metadata/ncep_gfs013/${source_run}.json"
-    mkdir -p "$(dirname "$original")"
-    cp -- "$current" "$original"
+    local domain
+    local current
+    local original
+    for domain in ncep_gfs013 ncep_gfs025; do
+      current="$STAGING_DIR/data_run/$domain/$relative/meta.json"
+      original="$STAGING_DIR/.repair_metadata/$domain/${source_run}.json"
+      mkdir -p "$(dirname "$original")"
+      cp -- "$current" "$original"
+    done
   }
   merge_run_metadata() {
     local source_run="$1"
     local relative="${source_run:0:4}/${source_run:4:2}/${source_run:6:2}/${source_run:8:2}00Z"
-    python3 scripts/merge_native_run_metadata.py \
-      --original "$STAGING_DIR/.repair_metadata/ncep_gfs013/${source_run}.json" \
-      --current "$STAGING_DIR/data_run/ncep_gfs013/$relative/meta.json" \
-      --latest "$STAGING_DIR/data_run/ncep_gfs013/latest.json"
+    local domain
+    for domain in ncep_gfs013 ncep_gfs025; do
+      python3 scripts/merge_native_run_metadata.py \
+        --original "$STAGING_DIR/.repair_metadata/$domain/${source_run}.json" \
+        --current "$STAGING_DIR/data_run/$domain/$relative/meta.json" \
+        --latest "$STAGING_DIR/data_run/$domain/latest.json"
+    done
   }
   IFS=',' read -ra PLANNED_SOURCE_RUNS <<< "$SOURCE_RUNS"
   SHORT_RUN_COUNT=$((${#PLANNED_SOURCE_RUNS[@]} - FULL_RUN_COUNT))
@@ -215,14 +238,14 @@ PY
       echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_GFS_OM] repair invalid role=$SOURCE_ROLE run=$SOURCE_RUN horizon=$SOURCE_MAX_FORECAST_HOUR"
     fi
     echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_GFS_OM] download role=$SOURCE_ROLE run=$SOURCE_RUN horizon=$SOURCE_MAX_FORECAST_HOUR"
-    if is_truthy "$REPAIR_SURFACE_ONLY"; then
+    if is_truthy "$PARTIAL_REPAIR"; then
       preserve_run_metadata "$SOURCE_RUN"
     fi
     WEATHER_GFS_RUN="$SOURCE_RUN" \
     WEATHER_GFS_MAX_FORECAST_HOUR="$SOURCE_MAX_FORECAST_HOUR" \
       bash scripts/download_openmeteo_gfs_data.sh
 
-    if is_truthy "$REPAIR_SURFACE_ONLY"; then
+    if is_truthy "$PARTIAL_REPAIR"; then
       merge_run_metadata "$SOURCE_RUN"
     fi
 
@@ -239,13 +262,13 @@ PY
     echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_GFS_OM] reuse validated latest run=$RUN horizon=$LATEST_MAX_FORECAST_HOUR"
   else
     echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_GFS_OM] latest run=$RUN horizon=$LATEST_MAX_FORECAST_HOUR"
-    if is_truthy "$REPAIR_SURFACE_ONLY"; then
+    if is_truthy "$PARTIAL_REPAIR"; then
       preserve_run_metadata "$RUN"
     fi
     WEATHER_GFS_RUN="$RUN" \
     WEATHER_GFS_MAX_FORECAST_HOUR="$LATEST_MAX_FORECAST_HOUR" \
       bash scripts/download_openmeteo_gfs_data.sh
-    if is_truthy "$REPAIR_SURFACE_ONLY"; then
+    if is_truthy "$PARTIAL_REPAIR"; then
       merge_run_metadata "$RUN"
     fi
   fi
@@ -270,7 +293,7 @@ PY
     validate_staged_gfs_run "$SOURCE_RUN" "$SOURCE_MAX_FORECAST_HOUR"
   done
 
-  if is_truthy "$REPAIR_SURFACE_ONLY"; then
+  if is_truthy "$PARTIAL_REPAIR"; then
     rm -rf -- "$STAGING_DIR/.repair_metadata"
   fi
 
