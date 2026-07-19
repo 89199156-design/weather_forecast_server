@@ -591,11 +591,7 @@ async fn cams_nan_fallback_stops_after_previous_retained_run() {
     let current = "cams_global_2026070800_120h";
     let previous = "cams_global_2026070712_120h";
     let third = "cams_global_2026070700_120h";
-    for (coverage, value) in [
-        (current, f32::NAN),
-        (previous, f32::NAN),
-        (third, 30.0),
-    ] {
+    for (coverage, value) in [(current, f32::NAN), (previous, f32::NAN), (third, 30.0)] {
         write_product_coverage(
             root.path(),
             "cams_global",
@@ -607,12 +603,7 @@ async fn cams_nan_fallback_stops_after_previous_retained_run() {
             false,
         );
     }
-    write_group_release(
-        root.path(),
-        "cams",
-        "2026070700",
-        &[("cams_global", third)],
-    );
+    write_group_release(root.path(), "cams", "2026070700", &[("cams_global", third)]);
     write_group_release(
         root.path(),
         "cams",
@@ -654,12 +645,7 @@ async fn cams_latest_tail_does_not_fall_back_to_third_retained_run() {
             false,
         );
     }
-    write_group_release(
-        root.path(),
-        "cams",
-        "2026070700",
-        &[("cams_global", third)],
-    );
+    write_group_release(root.path(), "cams", "2026070700", &[("cams_global", third)]);
     write_group_release(
         root.path(),
         "cams",
