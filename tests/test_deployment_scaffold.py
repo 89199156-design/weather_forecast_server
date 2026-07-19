@@ -2,6 +2,7 @@ from pathlib import Path
 import importlib.util
 import os
 import re
+import shutil
 import subprocess
 import sys
 
@@ -1145,6 +1146,10 @@ def test_gfs_probe_cycle_starts_latest_ready_run_after_newer_not_ready(tmp_path)
         "printf '%s\\n' \"$2\" > \"$WEATHER_TEST_PRODUCTION_RUN_FILE\"\n",
         encoding="utf-8",
     )
+    shutil.copy2(
+        ROOT / "scripts" / "task_progress_reporter.py",
+        scripts_dir / "task_progress_reporter.py",
+    )
     (bin_dir / "flock").write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
     (bin_dir / "python3").write_text(
         f"#!/usr/bin/env bash\n{sys.executable} \"$@\"\n",
@@ -1176,6 +1181,8 @@ def test_gfs_probe_cycle_starts_latest_ready_run_after_newer_not_ready(tmp_path)
 
     assert completed.returncode == 0, completed.stderr
     assert run_file.read_text(encoding="utf-8").strip() == "2026070600"
+    assert "开始｜任务：GFS 生产更新" in completed.stdout
+    assert "完成｜任务：GFS 生产更新｜批次：2026070600" in completed.stdout
 
 
 def test_openmeteo_cron_installer_uses_one_1panel_scheduler_for_gfs_and_cams_ftp():

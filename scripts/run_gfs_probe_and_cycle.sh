@@ -11,6 +11,8 @@ GLOBAL_LOCK_FILE="${WEATHER_OPENMETEO_GLOBAL_LOCK_FILE:-/tmp/weather_openmeteo_p
 
 mkdir -p "$LOG_DIR"
 
+(
+trap 'task_rc=$?; trap - EXIT; printf "\036WEATHER_TASK_RC=%s\n" "$task_rc"; exit "$task_rc"' EXIT
 {
   flock -n 9 || {
     echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_GFS_PROBE] previous probe or GFS cycle still running, skip."
@@ -54,4 +56,8 @@ mkdir -p "$LOG_DIR"
   run="$2"
   echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_GFS_PROBE] complete official run=$run"
   WEATHER_GFS_RUN="$run" bash scripts/run_native_model_pipeline.sh gfs "$run"
-} 9>"$LOCK_FILE" >> "$LOG_DIR/openmeteo_gfs_probe.log" 2>&1
+} 9>"$LOCK_FILE"
+) 2>&1 | python3 "$APP_DIR/scripts/task_progress_reporter.py" \
+  --task "GFS 生产更新" \
+  --watch-root "${WEATHER_OM_PRODUCER_ROOT:-$APP_DIR/data/om_producer}/staging" \
+  --log-file "$LOG_DIR/openmeteo_gfs_probe.log"

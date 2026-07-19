@@ -11,6 +11,8 @@ GLOBAL_LOCK_FILE="${WEATHER_OPENMETEO_GLOBAL_LOCK_FILE:-/tmp/weather_openmeteo_p
 
 mkdir -p "$LOG_DIR"
 
+(
+trap 'task_rc=$?; trap - EXIT; printf "\036WEATHER_TASK_RC=%s\n" "$task_rc"; exit "$task_rc"' EXIT
 {
   flock -n 9 || {
     echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_FTP_SCHEDULE] previous schedule check still running, skip."
@@ -53,4 +55,8 @@ mkdir -p "$LOG_DIR"
 
   echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_FTP_SCHEDULE] start run=$run reference_time=$ready_reference_time"
   WEATHER_CAMS_RUN="$run" bash scripts/run_native_model_pipeline.sh cams "$run"
-} 9>"$LOCK_FILE" >> "$LOG_DIR/openmeteo_cams_ftp_schedule.log" 2>&1
+} 9>"$LOCK_FILE"
+) 2>&1 | python3 "$APP_DIR/scripts/task_progress_reporter.py" \
+  --task "CAMS 生产更新" \
+  --watch-root "${WEATHER_OM_PRODUCER_ROOT:-$APP_DIR/data/om_producer}/staging" \
+  --log-file "$LOG_DIR/openmeteo_cams_ftp_schedule.log"
