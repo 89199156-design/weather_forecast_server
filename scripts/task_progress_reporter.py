@@ -6,8 +6,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import queue
 import re
 import sys
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -116,8 +118,53 @@ def report_progress(
     last_report_at = time.monotonic()
     print(f"{utc_text()}｜开始｜任务：{task}｜阶段：{stage}", flush=True)
 
+    # Read the child output on a separate thread so the reporting clock keeps
+    # advancing while a downloader is quiet.  Iterating over ``input_stream``
+    # directly blocks until the next line and used to suppress all one-minute
+    # progress messages during long CAMS/GFS network transfers.
+    input_events: queue.Queue[tuple[str, object]] = queue.Queue()
+
+    def read_input() -> None:
+        try:
+            for input_line in input_stream:
+                input_events.put(("line", input_line))
+        except BaseException as exc:  # Preserve reader failures in the caller.
+            input_events.put(("error", exc))
+        finally:
+            input_events.put(("eof", None))
+
+    threading.Thread(target=read_input, name="task-progress-input", daemon=True).start()
+
+    def emit_progress(now: float) -> None:
+        nonlocal last_size, last_report_at
+        current_size = directory_bytes(watch_roots)
+        elapsed = max(now - last_report_at, 0.001)
+        growth = max(current_size - last_size, 0)
+        print(
+            f"{utc_text()}｜进度｜任务：{task}｜阶段：{stage}｜批次：{run}"
+            f"｜近一分钟增长：{growth / 1024 / 1024:.1f} MiB"
+            f"｜速度：{growth / elapsed / 1024 / 1024:.2f} MiB/s",
+            flush=True,
+        )
+        last_size = current_size
+        last_report_at = now
+
     with log_file.open("a", encoding="utf-8") as raw_log:
-        for line in input_stream:
+        while True:
+            remaining = max(interval_seconds - (time.monotonic() - last_report_at), 0.0)
+            try:
+                event, value = input_events.get(timeout=remaining)
+            except queue.Empty:
+                emit_progress(time.monotonic())
+                continue
+
+            if event == "eof":
+                break
+            if event == "error":
+                if not isinstance(value, BaseException):
+                    raise RuntimeError("task progress input reader failed")
+                raise value
+            line = str(value)
             if line.startswith(RETURN_CODE_PREFIX):
                 try:
                     return_code = int(line[len(RETURN_CODE_PREFIX) :].strip())
@@ -137,17 +184,7 @@ def report_progress(
             now = time.monotonic()
             if now - last_report_at < interval_seconds:
                 continue
-            current_size = directory_bytes(watch_roots)
-            elapsed = max(now - last_report_at, 0.001)
-            growth = max(current_size - last_size, 0)
-            print(
-                f"{utc_text()}｜进度｜任务：{task}｜阶段：{stage}｜批次：{run}"
-                f"｜近一分钟增长：{growth / 1024 / 1024:.1f} MiB"
-                f"｜速度：{growth / elapsed / 1024 / 1024:.2f} MiB/s",
-                flush=True,
-            )
-            last_size = current_size
-            last_report_at = now
+            emit_progress(now)
 
     if return_code is None:
         return_code = 1

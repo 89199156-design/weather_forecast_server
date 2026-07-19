@@ -1,3 +1,4 @@
+import time
 from io import StringIO
 from pathlib import Path
 
@@ -49,3 +50,25 @@ def test_reporter_returns_failure_and_points_to_raw_log(tmp_path, capsys):
     assert "阶段：下载 CAMS 全球空气质量" in output
     assert "退出码：125" in output
 
+
+def test_reporter_emits_progress_while_child_output_is_quiet(tmp_path, capsys):
+    class QuietStream:
+        def __iter__(self):
+            yield 'download cams_global run=2026071900\n'
+            time.sleep(0.08)
+            yield RETURN_CODE_PREFIX + "0\n"
+
+    raw_log = tmp_path / "raw.log"
+    result = report_progress(
+        task="CAMS 生产更新",
+        default_stage="检查最新批次",
+        watch_roots=[],
+        log_file=raw_log,
+        interval_seconds=0.02,
+        input_stream=QuietStream(),
+    )
+
+    output = capsys.readouterr().out
+    assert result == 0
+    assert "进度｜任务：CAMS 生产更新" in output
+    assert "阶段：下载 CAMS 全球空气质量" in output
