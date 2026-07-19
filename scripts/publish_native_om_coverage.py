@@ -295,6 +295,15 @@ def directory_stats(root: Path) -> tuple[int, int]:
     return files, bytes_total
 
 
+def producer_image_ref() -> str | None:
+    """Return the immutable Swift producer image selected for this coverage."""
+    image = os.environ.get("WEATHER_OPENMETEO_IMAGE", "").strip()
+    tag = os.environ.get("WEATHER_OPENMETEO_TAG", "").strip()
+    if not image or not tag:
+        return None
+    return f"{image}:{tag}"
+
+
 def ensure_staging_is_scoped(staging: Path, output_root: Path) -> None:
     staging_parent = staging.resolve().parent
     expected_parent = (output_root / "staging").resolve()
@@ -347,6 +356,7 @@ def promote_or_reuse_coverage(
         "short_run_count",
         "full_run_count",
         "source_run_max_forecast_hours",
+        "producer_image",
     )
     for field in identity_fields:
         if existing.get(field) != coverage_manifest.get(field):
@@ -450,6 +460,7 @@ def publish_gfs_coverage(args: argparse.Namespace) -> dict[str, Any]:
 
     files, bytes_total = directory_stats(staging)
     generated_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    producer_image = producer_image_ref()
     coverage_manifest = {
         "version": 1,
         "status": "complete",
@@ -474,6 +485,8 @@ def publish_gfs_coverage(args: argparse.Namespace) -> dict[str, Any]:
         "bytes": bytes_total,
         "generated_at": generated_at,
     }
+    if producer_image:
+        coverage_manifest["producer_image"] = producer_image
     coverage_manifest, reused = promote_or_reuse_coverage(
         staging,
         coverage_root,
@@ -511,6 +524,8 @@ def publish_gfs_coverage(args: argparse.Namespace) -> dict[str, Any]:
         "generated_at": generated_at,
         "coverage_reused": reused,
     }
+    if producer_image:
+        ready["producer_image"] = producer_image
     atomic_write_json(
         output_root / "groups" / "gfs" / "releases" / f"{release_id}.json",
         ready,

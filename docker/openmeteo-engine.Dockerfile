@@ -13,6 +13,9 @@ RUN ENABLE_PARQUET=TRUE MARCH_SKYLAKE=TRUE swift build -c release
 
 FROM ghcr.io/open-meteo/docker-container-run:latest
 
+ARG SWIFT_SOURCE_ID=unknown
+LABEL io.weather-forecast.swift-source-id=$SWIFT_SOURCE_ID
+
 RUN apt-get update \
   && apt-get install -y --no-install-recommends unzip \
   && rm -rf /var/lib/apt/lists/*

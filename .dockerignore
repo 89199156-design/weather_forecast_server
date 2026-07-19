@@ -7,6 +7,7 @@ __pycache__
 venv
 .build
 .swiftpm
+om_api/target
 
 data
 logs

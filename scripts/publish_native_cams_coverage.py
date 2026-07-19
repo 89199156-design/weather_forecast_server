@@ -19,6 +19,7 @@ from publish_native_om_coverage import (
     directory_stats,
     ensure_staging_is_scoped,
     load_coverage_manifests,
+    producer_image_ref,
     promote_or_reuse_coverage,
     read_latest,
     validate_run_metadata,
@@ -180,6 +181,7 @@ def publish_cams_coverage(args: argparse.Namespace) -> dict[str, Any]:
 
     files, bytes_total = directory_stats(staging)
     generated_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    producer_image = producer_image_ref()
     coverage_manifest = {
         "version": 1,
         "status": "complete",
@@ -200,6 +202,8 @@ def publish_cams_coverage(args: argparse.Namespace) -> dict[str, Any]:
         "bytes": bytes_total,
         "generated_at": generated_at,
     }
+    if producer_image:
+        coverage_manifest["producer_image"] = producer_image
     coverage_manifest, reused = promote_or_reuse_coverage(
         staging,
         coverage_root,
@@ -243,6 +247,8 @@ def publish_cams_coverage(args: argparse.Namespace) -> dict[str, Any]:
         "generated_at": generated_at,
         "coverage_reused": reused,
     }
+    if producer_image:
+        ready["producer_image"] = producer_image
     atomic_write_json(
         output_root / "groups" / "cams" / "releases" / f"{coverage_id}.json",
         ready,
