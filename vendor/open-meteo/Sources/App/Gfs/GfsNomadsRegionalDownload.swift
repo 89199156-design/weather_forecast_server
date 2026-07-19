@@ -322,13 +322,13 @@ extension Curl {
             let sourcePackingByLine = Dictionary(uniqueKeysWithValues: packingPairs)
             let delay = WeatherForecastServerSourceConfig.double(
                 "WEATHER_NOMADS_REQUEST_DELAY_SECONDS",
-                fallback: 2
+                fallback: 10
             )
             let cachedFilterResponse = Curl.cacheDirectory.map {
                 FileManager.default.fileExists(atPath: $0 + "/" + filteredUrl.sha256)
             } ?? false
             if !cachedFilterResponse {
-                try await GfsNomadsRequestGate.shared.waitForTurn(minimumInterval: max(0, delay))
+                try await GfsNomadsRequestGate.shared.waitForTurn(minimumInterval: max(10, delay))
             }
             let messages = try await downloadGrib(url: filteredUrl, bzip2Decode: false)
             guard messages.count == filteredLines.count else {

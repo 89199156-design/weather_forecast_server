@@ -121,7 +121,8 @@ def test_vendored_openmeteo_only_has_required_region_patches():
     assert "GfsNomadsRegionalDownload.inventoryUrl" in regional_download
     assert "https://noaa-gfs-bdp-pds.s3.amazonaws.com/" in regional_download
     assert '"WEATHER_NOMADS_REQUEST_DELAY_SECONDS"' in regional_download
-    assert "fallback: 2" in regional_download
+    assert "fallback: 10" in regional_download
+    assert "minimumInterval: max(10, delay)" in regional_download
     assert "cachedFilterResponse" in regional_download
     assert "filter_gfs_sflux.pl" in regional_download
     assert "filter_gfs_0p25.pl" in regional_download
