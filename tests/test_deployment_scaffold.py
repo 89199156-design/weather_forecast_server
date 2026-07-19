@@ -1190,8 +1190,14 @@ def test_openmeteo_cron_installer_uses_one_1panel_scheduler_for_gfs_and_cams_ftp
     assert "OM_GFS_WEBP_BUILD" in script
     assert "OM_CAMS_WEBP_BUILD" in script
     assert "/etc/cron.d/weather-openmeteo" in script
-    assert "17 0,6,12,18 * * *" in script
-    assert "37 4,16 * * *" in script
+    gfs_spec = "17 0 * * *,17 6 * * *,17 12 * * *,17 18 * * *"
+    cams_spec = "37 4 * * *,37 16 * * *"
+    assert gfs_spec in script
+    assert cams_spec in script
+    assert "17 0,6,12,18 * * *" not in script
+    assert "37 4,16 * * *" not in script
+    assert all(len(expression.split()) == 5 for expression in gfs_spec.split(","))
+    assert all(len(expression.split()) == 5 for expression in cams_spec.split(","))
     assert "INSERT INTO cronjobs" in script
     assert "weather_gfs_probe_cycle" in script
     assert "weather_cams_ftp_probe_cycle" in script
@@ -1201,6 +1207,7 @@ def test_openmeteo_cron_installer_uses_one_1panel_scheduler_for_gfs_and_cams_ftp
     assert 'RUNTIME_ROOT="${WEATHER_FORECAST_RUNTIME_ROOT:-/opt/1panel/apps/weather_forecast_server}"' in script
     assert 'ENV_FILE="${WEATHER_OPENMETEO_ENV_FILE:-$RUNTIME_ROOT/config/singapore.private.env}"' in script
     assert 'PRODUCER_ROOT="${WEATHER_OM_PRODUCER_ROOT:-$RUNTIME_ROOT/data/om_producer}"' in script
+    assert "--preserve-env=PANEL_DB,APP_DIR,ENV_FILE,PRODUCER_ROOT" in script
     assert "WEATHER_FORECAST_APP_DIR={app_dir}" in script
     assert "WEATHER_OPENMETEO_ENV_FILE={env_file}" in script
     assert "WEATHER_OM_PRODUCER_ROOT={producer_root}" in script

@@ -397,9 +397,17 @@ after the complete forecast horizon is normally available. It contains these
 two enabled Shell schedules:
 
 ```cron
-17 0,6,12,18 * * * ... run_gfs_probe_and_cycle.sh
-37 4,16 * * * ... run_cams_ftp_scheduled_cycle.sh
+17 0 * * *  ... run_gfs_probe_and_cycle.sh
+17 6 * * *  ... run_gfs_probe_and_cycle.sh
+17 12 * * * ... run_gfs_probe_and_cycle.sh
+17 18 * * * ... run_gfs_probe_and_cycle.sh
+37 4 * * *  ... run_cams_ftp_scheduled_cycle.sh
+37 16 * * * ... run_cams_ftp_scheduled_cycle.sh
 ```
+
+1Panel v1 stores multiple schedules for one job as comma-separated complete
+cron expressions. The installer therefore expands each model-cycle hour into
+a full five-field expression instead of using a comma inside the hour field.
 
 When code is deployed from an immutable release checkout, install with
 `WEATHER_FORECAST_APP_DIR=/home/ubuntu/weather_releases/main`; the generated

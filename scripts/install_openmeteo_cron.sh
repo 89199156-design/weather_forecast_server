@@ -27,7 +27,7 @@ export PANEL_DB APP_DIR ENV_FILE PRODUCER_ROOT
 
 PYTHON_RUNNER=(python3)
 if [[ "$(id -u)" -ne 0 ]]; then
-  PYTHON_RUNNER=(sudo --preserve-env=PANEL_DB python3)
+  PYTHON_RUNNER=(sudo --preserve-env=PANEL_DB,APP_DIR,ENV_FILE,PRODUCER_ROOT python3)
 fi
 
 "${PYTHON_RUNNER[@]}" <<'PY'
@@ -52,7 +52,10 @@ with sqlite3.connect(panel_db) as conn:
     tasks = (
         (
             "weather_gfs_probe_cycle",
-            "17 0,6,12,18 * * *",
+            # 1Panel v1 uses commas to separate complete cron expressions.
+            # Do not use a standard comma-separated hour field here: the
+            # scheduler would split it into invalid fragments at startup.
+            "17 0 * * *,17 6 * * *,17 12 * * *,17 18 * * *",
             "\n".join(
                 (
                     "#!/bin/bash",
@@ -67,7 +70,7 @@ with sqlite3.connect(panel_db) as conn:
         ),
         (
             "weather_cams_ftp_probe_cycle",
-            "37 4,16 * * *",
+            "37 4 * * *,37 16 * * *",
             "\n".join(
                 (
                     "#!/bin/bash",
