@@ -18,7 +18,8 @@ SOURCE_RUN_COUNT="${WEATHER_CAMS_REQUIRED_SOURCE_RUN_COUNT:-3}"
 MAX_FORECAST_HOUR="${WEATHER_CAMS_REQUIRED_MAX_FORECAST_HOUR:-120}"
 GREENHOUSE_SOURCE_RUN_COUNT="${WEATHER_CAMS_GREENHOUSE_SOURCE_RUN_COUNT:-3}"
 GREENHOUSE_MAX_FORECAST_HOUR="${WEATHER_CAMS_GREENHOUSE_MAX_FORECAST_HOUR:-120}"
-COVERAGE_REVISION="${WEATHER_CAMS_COVERAGE_REVISION:-greenhouse-d2-v2}"
+FORCE_GREENHOUSE_DOWNLOAD="${WEATHER_CAMS_FORCE_GREENHOUSE_DOWNLOAD:-false}"
+COVERAGE_REVISION="${WEATHER_CAMS_COVERAGE_REVISION:-greenhouse-region-v3}"
 LOCAL_UTC_OFFSET_HOURS="${WEATHER_CAMS_LOCAL_UTC_OFFSET_HOURS:-8}"
 CAMS_STORAGE_LEFT_LON="${WEATHER_CAMS_STORAGE_LEFT_LON:-69}"
 CAMS_STORAGE_RIGHT_LON="${WEATHER_CAMS_STORAGE_RIGHT_LON:-141}"
@@ -211,6 +212,17 @@ PY
     --min-frames "$((MAX_FORECAST_HOUR + 1))"
 
   IFS=',' read -ra PLANNED_GREENHOUSE_RUNS <<< "$GREENHOUSE_SOURCE_RUNS"
+  if is_truthy "$FORCE_GREENHOUSE_DOWNLOAD"; then
+    # This is an explicit repair-only path. Unlink greenhouse files from the
+    # private staging tree before rebuilding all three retained runs; the
+    # immutable current coverage remains untouched until atomic publication.
+    rm -rf -- "$STAGING_DIR/cams_global_greenhouse_gases"
+    for GREENHOUSE_RUN in "${PLANNED_GREENHOUSE_RUNS[@]}"; do
+      GREENHOUSE_RUN_DIR="$STAGING_DIR/data_run/cams_global_greenhouse_gases/${GREENHOUSE_RUN:0:4}/${GREENHOUSE_RUN:4:2}/${GREENHOUSE_RUN:6:2}/${GREENHOUSE_RUN:8:2}00Z"
+      rm -rf -- "$GREENHOUSE_RUN_DIR"
+    done
+    rm -f -- "$STAGING_DIR/data_run/cams_global_greenhouse_gases/latest.json"
+  fi
   for GREENHOUSE_RUN in "${PLANNED_GREENHOUSE_RUNS[@]}"; do
     if validate_staged_greenhouse_run "$GREENHOUSE_RUN"; then
       echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_OM] reuse validated greenhouse run=$GREENHOUSE_RUN"

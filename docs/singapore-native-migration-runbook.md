@@ -122,6 +122,9 @@ storage bounds. The official CAMS Global ECPDS distribution consists of static
 global NetCDF files and exposes no bounding-box request, so those files are
 downloaded one at a time and cropped in the Swift importer before OM output;
 they are never retained after the successful atomic publication.
+`WEATHER_CAMS_FORCE_GREENHOUSE_DOWNLOAD=true` is reserved for a one-time
+same-run source-path repair; normal cycles leave it false and download only
+missing greenhouse batches.
 
 `uv_index_clear_sky` is a required official GFS `CDUVB` field because the API
 also exposes `uv_index_clear_sky_max`. For a one-time upgrade of retained runs,
