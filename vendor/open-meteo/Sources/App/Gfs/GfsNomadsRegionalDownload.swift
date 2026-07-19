@@ -40,6 +40,17 @@ private actor GfsNomadsRequestGate {
 }
 
 private enum GfsNomadsRegionalDownload {
+    private static let pressureVariablesRequiringOriginalPacking = Set([
+        "TMP", "UGRD", "VGRD", "HGT", "DZDT",
+    ])
+
+    static func requiresOriginalPacking(_ record: GfsNomadsIndexRecord) -> Bool {
+        guard record.level.hasSuffix(" mb") else {
+            return true
+        }
+        return pressureVariablesRequiringOriginalPacking.contains(record.variable)
+    }
+
     static func parseIndexRecord(_ line: String) -> GfsNomadsIndexRecord? {
         let parts = line.split(separator: ":", omittingEmptySubsequences: false)
         guard parts.count >= 6, let offset = Int(parts[1]) else {
@@ -271,18 +282,31 @@ extension Curl {
             }
             let filteredUrl = try GfsNomadsRegionalDownload.filterUrl(sourceUrl: sourceUrl, records: desiredRecords)
             let sourceDataUrl = try GfsNomadsRegionalDownload.sourceDataUrl(inventoryUrl: inventoryUrl)
-            let desiredPackingRecords = desiredByLine.keys.sorted().compactMap { lineIndex -> (Int, GfsNomadsIndexRecord)? in
+            let desiredRecordsByLine = desiredByLine.keys.sorted().compactMap { lineIndex -> (Int, GfsNomadsIndexRecord)? in
                 guard lines.indices.contains(lineIndex),
                       let record = GfsNomadsRegionalDownload.parseIndexRecord(lines[lineIndex]) else {
                     return nil
                 }
                 return (lineIndex, record)
             }
-            guard desiredPackingRecords.count == desiredByLine.count else {
+            guard desiredRecordsByLine.count == desiredByLine.count else {
                 throw GfsNomadsRegionalDownloadError.invalidIndexOffset(sourceUrl)
             }
+            let desiredPackingRecords = desiredRecordsByLine.filter {
+                GfsNomadsRegionalDownload.requiresOriginalPacking($0.1)
+            }
+            let packingMetadataConcurrent = max(
+                1,
+                min(
+                    128,
+                    Int(WeatherForecastServerSourceConfig.string(
+                        "WEATHER_GFS_PACKING_METADATA_CONCURRENT",
+                        fallback: "32"
+                    )) ?? 32
+                )
+            )
             let packingPairs = try await desiredPackingRecords.mapConcurrent(
-                nConcurrent: min(16, max(1, desiredPackingRecords.count))
+                nConcurrent: min(packingMetadataConcurrent, max(1, desiredPackingRecords.count))
             ) { lineIndex, record -> (Int, GfsOriginalPacking) in
                 let header = try await self.downloadInMemoryAsync(
                     url: sourceDataUrl,
@@ -315,12 +339,15 @@ extension Curl {
                 )
             }
 
-            for ((lineIndex, _), message) in zip(filteredLines, messages) {
+            for ((lineIndex, record), message) in zip(filteredLines, messages) {
                 guard let variable = desiredByLine[lineIndex],
                       let name = variable.gribIndexName,
-                      matchedNames.insert(name).inserted,
-                      let sourcePacking = sourcePackingByLine[lineIndex] else {
+                      matchedNames.insert(name).inserted else {
                     continue
+                }
+                let sourcePacking = sourcePackingByLine[lineIndex]
+                if GfsNomadsRegionalDownload.requiresOriginalPacking(record), sourcePacking == nil {
+                    throw GfsNomadsRegionalDownloadError.invalidOriginalPackingHeader(record.line)
                 }
                 output.append((variable, message, sourcePacking))
             }
