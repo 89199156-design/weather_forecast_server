@@ -3,13 +3,11 @@
 
 Only ``generationtime_ms`` is excluded because it measures request execution
 time. All other JSON fields, units, timestamps, nulls, numeric JSON types and
-comparable values must be byte-identical after canonical JSON serialization.
-Acceptance runs cover the complete window actually shared by both GFS APIs,
-bounded by the nominal publication window through f384, and CAMS through
-f120. CAMS fields backed by the three-hourly direct source are
-compared only at f000, f003, ..., f120; Shanghai interpolation-only hours are
-outside this project's acceptance semantics. ``--hours`` exists only for
-explicitly reduced diagnostic runs.
+values must be byte-identical after canonical JSON serialization. Acceptance
+runs compare the complete contiguous GFS window actually published by both
+APIs through f384 and every returned CAMS hour through f120. The two products
+may retain different internal history vectors, but their live latest GFS/CAMS
+runs must match. ``--hours`` exists only for explicitly reduced diagnostics.
 """
 
 from __future__ import annotations
@@ -49,19 +47,6 @@ GFS_PUBLIC_SURFACE = (
     "wind_speed_120m", "wind_direction_120m",
     "sunshine_duration",
 )
-GFS_SINGLE_BATCH_F000_MISSING = frozenset({
-    "cloud_cover", "cloud_cover_low", "cloud_cover_mid", "cloud_cover_high",
-    "precipitation", "showers", "snowfall_water_equivalent",
-    "uv_index", "uv_index_clear_sky",
-    # These derived fields require at least one of the missing official f000
-    # inputs above. Singapore intentionally does not retain the previous
-    # cycle's f006 as a cross-batch fallback.
-    "apparent_temperature", "weather_code", "rain", "snowfall",
-})
-GFS_SINGLE_BATCH_F000_REASON = (
-    "shanghai_may_fill_official_f000_source_gaps_from_previous_cycle_f006_"
-    "while_singapore_keeps_strict_f000_to_f005_history_batches"
-)
 GFS_PRESSURE_FAMILIES = (
     "temperature", "relative_humidity", "dew_point", "cloud_cover",
     "wind_speed", "wind_direction", "geopotential_height", "vertical_velocity",
@@ -92,20 +77,13 @@ CAMS_THREE_HOURLY_DIRECT_SOURCE = frozenset({
     "chinese_aqi_co", "chinese_aqi_nitrogen_dioxide", "chinese_aqi_ozone",
     "chinese_aqi_sulphur_dioxide", "chinese_aqi_carbon_monoxide",
 })
-CAMS_EXPECTED_SEMANTIC_DIFFERENCE_VARIABLES = frozenset()
-CAMS_ROLLING_WINDOW_WAIVER_REASON = (
-    "rolling_window_depends_on_shanghai_interpolated_ml137_hours_while_"
-    "singapore_uses_direct_hourly_source_values"
-)
-
 _CAMS_VARIABLE_CONTRACT = frozenset((*CAMS_DIRECT, *CAMS_DERIVED))
 if (
     CAMS_HOURLY_DIRECT_SOURCE & CAMS_THREE_HOURLY_DIRECT_SOURCE
     or (CAMS_HOURLY_DIRECT_SOURCE | CAMS_THREE_HOURLY_DIRECT_SOURCE)
     != _CAMS_VARIABLE_CONTRACT
-    or not CAMS_EXPECTED_SEMANTIC_DIFFERENCE_VARIABLES <= CAMS_THREE_HOURLY_DIRECT_SOURCE
 ):
-    raise RuntimeError("every CAMS variable must have one explicit source/waiver semantic")
+    raise RuntimeError("every CAMS variable must have one explicit source-cadence contract")
 
 
 def variables_for_scope(scope: str) -> list[str]:
@@ -162,73 +140,21 @@ def strict_comparison_hour_indices(
     *,
     start: datetime | None = None,
 ) -> list[int]:
-    if scope == "cams" and variable in CAMS_EXPECTED_SEMANTIC_DIFFERENCE_VARIABLES:
-        return []
-    return direct_source_hour_indices(scope, variable, run, hours, start=start)
-
-
-def expected_semantic_difference_summary(
-    shanghai: Any,
-    singapore: Any,
-    variables: list[str],
-    hours: int,
-    max_examples_per_field: int = 2,
-) -> dict[str, Any]:
-    """Observe waived values without allowing them to affect the strict gate."""
-    left_responses = shanghai if isinstance(shanghai, list) else [shanghai]
-    right_responses = singapore if isinstance(singapore, list) else [singapore]
-    by_variable: dict[str, dict[str, int]] = {
-        variable: {"values_observed": 0, "equal_values": 0, "mismatched_values": 0}
-        for variable in variables
-    }
-    examples: list[dict[str, Any]] = []
-    example_counts: dict[str, int] = {}
-    for point, (left_response, right_response) in enumerate(zip(left_responses, right_responses)):
-        left_hourly = left_response.get("hourly", {})
-        right_hourly = right_response.get("hourly", {})
-        for variable in variables:
-            left_values = left_hourly.get(variable, [])
-            right_values = right_hourly.get(variable, [])
-            counts = by_variable[variable]
-            for hour in range(hours):
-                left = left_values[hour]
-                right = right_values[hour]
-                counts["values_observed"] += 1
-                if strictly_equal(left, right):
-                    counts["equal_values"] += 1
-                    continue
-                counts["mismatched_values"] += 1
-                if example_counts.get(variable, 0) < max_examples_per_field:
-                    examples.append({
-                        "variable": variable,
-                        "point": point,
-                        "hour": hour,
-                        "shanghai": left,
-                        "singapore": right,
-                    })
-                    example_counts[variable] = example_counts.get(variable, 0) + 1
-    return {
-        "reason": CAMS_ROLLING_WINDOW_WAIVER_REASON,
-        "variables": variables,
-        "values_observed": sum(item["values_observed"] for item in by_variable.values()),
-        "equal_values": sum(item["equal_values"] for item in by_variable.values()),
-        "mismatched_values": sum(item["mismatched_values"] for item in by_variable.values()),
-        "by_variable": by_variable,
-        "examples": examples,
-    }
+    direct_source_cadence_hours(scope, variable)
+    if hours <= 0:
+        raise ValueError("hours must be positive")
+    return list(range(hours))
 
 
 def comparable_payload(
     payload: Any,
     variables: list[str],
     hour_indices_by_variable: dict[str, list[int]],
-    normalized_null_positions: set[tuple[int, str, int]] | None = None,
 ) -> Any:
-    """Keep full API structure while filtering only explicitly excluded values."""
+    """Keep the complete API structure and every strict comparison value."""
     responses = payload if isinstance(payload, list) else [payload]
     filtered_responses: list[Any] = []
-    normalized_null_positions = normalized_null_positions or set()
-    for point, response in enumerate(responses):
+    for response in responses:
         if not isinstance(response, dict):
             filtered_responses.append(response)
             continue
@@ -236,84 +162,21 @@ def comparable_payload(
         hourly = response.get("hourly")
         if isinstance(hourly, dict):
             filtered_hourly = dict(hourly)
+            expected_indices = list(range(len(hourly.get("time", []))))
             for variable in variables:
                 values = hourly.get(variable)
                 if not isinstance(values, list):
                     continue
-                filtered_hourly[variable] = [
-                    None
-                    if (point, variable, index) in normalized_null_positions
-                    else values[index]
-                    for index in hour_indices_by_variable[variable]
-                ]
+                indices = hour_indices_by_variable[variable]
+                if indices != expected_indices:
+                    raise ValueError(
+                        "strict comparison must retain every hourly value for "
+                        f"{variable}; got indices {indices[:3]}..."
+                    )
+                filtered_hourly[variable] = list(values)
             filtered["hourly"] = filtered_hourly
         filtered_responses.append(filtered)
     return filtered_responses if isinstance(payload, list) else filtered_responses[0]
-
-
-def gfs_single_batch_boundary_difference_summary(
-    shanghai: Any,
-    singapore: Any,
-    variables: list[str],
-    run: str,
-    start: datetime,
-    hours: int,
-    max_examples_per_field: int = 2,
-) -> tuple[set[tuple[int, str, int]], dict[str, Any]]:
-    """Allow only Shanghai value / Singapore null at retained GFS f000."""
-    latest = parse_run(run)
-    # The latest full run must stay strict: its f000 can fall back to the
-    # immediately previous full run at f006. Only the four older retained
-    # single-batch boundaries lack that same-hour full-run fallback.
-    source_references = {
-        latest - timedelta(hours=6 * offset) for offset in range(1, 5)
-    }
-    boundary_indices = {
-        index
-        for index in range(hours)
-        if start + timedelta(hours=index) in source_references
-    }
-    left_responses = shanghai if isinstance(shanghai, list) else [shanghai]
-    right_responses = singapore if isinstance(singapore, list) else [singapore]
-    positions: set[tuple[int, str, int]] = set()
-    by_variable: dict[str, int] = {}
-    examples: list[dict[str, Any]] = []
-    example_counts: dict[str, int] = {}
-    for point, (left_response, right_response) in enumerate(
-        zip(left_responses, right_responses)
-    ):
-        left_hourly = left_response.get("hourly", {})
-        right_hourly = right_response.get("hourly", {})
-        for variable in variables:
-            if variable not in GFS_SINGLE_BATCH_F000_MISSING:
-                continue
-            left_values = left_hourly.get(variable, [])
-            right_values = right_hourly.get(variable, [])
-            for hour in boundary_indices:
-                left = left_values[hour]
-                right = right_values[hour]
-                if left is None or right is not None:
-                    continue
-                positions.add((point, variable, hour))
-                by_variable[variable] = by_variable.get(variable, 0) + 1
-                if example_counts.get(variable, 0) < max_examples_per_field:
-                    examples.append({
-                        "variable": variable,
-                        "point": point,
-                        "hour": hour,
-                        "time": format_hour(start + timedelta(hours=hour)),
-                        "shanghai": left,
-                        "singapore": right,
-                    })
-                    example_counts[variable] = example_counts.get(variable, 0) + 1
-    return positions, {
-        "reason": GFS_SINGLE_BATCH_F000_REASON,
-        "allowed_direction": "shanghai_non_null_singapore_null_only",
-        "source_run_references": sorted(format_hour(value) for value in source_references),
-        "values_excluded": len(positions),
-        "by_variable": by_variable,
-        "examples": examples,
-    }
 
 
 def random_points(count: int, seed: int, bounds: tuple[float, float, float, float]) -> list[dict[str, float]]:
@@ -552,7 +415,6 @@ def field_mismatch_summary(
     variables: list[str],
     max_examples_per_field: int = 2,
     hour_indices_by_variable: dict[str, list[int]] | None = None,
-    ignored_value_positions: set[tuple[int, str, int]] | None = None,
 ) -> dict[str, Any]:
     left_responses = shanghai if isinstance(shanghai, list) else [shanghai]
     right_responses = singapore if isinstance(singapore, list) else [singapore]
@@ -563,8 +425,6 @@ def field_mismatch_summary(
     }
     examples: list[dict[str, Any]] = []
     example_counts: dict[tuple[str, str], int] = {}
-    ignored_value_positions = ignored_value_positions or set()
-
     def record(category: str, field: str, point: int, hour: int | None, left: Any, right: Any) -> None:
         fields = counts[category]
         fields[field] = fields.get(field, 0) + 1
@@ -609,8 +469,6 @@ def field_mismatch_summary(
             else:
                 indices = hour_indices_by_variable[field]
             for hour in indices:
-                if (point, field, hour) in ignored_value_positions:
-                    continue
                 left = left_values[hour]
                 right = right_values[hour]
                 if not strictly_equal(left, right):
@@ -735,48 +593,17 @@ def compare_job_unthrottled(
         )
         for variable in job["variables"]
     }
-    waived_variables = [
-        variable for variable in job["variables"]
-        if job["scope"] == "cams"
-        and variable in CAMS_EXPECTED_SEMANTIC_DIFFERENCE_VARIABLES
-    ]
-    single_batch_positions: set[tuple[int, str, int]] = set()
-    single_batch_summary = None
-    if job["scope"] == "gfs":
-        gfs_start = start or comparison_start("gfs", job["run"])
-        single_batch_positions, single_batch_summary = (
-            gfs_single_batch_boundary_difference_summary(
-                shanghai,
-                singapore,
-                job["variables"],
-                job["run"],
-                gfs_start,
-                job["hours"],
-            )
-        )
     left = canonical_bytes(comparable_payload(
         shanghai,
         job["variables"],
         hour_indices_by_variable,
-        single_batch_positions,
     ))
     right = canonical_bytes(comparable_payload(
         singapore,
         job["variables"],
         hour_indices_by_variable,
-        single_batch_positions,
     ))
     values_per_point = sum(len(indices) for indices in hour_indices_by_variable.values())
-    excluded_values_per_point = sum(
-        job["hours"] - len(direct_source_hour_indices(
-            job["scope"], variable, job["run"], job["hours"], start=start
-        ))
-        for variable in job["variables"]
-        if variable not in waived_variables
-    )
-    semantic_waiver = expected_semantic_difference_summary(
-        shanghai, singapore, waived_variables, job["hours"]
-    ) if waived_variables else None
     result = {
         "job_id": job["job_id"],
         "scope": job["scope"],
@@ -785,23 +612,15 @@ def compare_job_unthrottled(
         "singapore_sha256": hashlib.sha256(right).hexdigest(),
         "points": len(job["points"]),
         "variables": len(job["variables"]),
-        "values": len(job["points"]) * values_per_point - len(single_batch_positions),
-        "excluded_interpolated_values": len(job["points"]) * excluded_values_per_point,
-        "semantic_waiver_values": semantic_waiver["values_observed"] if semantic_waiver else 0,
-        "semantic_waiver_mismatches": semantic_waiver["mismatched_values"] if semantic_waiver else 0,
-        "gfs_single_batch_boundary_values_excluded": len(single_batch_positions),
+        "values": len(job["points"]) * values_per_point,
+        "excluded_interpolated_values": 0,
     }
-    if semantic_waiver is not None:
-        result["expected_semantic_differences"] = semantic_waiver
-    if single_batch_summary is not None:
-        result["gfs_single_batch_boundary_differences"] = single_batch_summary
     if left != right:
         result["field_mismatches"] = field_mismatch_summary(
             shanghai,
             singapore,
             job["variables"],
             hour_indices_by_variable=hour_indices_by_variable,
-            ignored_value_positions=single_batch_positions,
         )
     return result
 
@@ -1073,32 +892,6 @@ def main() -> int:
             category_totals = scope.setdefault(category, {})
             for field, count in fields.items():
                 category_totals[field] = category_totals.get(field, 0) + count
-    semantic_waiver_by_variable = {
-        variable: {"values_observed": 0, "equal_values": 0, "mismatched_values": 0}
-        for variable in sorted(CAMS_EXPECTED_SEMANTIC_DIFFERENCE_VARIABLES)
-    }
-    semantic_waiver_examples: list[dict[str, Any]] = []
-    gfs_single_batch_by_variable: dict[str, int] = {}
-    gfs_single_batch_examples: list[dict[str, Any]] = []
-    for item in results:
-        details = item.get("expected_semantic_differences") or {}
-        for variable, counts in (details.get("by_variable") or {}).items():
-            totals = semantic_waiver_by_variable[variable]
-            for field in ("values_observed", "equal_values", "mismatched_values"):
-                totals[field] += int(counts.get(field, 0))
-        for example in details.get("examples") or []:
-            if len(semantic_waiver_examples) >= 100:
-                break
-            semantic_waiver_examples.append({"job_id": item["job_id"], **example})
-        boundary = item.get("gfs_single_batch_boundary_differences") or {}
-        for variable, count in (boundary.get("by_variable") or {}).items():
-            gfs_single_batch_by_variable[variable] = (
-                gfs_single_batch_by_variable.get(variable, 0) + int(count)
-            )
-        for example in boundary.get("examples") or []:
-            if len(gfs_single_batch_examples) >= 100:
-                break
-            gfs_single_batch_examples.append({"job_id": item["job_id"], **example})
     cams_cadence_by_variable = {
         variable: direct_source_cadence_hours("cams", variable)
         for variable in variables_for_scope("cams")
@@ -1115,15 +908,11 @@ def main() -> int:
         "passed": passed,
         "strict_equality": True,
         "strict_equality_scope": (
-            "all GFS values; hourly-source CAMS values; direct f=3n CAMS sparse values; "
-            "all response metadata, units and time axes"
+            "all GFS and CAMS hourly values, including API interpolation hours; "
+            "all response metadata, units and complete time axes"
         ),
         "excluded_fields": ["generationtime_ms"],
-        "excluded_value_semantics": [
-            "cams_interpolation_only_hours",
-            "cams_expected_semantic_difference_waivers",
-            "gfs_single_batch_f000_history_fallback",
-        ],
+        "excluded_value_semantics": [],
         "point_count": args.point_count,
         "gfs_hours": scope_hours["gfs"],
         "cams_hours": scope_hours["cams"],
@@ -1148,38 +937,12 @@ def main() -> int:
         "cams_variables": variables_for_scope("cams"),
         "cams_direct_source_cadence_hours": cams_cadence_by_variable,
         "cams_direct_hour_count_by_cadence": cams_hours_by_cadence,
-        "cams_expected_semantic_difference_variables": sorted(
-            CAMS_EXPECTED_SEMANTIC_DIFFERENCE_VARIABLES
-        ),
-        "cams_expected_semantic_difference_reason": CAMS_ROLLING_WINDOW_WAIVER_REASON,
         "jobs_expected": len(jobs),
         "jobs_completed": len(results),
         "values_compared": sum(item["values"] for item in results),
         "interpolated_values_excluded": sum(
             item["excluded_interpolated_values"] for item in results
         ),
-        "semantic_waiver_values_observed": sum(
-            item["semantic_waiver_values"] for item in results
-        ),
-        "semantic_waiver_mismatches_observed": sum(
-            item["semantic_waiver_mismatches"] for item in results
-        ),
-        "gfs_single_batch_boundary_values_excluded": sum(
-            item["gfs_single_batch_boundary_values_excluded"] for item in results
-        ),
-        "gfs_single_batch_boundary_differences": {
-            "reason": GFS_SINGLE_BATCH_F000_REASON,
-            "allowed_direction": "shanghai_non_null_singapore_null_only",
-            "variables": sorted(GFS_SINGLE_BATCH_F000_MISSING),
-            "by_variable": gfs_single_batch_by_variable,
-            "examples": gfs_single_batch_examples,
-        },
-        "expected_semantic_differences": {
-            "reason": CAMS_ROLLING_WINDOW_WAIVER_REASON,
-            "variables": sorted(CAMS_EXPECTED_SEMANTIC_DIFFERENCE_VARIABLES),
-            "by_variable": semantic_waiver_by_variable,
-            "examples": semantic_waiver_examples,
-        },
         "mismatches": mismatches[:100],
         "field_mismatch_totals": field_mismatch_totals,
         "errors": errors[:100],

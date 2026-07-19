@@ -6,7 +6,8 @@ PRODUCER_ROOT="${WEATHER_OM_PRODUCER_ROOT:-$APP_DIR/data/om_producer}"
 SHANGHAI_URL="${WEATHER_SHANGHAI_OM_API_URL:-}"
 SINGAPORE_URL="${WEATHER_SINGAPORE_OM_API_URL:-http://127.0.0.1:8088}"
 API_PID="${WEATHER_OM_API_PID:-}"
-RUN_IDENTITY_REPORT="${WEATHER_OM_RUN_IDENTITY_REPORT:-}"
+HOURLY_RUN_IDENTITY_REPORT="${WEATHER_OM_RUN_IDENTITY_REPORT:-}"
+DAILY_RUN_IDENTITY_REPORT="${WEATHER_OM_DAILY_RUN_IDENTITY_REPORT:-}"
 SHANGHAI_WEBP_INVENTORY="${WEATHER_SHANGHAI_WEBP_INVENTORY:-}"
 REPORT_ROOT="${WEATHER_OM_PARITY_REPORT_ROOT:-$PRODUCER_ROOT/reports}"
 WEBP_OUTPUT_ROOT="${WEATHER_OM_WEBP_DATA_ROOT:-/opt/1panel/apps/weather_om_webp/data}"
@@ -15,8 +16,16 @@ if [[ -z "$SHANGHAI_URL" ]]; then
   printf '%s\n' "WEATHER_SHANGHAI_OM_API_URL is required." >&2
   exit 2
 fi
-if [[ -z "$RUN_IDENTITY_REPORT" || ! -f "$RUN_IDENTITY_REPORT" ]]; then
+if [[ -z "$HOURLY_RUN_IDENTITY_REPORT" || ! -f "$HOURLY_RUN_IDENTITY_REPORT" ]]; then
   printf '%s\n' "WEATHER_OM_RUN_IDENTITY_REPORT must point to a passed Shanghai/Singapore identity report." >&2
+  exit 2
+fi
+if [[ -z "$DAILY_RUN_IDENTITY_REPORT" || ! -f "$DAILY_RUN_IDENTITY_REPORT" ]]; then
+  printf '%s\n' "WEATHER_OM_DAILY_RUN_IDENTITY_REPORT must point to a fresh identity report collected after the hourly comparison." >&2
+  exit 2
+fi
+if [[ "$DAILY_RUN_IDENTITY_REPORT" -ef "$HOURLY_RUN_IDENTITY_REPORT" ]]; then
+  printf '%s\n' "Hourly and daily comparisons require distinct identity reports; collect the daily report after hourly completion." >&2
   exit 2
 fi
 if [[ ! "$API_PID" =~ ^[1-9][0-9]*$ || ! -d "/proc/$API_PID/fd" ]]; then
@@ -78,14 +87,14 @@ python3 "$APP_DIR/scripts/compare_shanghai_singapore_api.py" \
   --singapore-url "$SINGAPORE_URL" \
   --gfs-run "$GFS_RUN" \
   --cams-run "$CAMS_RUN" \
-  --run-identity-report "$RUN_IDENTITY_REPORT" \
+  --run-identity-report "$HOURLY_RUN_IDENTITY_REPORT" \
   --output-report "$REPORT_ROOT/shanghai-singapore-2000-all-hours.json"
 python3 "$APP_DIR/scripts/compare_shanghai_singapore_daily.py" \
   --shanghai-url "$SHANGHAI_URL" \
   --singapore-url "$SINGAPORE_URL" \
   --gfs-run "$GFS_RUN" \
   --cams-run "$CAMS_RUN" \
-  --run-identity-report "$RUN_IDENTITY_REPORT" \
+  --run-identity-report "$DAILY_RUN_IDENTITY_REPORT" \
   --hourly-acceptance-report "$REPORT_ROOT/shanghai-singapore-2000-all-hours.json" \
   --output-report "$REPORT_ROOT/shanghai-singapore-2000x3-daily.json"
 nice -n 15 ionice -c 3 python3 "$APP_DIR/scripts/compare_webp_inventories.py" inventory \

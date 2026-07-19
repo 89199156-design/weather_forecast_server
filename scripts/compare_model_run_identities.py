@@ -115,7 +115,14 @@ def inspect_live_snapshot(process_pid: int, groups: dict[str, Any]) -> dict[str,
 def build_identity(data_root: Path, process_pid: int | None = None) -> dict[str, Any]:
     groups: dict[str, Any] = {}
     for group in GROUPS:
-        marker_path = data_root / "groups" / group / "current" / "ready_for_processing.json"
+        marker_candidates = (
+            data_root / "groups" / group / "current" / "ready_for_processing.json",
+            data_root / "groups" / group / "latest.json",
+        )
+        marker_path = next((path for path in marker_candidates if path.is_file()), None)
+        if marker_path is None:
+            searched = ", ".join(str(path) for path in marker_candidates)
+            raise FileNotFoundError(f"no complete {group} marker found; searched: {searched}")
         marker_bytes = marker_path.read_bytes()
         marker = json.loads(marker_bytes)
         latest = str(marker.get("latest_complete_run") or "")
@@ -202,13 +209,15 @@ def main() -> int:
     try:
         if args.command == "inventory":
             payload = build_identity(Path(args.data_root), args.process_pid)
-            atomic_json(Path(args.output), payload)
+            if args.output != "-":
+                atomic_json(Path(args.output), payload)
             print(json.dumps(payload, ensure_ascii=False))
             return 0
         shanghai = json.loads(Path(args.shanghai_identity).read_text(encoding="utf-8"))
         singapore = json.loads(Path(args.singapore_identity).read_text(encoding="utf-8"))
         report = compare_identities(shanghai, singapore)
-        atomic_json(Path(args.output_report), report)
+        if args.output_report != "-":
+            atomic_json(Path(args.output_report), report)
         print(json.dumps(report, ensure_ascii=False))
         return 0 if report["passed"] else 1
     except (OSError, ValueError, json.JSONDecodeError) as exc:

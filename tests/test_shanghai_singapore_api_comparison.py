@@ -67,25 +67,18 @@ class ShanghaiSingaporeApiComparisonTests(unittest.TestCase):
             len(module.strict_comparison_hour_indices("cams", variable, "2026071300", 121))
             for variable in cams
         )
-        cams_waiver_values_per_point = (
-            len(module.CAMS_EXPECTED_SEMANTIC_DIFFERENCE_VARIABLES) * 121
-        )
-        cams_interpolation_only_values_per_point = sum(
+        cams_previously_interpolated_values_per_point = sum(
             121 - len(module.direct_source_hour_indices("cams", variable, "2026071300", 121))
             for variable in cams
-            if variable not in module.CAMS_EXPECTED_SEMANTIC_DIFFERENCE_VARIABLES
         )
         self.assertEqual(cams_direct_values_per_point, 1_179)
-        self.assertEqual(cams_strict_values_per_point, 1_179)
-        self.assertEqual(cams_waiver_values_per_point, 0)
-        self.assertEqual(cams_interpolation_only_values_per_point, 1_120)
+        self.assertEqual(cams_strict_values_per_point, 121 * len(cams))
+        self.assertEqual(cams_previously_interpolated_values_per_point, 1_120)
         self.assertEqual(
-            cams_strict_values_per_point
-            + cams_waiver_values_per_point
-            + cams_interpolation_only_values_per_point,
-            121 * len(cams),
+            cams_direct_values_per_point + cams_previously_interpolated_values_per_point,
+            cams_strict_values_per_point,
         )
-        self.assertEqual(2000 * (381 * len(gfs) + cams_strict_values_per_point), 171_522_000)
+        self.assertEqual(2000 * (381 * len(gfs) + cams_strict_values_per_point), 173_762_000)
         self.assertIn("apparent_temperature", gfs)
         self.assertIn("wet_bulb_temperature_2m", gfs)
         self.assertIn("soil_temperature_100_to_200cm", gfs)
@@ -121,9 +114,8 @@ class ShanghaiSingaporeApiComparisonTests(unittest.TestCase):
         self.assertEqual(cadence["dust"], 3)
         self.assertEqual(cadence["carbon_monoxide"], 3)
         self.assertEqual(cadence["chinese_aqi"], 3)
-        self.assertEqual(module.CAMS_EXPECTED_SEMANTIC_DIFFERENCE_VARIABLES, set())
 
-    def test_cams_three_hour_source_compares_only_run_aligned_direct_hours(self):
+    def test_cams_three_hour_source_still_compares_every_public_hour(self):
         self.assertEqual(
             module.direct_source_hour_indices(
                 "cams", "dust", "2026071300", 121
@@ -140,7 +132,7 @@ class ShanghaiSingaporeApiComparisonTests(unittest.TestCase):
             module.strict_comparison_hour_indices(
                 "cams", "chinese_aqi_o3", "2026071300", 121
             ),
-            list(range(0, 121, 3)),
+            list(range(121)),
         )
         self.assertEqual(
             module.direct_source_hour_indices(
@@ -153,7 +145,7 @@ class ShanghaiSingaporeApiComparisonTests(unittest.TestCase):
             [2, 5],
         )
 
-    def test_comparable_payload_filters_only_cams_interpolation_values(self):
+    def test_comparable_payload_preserves_all_cams_hours(self):
         payload = {
             "generationtime_ms": 1.0,
             "hourly_units": {"time": "iso8601", "pm2_5": "ug/m3", "dust": "ug/m3"},
@@ -164,7 +156,7 @@ class ShanghaiSingaporeApiComparisonTests(unittest.TestCase):
             },
         }
         indices = {
-            variable: module.direct_source_hour_indices(
+            variable: module.strict_comparison_hour_indices(
                 "cams", variable, "2026071300", 4
             )
             for variable in ("pm2_5", "dust")
@@ -174,10 +166,10 @@ class ShanghaiSingaporeApiComparisonTests(unittest.TestCase):
 
         self.assertEqual(filtered["hourly"]["time"], ["h0", "h1", "h2", "h3"])
         self.assertEqual(filtered["hourly"]["pm2_5"], [10.0, 11.0, 12.0, 13.0])
-        self.assertEqual(filtered["hourly"]["dust"], [20.0, 23.0])
+        self.assertEqual(filtered["hourly"]["dust"], [20.0, 21.0, 22.0, 23.0])
         self.assertEqual(filtered["hourly_units"], payload["hourly_units"])
 
-    def test_cams_job_digest_and_value_count_use_only_direct_source_hours(self):
+    def test_cams_job_digest_and_value_count_cover_all_hours(self):
         times = [f"2026-07-13T0{hour}:00" for hour in range(4)]
         base = {
             "latitude": 31.2,
@@ -203,9 +195,9 @@ class ShanghaiSingaporeApiComparisonTests(unittest.TestCase):
         with patch.object(module, "fetch", side_effect=[base, singapore]):
             result = module.compare_job_unthrottled(job, "http://shanghai", "http://singapore", 1.0)
 
-        self.assertTrue(result["equal"])
-        self.assertEqual(result["values"], 6)
-        self.assertEqual(result["excluded_interpolated_values"], 2)
+        self.assertFalse(result["equal"])
+        self.assertEqual(result["values"], 8)
+        self.assertEqual(result["excluded_interpolated_values"], 0)
 
     def test_chinese_aqi_direct_hour_difference_is_gated(self):
         times = [f"2026-07-13T0{hour}:00" for hour in range(4)]
@@ -230,10 +222,8 @@ class ShanghaiSingaporeApiComparisonTests(unittest.TestCase):
             result = module.compare_job_unthrottled(job, "http://shanghai", "http://singapore", 1.0)
 
         self.assertFalse(result["equal"])
-        self.assertEqual(result["values"], 2)
-        self.assertEqual(result["excluded_interpolated_values"], 2)
-        self.assertEqual(result["semantic_waiver_values"], 0)
-        self.assertEqual(result["semantic_waiver_mismatches"], 0)
+        self.assertEqual(result["values"], 4)
+        self.assertEqual(result["excluded_interpolated_values"], 0)
         self.assertNotIn("expected_semantic_differences", result)
 
     def test_random_points_are_reproducible_unique_and_inside_region(self):
@@ -366,7 +356,7 @@ class ShanghaiSingaporeApiComparisonTests(unittest.TestCase):
         self.assertIn("start_hour=2026-07-13T18%3A00", requested_path)
         self.assertIn("end_hour=2026-07-13T20%3A00", requested_path)
 
-    def test_gfs_single_batch_boundary_allows_only_shanghai_history_fill(self):
+    def test_gfs_single_batch_boundary_value_difference_is_strictly_rejected(self):
         start = datetime(2026, 7, 13, 18, tzinfo=timezone.utc)
         times = [module.format_hour(start + timedelta(hours=index)) for index in range(2)]
         shanghai = {
@@ -401,11 +391,10 @@ class ShanghaiSingaporeApiComparisonTests(unittest.TestCase):
                 job, "http://shanghai", "http://singapore", 1.0
             )
 
-        self.assertTrue(result["equal"])
-        self.assertEqual(result["values"], 2)
-        self.assertEqual(result["gfs_single_batch_boundary_values_excluded"], 2)
+        self.assertFalse(result["equal"])
+        self.assertEqual(result["values"], 4)
         self.assertEqual(
-            result["gfs_single_batch_boundary_differences"]["by_variable"],
+            result["field_mismatches"]["counts"]["hourly_values"],
             {"cloud_cover": 1, "weather_code": 1},
         )
 
@@ -435,7 +424,7 @@ class ShanghaiSingaporeApiComparisonTests(unittest.TestCase):
                 job, "http://shanghai", "http://singapore", 1.0
             )
         self.assertFalse(result["equal"])
-        self.assertEqual(result["gfs_single_batch_boundary_values_excluded"], 0)
+        self.assertEqual(result["field_mismatches"]["counts"]["hourly_values"], {"cloud_cover": 2})
 
         shanghai = json.loads(json.dumps(base))
         singapore = json.loads(json.dumps(base))
@@ -446,7 +435,7 @@ class ShanghaiSingaporeApiComparisonTests(unittest.TestCase):
                 job, "http://shanghai", "http://singapore", 1.0
             )
         self.assertFalse(result["equal"])
-        self.assertEqual(result["gfs_single_batch_boundary_values_excluded"], 0)
+        self.assertEqual(result["field_mismatches"]["counts"]["hourly_values"], {"cloud_cover": 1})
 
     def test_gfs_latest_f000_null_is_not_waived(self):
         start = datetime(2026, 7, 14, 6, tzinfo=timezone.utc)
@@ -477,7 +466,7 @@ class ShanghaiSingaporeApiComparisonTests(unittest.TestCase):
             )
 
         self.assertFalse(result["equal"])
-        self.assertEqual(result["gfs_single_batch_boundary_values_excluded"], 0)
+        self.assertEqual(result["field_mismatches"]["counts"]["hourly_values"], {"cloud_cover": 1})
 
     def test_gfs_probe_rejects_non_contiguous_endpoint_axis(self):
         payload = {
@@ -516,7 +505,7 @@ class ShanghaiSingaporeApiComparisonTests(unittest.TestCase):
         self.assertEqual(summary["counts"]["hourly_units"], {"v": 1})
         self.assertEqual(summary["counts"]["hourly_values"], {"v": 2})
 
-    def test_cams_diagnostics_ignore_interpolated_hours_but_keep_direct_hours(self):
+    def test_cams_diagnostics_include_interpolated_hours(self):
         left = {
             "hourly_units": {"time": "iso8601", "dust": "ug/m3"},
             "hourly": {"time": ["h0", "h1", "h2", "h3"], "dust": [1.0, 2.0, 3.0, 4.0]},
@@ -525,7 +514,7 @@ class ShanghaiSingaporeApiComparisonTests(unittest.TestCase):
             "hourly_units": {"time": "iso8601", "dust": "ug/m3"},
             "hourly": {"time": ["h0", "h1", "h2", "h3"], "dust": [1.0, 20.0, 30.0, 5.0]},
         }
-        indices = {"dust": [0, 3]}
+        indices = {"dust": [0, 1, 2, 3]}
 
         summary = module.field_mismatch_summary(
             left,
@@ -534,8 +523,8 @@ class ShanghaiSingaporeApiComparisonTests(unittest.TestCase):
             hour_indices_by_variable=indices,
         )
 
-        self.assertEqual(summary["counts"]["hourly_values"], {"dust": 1})
-        self.assertEqual(summary["examples"][0]["hour"], 3)
+        self.assertEqual(summary["counts"]["hourly_values"], {"dust": 3})
+        self.assertEqual([item["hour"] for item in summary["examples"]], [1, 2])
 
     def test_payload_requires_every_hour_and_variable(self):
         run = module.comparison_start("gfs", "2026071300")
@@ -603,9 +592,6 @@ class ShanghaiSingaporeApiComparisonTests(unittest.TestCase):
                     "equal": True,
                     "values": 1,
                     "excluded_interpolated_values": 0,
-                    "semantic_waiver_values": 0,
-                    "semantic_waiver_mismatches": 0,
-                    "gfs_single_batch_boundary_values_excluded": 0,
                 }
 
             common_patches = (

@@ -75,6 +75,61 @@ class ModelRunIdentityComparisonTests(unittest.TestCase):
             self.assertTrue(report["passed"])
             self.assertEqual(report["matched_latest_runs"]["gfs"], "2026071300")
 
+    def test_official_bucket_latest_marker_layout_is_supported(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for group, run in (("gfs", "2026071806"), ("cams", "2026071712")):
+                path = root / "groups" / group / "latest.json"
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(
+                    json.dumps(
+                        {
+                            "status": "complete",
+                            "group": group,
+                            "latest_complete_run": run,
+                            "products": [f"{group}_product"],
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+
+            identity = build_identity(root)
+
+            self.assertEqual(identity["groups"]["gfs"]["latest_complete_run"], "2026071806")
+            self.assertEqual(identity["groups"]["cams"]["latest_complete_run"], "2026071712")
+            self.assertEqual(identity["groups"]["gfs"]["source_runs"], [])
+
+    def test_matching_latest_run_allows_different_internal_history_vectors(self):
+        left = {
+            "groups": {
+                "gfs": {
+                    "latest_complete_run": "2026071300",
+                    "source_runs": ["2026071212", "2026071300"],
+                },
+                "cams": {
+                    "latest_complete_run": "2026071212",
+                    "source_runs": ["2026071200", "2026071212"],
+                },
+            }
+        }
+        right = {
+            "groups": {
+                "gfs": {
+                    "latest_complete_run": "2026071300",
+                    "source_runs": ["2026071218", "2026071300"],
+                },
+                "cams": {
+                    "latest_complete_run": "2026071212",
+                    "source_runs": ["2026071200", "2026071212"],
+                },
+            }
+        }
+        left["live_snapshot"] = {"marker_matches_live_snapshot": True}
+        right["live_snapshot"] = {"marker_matches_live_snapshot": True}
+        report = compare_identities(left, right)
+        self.assertTrue(report["passed"])
+        self.assertEqual(report["matched_latest_runs"]["gfs"], "2026071300")
+
     def test_different_gfs_run_fails_before_data_comparison(self):
         left = {"groups": {"gfs": {"latest_complete_run": "2026071300"}, "cams": {"latest_complete_run": "2026071212"}}}
         right = {"groups": {"gfs": {"latest_complete_run": "2026071306"}, "cams": {"latest_complete_run": "2026071212"}}}

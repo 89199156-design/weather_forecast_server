@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
-"""Compare three days of Shanghai/Singapore daily API output.
+"""Strictly compare three days of Shanghai/Singapore daily API output.
 
-All daily variables are requested and structurally validated. GFS aggregations
-and CAMS PM aggregations are strict. CAMS daily gas/AQI aggregations are kept in
-an explicit expected-semantic-difference report because Shanghai aggregates
-interpolated ml137 hours while Singapore intentionally aggregates direct hourly
-source values.
+Every requested GFS and CAMS daily variable, unit, date, null and numeric JSON
+type participates in the acceptance gate. Only request execution time is
+excluded by the shared canonical JSON comparator.
 """
 
 from __future__ import annotations
@@ -61,25 +59,7 @@ CAMS_DAILY = (
     "chinese_aqi_so2", "chinese_aqi_sulphur_dioxide",
     "chinese_aqi_co", "chinese_aqi_carbon_monoxide",
 )
-CAMS_DAILY_STRICT = frozenset({"chinese_aqi_pm2_5", "chinese_aqi_pm10"})
-CAMS_DAILY_EXPECTED_SEMANTIC_DIFFERENCE_VARIABLES = frozenset({
-    "chinese_aqi",
-    "chinese_aqi_no2", "chinese_aqi_nitrogen_dioxide",
-    "chinese_aqi_o3", "chinese_aqi_ozone",
-    "chinese_aqi_so2", "chinese_aqi_sulphur_dioxide",
-    "chinese_aqi_co", "chinese_aqi_carbon_monoxide",
-})
-CAMS_DAILY_WAIVER_REASON = (
-    "daily_or_8h_aggregation_depends_on_shanghai_interpolated_ml137_hours_while_"
-    "singapore_uses_direct_hourly_source_values"
-)
-
-if (
-    CAMS_DAILY_STRICT & CAMS_DAILY_EXPECTED_SEMANTIC_DIFFERENCE_VARIABLES
-    or CAMS_DAILY_STRICT | CAMS_DAILY_EXPECTED_SEMANTIC_DIFFERENCE_VARIABLES
-    != frozenset(CAMS_DAILY)
-):
-    raise RuntimeError("every CAMS daily variable must have one explicit comparison semantic")
+CAMS_DAILY_STRICT = frozenset(CAMS_DAILY)
 
 
 def daily_variables_for_scope(scope: str) -> list[str]:
@@ -237,76 +217,6 @@ def validate_daily_payload(
             raise ValueError(f"point {index} invalid daily series: {','.join(bad_lengths[:5])}")
 
 
-def comparable_daily_payload(payload: Any, waived_variables: list[str]) -> Any:
-    """Preserve the complete response but blank only explicitly waived values."""
-    responses = payload if isinstance(payload, list) else [payload]
-    filtered_responses: list[Any] = []
-    for response in responses:
-        if not isinstance(response, dict):
-            filtered_responses.append(response)
-            continue
-        filtered = dict(response)
-        daily = response.get("daily")
-        if isinstance(daily, dict):
-            filtered_daily = dict(daily)
-            for variable in waived_variables:
-                if isinstance(daily.get(variable), list):
-                    filtered_daily[variable] = []
-            filtered["daily"] = filtered_daily
-        filtered_responses.append(filtered)
-    return filtered_responses if isinstance(payload, list) else filtered_responses[0]
-
-
-def expected_daily_semantic_difference_summary(
-    shanghai: Any,
-    singapore: Any,
-    variables: list[str],
-    days: int,
-    max_examples_per_field: int = 2,
-) -> dict[str, Any]:
-    left_responses = shanghai if isinstance(shanghai, list) else [shanghai]
-    right_responses = singapore if isinstance(singapore, list) else [singapore]
-    by_variable: dict[str, dict[str, int]] = {
-        variable: {"values_observed": 0, "equal_values": 0, "mismatched_values": 0}
-        for variable in variables
-    }
-    examples: list[dict[str, Any]] = []
-    example_counts: dict[str, int] = {}
-    for point, (left_response, right_response) in enumerate(zip(left_responses, right_responses)):
-        left_daily = left_response.get("daily", {})
-        right_daily = right_response.get("daily", {})
-        for variable in variables:
-            left_values = left_daily.get(variable, [])
-            right_values = right_daily.get(variable, [])
-            counts = by_variable[variable]
-            for day in range(days):
-                left = left_values[day]
-                right = right_values[day]
-                counts["values_observed"] += 1
-                if strictly_equal(left, right):
-                    counts["equal_values"] += 1
-                    continue
-                counts["mismatched_values"] += 1
-                if example_counts.get(variable, 0) < max_examples_per_field:
-                    examples.append({
-                        "variable": variable,
-                        "point": point,
-                        "day": day,
-                        "shanghai": left,
-                        "singapore": right,
-                    })
-                    example_counts[variable] = example_counts.get(variable, 0) + 1
-    return {
-        "reason": CAMS_DAILY_WAIVER_REASON,
-        "variables": variables,
-        "values_observed": sum(item["values_observed"] for item in by_variable.values()),
-        "equal_values": sum(item["equal_values"] for item in by_variable.values()),
-        "mismatched_values": sum(item["mismatched_values"] for item in by_variable.values()),
-        "by_variable": by_variable,
-        "examples": examples,
-    }
-
-
 def daily_mismatch_summary(
     shanghai: Any,
     singapore: Any,
@@ -370,19 +280,9 @@ def compare_job(job: dict[str, Any], shanghai_url: str, singapore_url: str, time
             singapore, len(job["points"]), job["variables"], job["gfs_run"], job["days"],
             job.get("daily_start"),
         )
-        waived_variables = [
-            variable for variable in job["variables"]
-            if job["scope"] == "cams"
-            and variable in CAMS_DAILY_EXPECTED_SEMANTIC_DIFFERENCE_VARIABLES
-        ]
-        strict_variables = [
-            variable for variable in job["variables"] if variable not in waived_variables
-        ]
-        left = canonical_bytes(comparable_daily_payload(shanghai, waived_variables))
-        right = canonical_bytes(comparable_daily_payload(singapore, waived_variables))
-        semantic_waiver = expected_daily_semantic_difference_summary(
-            shanghai, singapore, waived_variables, job["days"]
-        ) if waived_variables else None
+        strict_variables = list(job["variables"])
+        left = canonical_bytes(shanghai)
+        right = canonical_bytes(singapore)
         result = {
             "job_id": job["job_id"], "scope": job["scope"], "equal": left == right,
             "shanghai_sha256": hashlib.sha256(left).hexdigest(),
@@ -390,11 +290,7 @@ def compare_job(job: dict[str, Any], shanghai_url: str, singapore_url: str, time
             "points": len(job["points"]), "variables": len(job["variables"]),
             "strict_variables": len(strict_variables),
             "values": len(job["points"]) * len(strict_variables) * job["days"],
-            "semantic_waiver_values": semantic_waiver["values_observed"] if semantic_waiver else 0,
-            "semantic_waiver_mismatches": semantic_waiver["mismatched_values"] if semantic_waiver else 0,
         }
-        if semantic_waiver is not None:
-            result["expected_semantic_differences"] = semantic_waiver
         if left != right:
             result["field_mismatches"] = daily_mismatch_summary(
                 shanghai, singapore, strict_variables
@@ -481,29 +377,14 @@ def main() -> int:
 
     results.sort(key=lambda item: item["job_id"])
     mismatches = [item for item in results if not item["equal"]]
-    semantic_waiver_by_variable = {
-        variable: {"values_observed": 0, "equal_values": 0, "mismatched_values": 0}
-        for variable in sorted(CAMS_DAILY_EXPECTED_SEMANTIC_DIFFERENCE_VARIABLES)
-    }
-    semantic_waiver_examples: list[dict[str, Any]] = []
-    for item in results:
-        details = item.get("expected_semantic_differences") or {}
-        for variable, counts in (details.get("by_variable") or {}).items():
-            totals = semantic_waiver_by_variable[variable]
-            for field in ("values_observed", "equal_values", "mismatched_values"):
-                totals[field] += int(counts.get(field, 0))
-        for example in details.get("examples") or []:
-            if len(semantic_waiver_examples) >= 100:
-                break
-            semantic_waiver_examples.append({"job_id": item["job_id"], **example})
     passed = not errors and not mismatches and len(results) == len(jobs)
     report = {
         "passed": passed, "strict_equality": True, "excluded_fields": ["generationtime_ms"],
         "strict_equality_scope": (
-            "all GFS daily aggregations and CAMS PM2.5/PM10 daily aggregations; "
+            "all requested GFS and CAMS daily aggregations; "
             "all response metadata, units and date axes"
         ),
-        "excluded_value_semantics": ["cams_daily_expected_semantic_difference_waivers"],
+        "excluded_value_semantics": [],
         "point_count": args.point_count, "days": args.days, "workers": args.workers,
         "seed": args.seed, "bounds": list(args.bounds),
         "point_sha256": hashlib.sha256(canonical_bytes(points)).hexdigest(),
@@ -517,23 +398,8 @@ def main() -> int:
         "cams_daily_variable_count": len(CAMS_DAILY),
         "cams_daily_variables": list(CAMS_DAILY),
         "cams_daily_strict_variables": sorted(CAMS_DAILY_STRICT),
-        "cams_daily_expected_semantic_difference_variables": sorted(
-            CAMS_DAILY_EXPECTED_SEMANTIC_DIFFERENCE_VARIABLES
-        ),
         "jobs_expected": len(jobs), "jobs_completed": len(results),
         "values_compared": sum(item["values"] for item in results),
-        "semantic_waiver_values_observed": sum(
-            item["semantic_waiver_values"] for item in results
-        ),
-        "semantic_waiver_mismatches_observed": sum(
-            item["semantic_waiver_mismatches"] for item in results
-        ),
-        "expected_semantic_differences": {
-            "reason": CAMS_DAILY_WAIVER_REASON,
-            "variables": sorted(CAMS_DAILY_EXPECTED_SEMANTIC_DIFFERENCE_VARIABLES),
-            "by_variable": semantic_waiver_by_variable,
-            "examples": semantic_waiver_examples,
-        },
         "mismatches": mismatches[:100], "errors": errors[:100], "job_digests": results,
     }
     output = Path(args.output_report)

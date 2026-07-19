@@ -25,10 +25,7 @@ class ShanghaiSingaporeDailyComparisonTests(unittest.TestCase):
         self.assertEqual(len(module.GFS_DAILY), 57)
         self.assertEqual(len(module.CAMS_DAILY), 11)
         self.assertEqual(2000 * 3 * (57 + 11), 408_000)
-        self.assertEqual(module.CAMS_DAILY_STRICT, {"chinese_aqi_pm2_5", "chinese_aqi_pm10"})
-        self.assertEqual(len(module.CAMS_DAILY_EXPECTED_SEMANTIC_DIFFERENCE_VARIABLES), 9)
-        self.assertEqual(2000 * 3 * (57 + 2), 354_000)
-        self.assertEqual(2000 * 3 * 9, 54_000)
+        self.assertEqual(module.CAMS_DAILY_STRICT, set(module.CAMS_DAILY))
         for unsupported in (
             "shortwave_radiation_sum", "cape_max", "cape_min", "cape_mean"
         ):
@@ -147,7 +144,7 @@ class ShanghaiSingaporeDailyComparisonTests(unittest.TestCase):
         self.assertEqual(summary["counts"]["daily_units"], {"v": 1})
         self.assertEqual(summary["counts"]["daily_values"], {"v": 1})
 
-    def test_daily_waiver_is_observed_without_hiding_strict_pm_mismatches(self):
+    def test_all_daily_cams_fields_are_strict(self):
         shanghai = {
             "latitude": 31.2,
             "longitude": 121.5,
@@ -176,13 +173,11 @@ class ShanghaiSingaporeDailyComparisonTests(unittest.TestCase):
         with patch.object(module, "fetch", side_effect=[shanghai, singapore]):
             result = module.compare_job(job, "http://shanghai", "http://singapore", 1.0, 0.0)
 
-        self.assertTrue(result["equal"])
-        self.assertEqual(result["values"], 3)
-        self.assertEqual(result["semantic_waiver_values"], 3)
-        self.assertEqual(result["semantic_waiver_mismatches"], 3)
+        self.assertFalse(result["equal"])
+        self.assertEqual(result["values"], 6)
         self.assertEqual(
-            result["expected_semantic_differences"]["by_variable"]["chinese_aqi_o3"]["mismatched_values"],
-            3,
+            result["field_mismatches"]["counts"]["daily_values"],
+            {"chinese_aqi_o3": 3},
         )
 
         strict_mismatch = json.loads(json.dumps(singapore))
@@ -193,7 +188,7 @@ class ShanghaiSingaporeDailyComparisonTests(unittest.TestCase):
         self.assertFalse(failed["equal"])
         self.assertEqual(
             failed["field_mismatches"]["counts"]["daily_values"],
-            {"chinese_aqi_pm2_5": 1},
+            {"chinese_aqi_o3": 3, "chinese_aqi_pm2_5": 1},
         )
 
 
