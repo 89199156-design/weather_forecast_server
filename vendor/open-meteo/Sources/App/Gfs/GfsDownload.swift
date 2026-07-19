@@ -492,6 +492,41 @@ struct GfsDownload: AsyncCommand {
     }
 }
 
+/// Restore values decoded from a NOMADS server-side spatial subset to the
+/// exact mathematical lattice described by that subset's GRIB packing.
+///
+/// NOMADS repacks a regional response. ecCodes decodes the repacked reference
+/// value and scale factors through floating-point arithmetic, which can turn
+/// an exact source value such as `-0.75` into `-0.749999`. That difference is
+/// meteorologically irrelevant, but it can cross an Open-Meteo OM compression
+/// half-step and produce `-0.7` instead of the official full-message `-0.8`.
+/// Reconstructing the GRIB integer code in Double precision removes only this
+/// repacking noise; it does not change the precision declared by the source.
+func normalizeNomadsRepackedGribValues(
+    _ values: inout [Float],
+    referenceValue: Double,
+    binaryScaleFactor: Int,
+    decimalScaleFactor: Int
+) {
+    let binaryStep = pow(2.0, Double(binaryScaleFactor))
+    let decimalMultiplier = pow(10.0, Double(decimalScaleFactor))
+    guard referenceValue.isFinite,
+          binaryStep.isFinite,
+          binaryStep > 0,
+          decimalMultiplier.isFinite,
+          decimalMultiplier > 0 else {
+        return
+    }
+    for index in values.indices where values[index].isFinite {
+        let scaled = Double(values[index]) * decimalMultiplier
+        let packedCode = ((scaled - referenceValue) / binaryStep).rounded()
+        let restored = (referenceValue + packedCode * binaryStep) / decimalMultiplier
+        if restored.isFinite {
+            values[index] = Float(restored)
+        }
+    }
+}
+
 private enum GfsRegionalDownload {
     struct Slice {
         let fullNx: Int
@@ -513,11 +548,22 @@ private enum GfsRegionalDownload {
         let messageNx = message.get(attribute: "Nx")?.toInt()
         let messageNy = message.get(attribute: "Ny")?.toInt()
         if messageNx == slice.nx, messageNy == slice.ny {
-            return try message.to2D(
+            var regional = try message.to2D(
                 nx: slice.nx,
                 ny: slice.ny,
                 shift180LongitudeAndFlipLatitudeIfRequired: true
             )
+            if let referenceValue = message.get(attribute: "referenceValue").flatMap(Double.init),
+               let binaryScaleFactor = message.get(attribute: "binaryScaleFactor").flatMap(Int.init),
+               let decimalScaleFactor = message.get(attribute: "decimalScaleFactor").flatMap(Int.init) {
+                normalizeNomadsRepackedGribValues(
+                    &regional.array.data,
+                    referenceValue: referenceValue,
+                    binaryScaleFactor: binaryScaleFactor,
+                    decimalScaleFactor: decimalScaleFactor
+                )
+            }
+            return regional
         }
         var full = try message.to2D(nx: slice.fullNx, ny: slice.fullNy, shift180LongitudeAndFlipLatitudeIfRequired: false)
         full.array.shift180LongitudeAndFlipLatitude()

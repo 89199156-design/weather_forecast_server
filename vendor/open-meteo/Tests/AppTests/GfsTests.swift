@@ -20,4 +20,32 @@ import Testing
         #expect(threeHours?.multiply == 10_800)
         #expect(showers?.multiply == 10_800)
     }
+
+    @Test func nomadsRegionalPackingNoiseIsRestoredToTheDeclaredLattice() {
+        var values: [Float] = [-0.749999, -0.740001, .nan]
+
+        normalizeNomadsRepackedGribValues(
+            &values,
+            referenceValue: -1047,
+            binaryScaleFactor: 0,
+            decimalScaleFactor: 2
+        )
+
+        #expect(values[0] == -0.75)
+        #expect(values[1] == -0.74)
+        #expect(values[2].isNaN)
+    }
+
+    @Test func nomadsRegionalPackingRestorationSupportsBinaryScaleFactors() {
+        var values: [Float] = [0.37499997]
+
+        normalizeNomadsRepackedGribValues(
+            &values,
+            referenceValue: 0,
+            binaryScaleFactor: -3,
+            decimalScaleFactor: 0
+        )
+
+        #expect(values == [0.375])
+    }
 }
