@@ -37,6 +37,17 @@ GFS_PUBLIC_SURFACE = (
     "uv_index", "uv_index_clear_sky", "wind_gusts_10m", "cape", "visibility",
     "dew_point_2m", "apparent_temperature", "surface_pressure", "weather_code", "rain", "snowfall",
     "wind_speed_10m", "wind_direction_10m",
+    "wet_bulb_temperature_2m", "surface_temperature",
+    "soil_temperature_0_to_10cm", "soil_temperature_10_to_40cm",
+    "soil_temperature_40_to_100cm", "soil_temperature_100_to_200cm",
+    "soil_moisture_0_to_10cm", "soil_moisture_10_to_40cm",
+    "soil_moisture_40_to_100cm", "soil_moisture_100_to_200cm",
+    "is_day", "freezing_level_height",
+    "temperature_80m", "temperature_100m", "temperature_120m",
+    "wind_speed_80m", "wind_direction_80m",
+    "wind_speed_100m", "wind_direction_100m",
+    "wind_speed_120m", "wind_direction_120m",
+    "sunshine_duration",
 )
 GFS_SINGLE_BATCH_F000_MISSING = frozenset({
     "cloud_cover", "cloud_cover_low", "cloud_cover_mid", "cloud_cover_high",
@@ -251,8 +262,11 @@ def gfs_single_batch_boundary_difference_summary(
 ) -> tuple[set[tuple[int, str, int]], dict[str, Any]]:
     """Allow only Shanghai value / Singapore null at retained GFS f000."""
     latest = parse_run(run)
+    # The latest full run must stay strict: its f000 can fall back to the
+    # immediately previous full run at f006. Only the four older retained
+    # single-batch boundaries lack that same-hour full-run fallback.
     source_references = {
-        latest - timedelta(hours=6 * offset) for offset in range(5)
+        latest - timedelta(hours=6 * offset) for offset in range(1, 5)
     }
     boundary_indices = {
         index
@@ -1125,7 +1139,13 @@ def main() -> int:
         "cams_run": args.cams_run,
         "run_identity_report": str(Path(args.run_identity_report).resolve()),
         "gfs_variable_count": len(variables_for_scope("gfs")),
+        "gfs_variables": variables_for_scope("gfs"),
+        "gfs_surface_variable_count": len(GFS_PUBLIC_SURFACE),
+        "gfs_surface_variables": list(GFS_PUBLIC_SURFACE),
+        "gfs_pressure_families": list(GFS_PRESSURE_FAMILIES),
+        "gfs_pressure_levels_hpa": list(PRESSURE_LEVELS),
         "cams_variable_count": len(variables_for_scope("cams")),
+        "cams_variables": variables_for_scope("cams"),
         "cams_direct_source_cadence_hours": cams_cadence_by_variable,
         "cams_direct_hour_count_by_cadence": cams_hours_by_cadence,
         "cams_expected_semantic_difference_variables": sorted(

@@ -142,7 +142,23 @@ def test_vendored_openmeteo_only_has_required_region_patches():
     assert "WeatherForecastServerSourceConfig" in cams_domain
     assert 'dataset: "cams-global-greenhouse-gas-forecasts"' in cams_greenhouse
     assert "getCamsGlobalGreenhouseGasesMeta" in cams_greenhouse
-    assert "domain.regionalDownloadSlice" in cams_greenhouse
+    assert "area: WeatherForecastServerSourceConfig.regionAreaNorthWestSouthEast" in cams_greenhouse
+
+
+def test_cams_greenhouse_ads_download_is_cropped_server_side_and_decoded_as_regional_grid():
+    cams_download = read_vendor("Sources/App/Cams/CamsDownload.swift")
+    cams_greenhouse = read_vendor("Sources/App/Cams/CamsGreenhouseGases.swift")
+
+    assert "let area: [Double]?" in cams_download
+    assert "area: WeatherForecastServerSourceConfig.regionAreaNorthWestSouthEast" in cams_greenhouse
+    assert "nx: domain.grid.nx" in cams_greenhouse
+    assert "ny: domain.grid.ny" in cams_greenhouse
+    assert "shift180LongitudeAndFlipLatitudeIfRequired: true" in cams_greenhouse
+    assert "domain.regionalDownloadSlice" not in cams_greenhouse
+    assert "sourceNx" not in cams_greenhouse
+    assert "sourceNy" not in cams_greenhouse
+    assert ".shift180LongitudeAndFlipLatitude()" not in cams_greenhouse
+    assert "camsRegionalSlice" not in cams_greenhouse
 
 
 def test_openmeteo_raw_download_is_the_default_runtime_data_mode():

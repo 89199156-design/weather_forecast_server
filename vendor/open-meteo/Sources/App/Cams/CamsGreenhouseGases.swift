@@ -41,7 +41,8 @@ extension DownloadCamsCommand {
             leadtime_hour: stride(from: 0, through: forecastHours - 1, by: domain.dtHours).map(String.init),
             year: nil,
             month: nil,
-            model_level: [137]
+            model_level: [137],
+            area: WeatherForecastServerSourceConfig.regionAreaNorthWestSouthEast
         )
         return try await curl.withCdsApi(
             dataset: "cams-global-greenhouse-gas-forecasts",
@@ -50,9 +51,6 @@ extension DownloadCamsCommand {
             server: "https://ads.atmosphere.copernicus.eu/api"
         ) { messages in
             let writer = OmSpatialMultistepWriter(domain: domain, run: run, storeOnDisk: true, realm: nil, logger: logger)
-            let slice = domain.regionalDownloadSlice
-            let sourceNx = slice?.fullNx ?? domain.grid.nx
-            let sourceNy = slice?.fullNy ?? domain.grid.ny
             try await messages.foreachConcurrent(nConcurrent: concurrent) { message in
                 let attributes = try GribAttributes(message: message)
                 let timestamp = attributes.timestamp
@@ -64,23 +62,15 @@ extension DownloadCamsCommand {
                 }
 
                 logger.info("Converting variable \(variable) \(timestamp.format_YYYYMMddHH) \(message.get(attribute: "name")!)")
-                var grib2d = GribArray2D(nx: sourceNx, ny: sourceNy)
-                try grib2d.load(message: message)
+                var grib2d = try message.to2D(
+                    nx: domain.grid.nx,
+                    ny: domain.grid.ny,
+                    shift180LongitudeAndFlipLatitudeIfRequired: true
+                )
                 if let scaling = variable.getCamsGlobalGreenhouseGasesMeta()?.scalefactor {
                     grib2d.array.data.multiplyAdd(multiply: scaling, add: 0)
                 }
-                grib2d.array.shift180LongitudeAndFlipLatitude()
-                var data = grib2d.array.data
-                if let slice {
-                    data = data.camsRegionalSlice(
-                        x0: slice.x0,
-                        y0: slice.y0,
-                        nx: slice.nx,
-                        ny: slice.ny,
-                        sourceNx: sourceNx
-                    )
-                }
-                try await writer.write(time: timestamp, member: 0, variable: variable, data: data)
+                try await writer.write(time: timestamp, member: 0, variable: variable, data: grib2d.array.data)
             }
             return try await writer.finalise(
                 application: application,
@@ -89,17 +79,5 @@ extension DownloadCamsCommand {
                 uploadS3Bucket: uploadS3Bucket
             )
         }
-    }
-}
-
-private extension Array where Element == Float {
-    func camsRegionalSlice(x0: Int, y0: Int, nx: Int, ny: Int, sourceNx: Int) -> [Float] {
-        var output = [Float]()
-        output.reserveCapacity(nx * ny)
-        for y in y0..<(y0 + ny) {
-            let start = y * sourceNx + x0
-            output.append(contentsOf: self[start..<(start + nx)])
-        }
-        return output
     }
 }

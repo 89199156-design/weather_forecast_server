@@ -36,7 +36,6 @@ GFS_DAILY = (
     "apparent_temperature_max", "apparent_temperature_min", "apparent_temperature_mean",
     "precipitation_sum", "rain_sum", "showers_sum", "snowfall_sum",
     "snowfall_water_equivalent_sum", "weather_code", "weathercode",
-    "shortwave_radiation_sum",
     "wind_speed_10m_max", "wind_speed_10m_min", "wind_speed_10m_mean",
     "windspeed_10m_max", "windspeed_10m_min", "windspeed_10m_mean",
     "wind_gusts_10m_max", "wind_gusts_10m_min", "wind_gusts_10m_mean",
@@ -46,7 +45,6 @@ GFS_DAILY = (
     "visibility_max", "visibility_min", "visibility_mean",
     "pressure_msl_max", "pressure_msl_min", "pressure_msl_mean",
     "surface_pressure_max", "surface_pressure_min", "surface_pressure_mean",
-    "cape_max", "cape_min", "cape_mean",
     "cloud_cover_max", "cloud_cover_min", "cloud_cover_mean",
     "cloudcover_max", "cloudcover_min", "cloudcover_mean",
     "dew_point_2m_max", "dew_point_2m_min", "dew_point_2m_mean",
@@ -515,7 +513,9 @@ def main() -> int:
         "daily_start": daily_start.isoformat(), "daily_end": daily_end.isoformat(),
         "daily_window_source": daily_window_source,
         "gfs_daily_variable_count": len(GFS_DAILY),
+        "gfs_daily_variables": list(GFS_DAILY),
         "cams_daily_variable_count": len(CAMS_DAILY),
+        "cams_daily_variables": list(CAMS_DAILY),
         "cams_daily_strict_variables": sorted(CAMS_DAILY_STRICT),
         "cams_daily_expected_semantic_difference_variables": sorted(
             CAMS_DAILY_EXPECTED_SEMANTIC_DIFFERENCE_VARIABLES

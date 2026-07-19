@@ -144,8 +144,8 @@ still holds deleted files from an older immutable snapshot from being labelled
 as the newer run during acceptance. The mandatory gate
 uses 2,000 reproducible points and the complete published hourly horizon: GFS
 from the Shanghai local-day start through `f384`, and CAMS from `f000` through
-`f120`. It compares all fields shared by the two public APIs: 200 GFS variables
-(24 surface/derived fields plus eight families at all 22 pressure levels) and
+`f120`. It compares all canonical fields shared by the two public APIs: 222 GFS variables
+(46 surface/derived fields plus eight families at all 22 pressure levels) and
 19 CAMS/Chinese-AQI variables. A preflight checks every public variable batch
 against both APIs before the 2,000-point run. The complete axis is requested
 in bounded 200-point, 10-variable and 12-hour blocks so Shanghai never has to
@@ -153,7 +153,7 @@ materialize an oversized response. Every completed block is atomically
 checkpointed and an interrupted acceptance run resumes only the missing
 blocks; the final report still requires the union of all blocks to cover the
 complete shared horizon. A second gate
-compares all 61 supported GFS daily fields and 11 CAMS Chinese-AQI daily fields
+compares all 57 supported GFS daily fields and 11 CAMS Chinese-AQI daily fields
 for three consecutive `Asia/Shanghai` calendar days. Only
 `generationtime_ms` is excluded. Both validators use one worker and an
 inter-batch pause; they are one-time development acceptance jobs, never

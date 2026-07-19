@@ -22,13 +22,17 @@ spec.loader.exec_module(module)
 class ShanghaiSingaporeDailyComparisonTests(unittest.TestCase):
     def test_contract_is_three_days_for_all_supported_daily_variables(self):
         self.assertEqual(module.daily_start_date("2026071312").isoformat(), "2026-07-14")
-        self.assertEqual(len(module.GFS_DAILY), 61)
+        self.assertEqual(len(module.GFS_DAILY), 57)
         self.assertEqual(len(module.CAMS_DAILY), 11)
-        self.assertEqual(2000 * 3 * (61 + 11), 432_000)
+        self.assertEqual(2000 * 3 * (57 + 11), 408_000)
         self.assertEqual(module.CAMS_DAILY_STRICT, {"chinese_aqi_pm2_5", "chinese_aqi_pm10"})
         self.assertEqual(len(module.CAMS_DAILY_EXPECTED_SEMANTIC_DIFFERENCE_VARIABLES), 9)
-        self.assertEqual(2000 * 3 * (61 + 2), 378_000)
+        self.assertEqual(2000 * 3 * (57 + 2), 354_000)
         self.assertEqual(2000 * 3 * 9, 54_000)
+        for unsupported in (
+            "shortwave_radiation_sum", "cape_max", "cape_min", "cape_mean"
+        ):
+            self.assertNotIn(unsupported, module.GFS_DAILY)
 
     def test_request_uses_china_timezone_and_exact_date_window(self):
         path = module.request_path(

@@ -368,6 +368,54 @@ async fn gfs_nan_fallback_does_not_continue_into_partial_runs() {
 }
 
 #[tokio::test]
+async fn gfs_latest_tail_stays_null_when_previous_full_run_does_not_cover_it() {
+    let root = tempfile::tempdir().unwrap();
+    let current = "gfs013_surface_2026070800_full";
+    let previous = "gfs013_surface_2026070718_full";
+    let partial = "gfs013_surface_2026070712_6h";
+    for (coverage, value, forecast_hour, valid_time) in [
+        (current, f32::NAN, 384, "2026-07-24T12:00:00Z"),
+        (previous, 18.0, 384, "2026-07-24T06:00:00Z"),
+        (partial, 30.0, 5, "2026-07-24T12:00:00Z"),
+    ] {
+        write_product_coverage_timed(
+            root.path(),
+            "gfs013_surface",
+            coverage,
+            vec![TimedTestEntry {
+                variable: "temperature_2m",
+                values: [value, value, value, value],
+                valid_time_utc: valid_time,
+            }],
+            false,
+        );
+        set_coverage_forecast_hour(root.path(), "gfs013_surface", coverage, forecast_hour);
+    }
+    write_group_release(
+        root.path(),
+        "gfs",
+        "2026070718",
+        &[("gfs013_surface", previous)],
+    );
+    write_group_release(
+        root.path(),
+        "gfs",
+        "2026070712",
+        &[("gfs013_surface", partial)],
+    );
+    write_group_ready(root.path(), "gfs", &[("gfs013_surface", current)]);
+
+    let (status, body) = request_json(
+        router(AppState::new(root.path().to_path_buf(), None).unwrap()),
+        "/v1/forecast?latitude=-90&longitude=-180&hourly=temperature_2m&start_hour=2026-07-24T12:00&end_hour=2026-07-24T12:00",
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["hourly"]["temperature_2m"], serde_json::json!([null]));
+}
+
+#[tokio::test]
 async fn gfs_newest_covering_short_run_overrides_previous_complete_run() {
     let root = tempfile::tempdir().unwrap();
     let current = "gfs013_surface_2026070800_full";
@@ -535,6 +583,99 @@ async fn cams_nan_fallback_uses_previous_retained_run() {
 
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["hourly"]["pm10"], serde_json::json!([2808.9]));
+}
+
+#[tokio::test]
+async fn cams_nan_fallback_stops_after_previous_retained_run() {
+    let root = tempfile::tempdir().unwrap();
+    let current = "cams_global_2026070800_120h";
+    let previous = "cams_global_2026070712_120h";
+    let third = "cams_global_2026070700_120h";
+    for (coverage, value) in [
+        (current, f32::NAN),
+        (previous, f32::NAN),
+        (third, 30.0),
+    ] {
+        write_product_coverage(
+            root.path(),
+            "cams_global",
+            coverage,
+            vec![TestEntry {
+                variable: "pm10",
+                values: [value, value, value, value],
+            }],
+            false,
+        );
+    }
+    write_group_release(
+        root.path(),
+        "cams",
+        "2026070700",
+        &[("cams_global", third)],
+    );
+    write_group_release(
+        root.path(),
+        "cams",
+        "2026070712",
+        &[("cams_global", previous)],
+    );
+    write_group_ready(root.path(), "cams", &[("cams_global", current)]);
+
+    let (status, body) = request_json(
+        router(AppState::new(root.path().to_path_buf(), None).unwrap()),
+        "/v1/air-quality?latitude=-90&longitude=-180&hourly=pm10&start_hour=2026-07-08T00:00&end_hour=2026-07-08T00:00",
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["hourly"]["pm10"], serde_json::json!([null]));
+}
+
+#[tokio::test]
+async fn cams_latest_tail_does_not_fall_back_to_third_retained_run() {
+    let root = tempfile::tempdir().unwrap();
+    let current = "cams_global_2026070800_120h";
+    let previous = "cams_global_2026070712_120h";
+    let third = "cams_global_2026070700_120h";
+    for (coverage, value, valid_time) in [
+        (current, f32::NAN, "2026-07-08T12:00:00Z"),
+        (previous, 20.0, "2026-07-08T00:00:00Z"),
+        (third, 30.0, "2026-07-08T12:00:00Z"),
+    ] {
+        write_product_coverage_timed(
+            root.path(),
+            "cams_global",
+            coverage,
+            vec![TimedTestEntry {
+                variable: "pm10",
+                values: [value, value, value, value],
+                valid_time_utc: valid_time,
+            }],
+            false,
+        );
+    }
+    write_group_release(
+        root.path(),
+        "cams",
+        "2026070700",
+        &[("cams_global", third)],
+    );
+    write_group_release(
+        root.path(),
+        "cams",
+        "2026070712",
+        &[("cams_global", previous)],
+    );
+    write_group_ready(root.path(), "cams", &[("cams_global", current)]);
+
+    let (status, body) = request_json(
+        router(AppState::new(root.path().to_path_buf(), None).unwrap()),
+        "/v1/air-quality?latitude=-90&longitude=-180&hourly=pm10&start_hour=2026-07-08T12:00&end_hour=2026-07-08T12:00",
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["hourly"]["pm10"], serde_json::json!([null]));
 }
 
 fn floats_to_bytes(values: &[f32]) -> Vec<u8> {

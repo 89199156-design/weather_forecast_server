@@ -18,6 +18,7 @@ struct DownloadCamsCommand: AsyncCommand {
         let year: [String]?
         let month: [String]?
         let model_level: [Int]?
+        let area: [Double]?
     }
 
     struct Signature: CommandSignature {

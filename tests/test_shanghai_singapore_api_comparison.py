@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import re
 import time
 import sys
 import unittest
@@ -18,11 +19,41 @@ spec.loader.exec_module(module)
 
 
 class ShanghaiSingaporeApiComparisonTests(unittest.TestCase):
+    def test_gfs_surface_contract_matches_rust_public_canonical_fields(self):
+        query_source = (ROOT / "om_api" / "src" / "query.rs").read_text(
+            encoding="utf-8"
+        )
+        public_body = query_source.split(
+            "fn is_public_hourly_variable(variable: &str) -> bool {", 1
+        )[1].split(") || is_public_pressure_variable(variable)", 1)[0]
+        rust_public = set(re.findall(r'"([a-z0-9_]+)"', public_body))
+        alias_prefixes = (
+            ("relativehumidity", "relative_humidity"),
+            ("dewpoint", "dew_point"),
+            ("weathercode", "weather_code"),
+            ("cloudcover", "cloud_cover"),
+            ("windspeed", "wind_speed"),
+            ("winddirection", "wind_direction"),
+        )
+        canonical = {
+            next(
+                (replacement + variable[len(alias):]
+                 for alias, replacement in alias_prefixes
+                 if variable.startswith(alias)),
+                variable,
+            )
+            for variable in rust_public
+        }
+        rust_gfs_surface = canonical - set(module.variables_for_scope("cams"))
+
+        self.assertEqual(rust_gfs_surface, set(module.GFS_PUBLIC_SURFACE))
+
     def test_default_contract_has_22_pressure_levels_and_both_products(self):
         gfs = module.variables_for_scope("gfs")
         cams = module.variables_for_scope("cams")
         self.assertEqual(len(module.PRESSURE_LEVELS), 22)
-        self.assertEqual(len(gfs), 200)
+        self.assertEqual(len(module.GFS_PUBLIC_SURFACE), 46)
+        self.assertEqual(len(gfs), 222)
         self.assertEqual(len(cams), 19)
         self.assertEqual(module.full_hours_for_scope("gfs", "2026071312"), 381)
         self.assertEqual(module.full_hours_for_scope("gfs", "2026071300"), 393)
@@ -54,8 +85,15 @@ class ShanghaiSingaporeApiComparisonTests(unittest.TestCase):
             + cams_interpolation_only_values_per_point,
             121 * len(cams),
         )
-        self.assertEqual(2000 * (381 * len(gfs) + cams_strict_values_per_point), 154_758_000)
+        self.assertEqual(2000 * (381 * len(gfs) + cams_strict_values_per_point), 171_522_000)
         self.assertIn("apparent_temperature", gfs)
+        self.assertIn("wet_bulb_temperature_2m", gfs)
+        self.assertIn("soil_temperature_100_to_200cm", gfs)
+        self.assertIn("soil_moisture_100_to_200cm", gfs)
+        self.assertIn("temperature_120m", gfs)
+        self.assertIn("wind_speed_120m", gfs)
+        self.assertIn("wind_direction_120m", gfs)
+        self.assertIn("sunshine_duration", gfs)
         self.assertIn("uv_index_clear_sky", gfs)
         self.assertIn("temperature_975hPa", gfs)
         self.assertIn("vertical_velocity_50hPa", gfs)
@@ -407,6 +445,37 @@ class ShanghaiSingaporeApiComparisonTests(unittest.TestCase):
             result = module.compare_job_unthrottled(
                 job, "http://shanghai", "http://singapore", 1.0
             )
+        self.assertFalse(result["equal"])
+        self.assertEqual(result["gfs_single_batch_boundary_values_excluded"], 0)
+
+    def test_gfs_latest_f000_null_is_not_waived(self):
+        start = datetime(2026, 7, 14, 6, tzinfo=timezone.utc)
+        shanghai = {
+            "latitude": 31.2,
+            "longitude": 121.5,
+            "hourly_units": {"time": "iso8601", "cloud_cover": "%"},
+            "hourly": {
+                "time": [module.format_hour(start)],
+                "cloud_cover": [80],
+            },
+        }
+        singapore = json.loads(json.dumps(shanghai))
+        singapore["hourly"]["cloud_cover"] = [None]
+        job = {
+            "job_id": "gfs-p0000-v000",
+            "scope": "gfs",
+            "run": "2026071406",
+            "start": start,
+            "hours": 1,
+            "points": [{"latitude": 31.2, "longitude": 121.5}],
+            "variables": ["cloud_cover"],
+        }
+
+        with patch.object(module, "fetch", side_effect=[shanghai, singapore]):
+            result = module.compare_job_unthrottled(
+                job, "http://shanghai", "http://singapore", 1.0
+            )
+
         self.assertFalse(result["equal"])
         self.assertEqual(result["gfs_single_batch_boundary_values_excluded"], 0)
 
