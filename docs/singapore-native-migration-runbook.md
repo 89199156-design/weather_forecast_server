@@ -117,6 +117,12 @@ members of the latest three-run window, validates 121 direct hourly frames for
 every main forecast variable and 41 native three-hour frames for the separate
 greenhouse product, and then removes raw/cache data.
 
+The greenhouse ADS request performs server-side cropping to the configured
+storage bounds. The official CAMS Global ECPDS distribution consists of static
+global NetCDF files and exposes no bounding-box request, so those files are
+downloaded one at a time and cropped in the Swift importer before OM output;
+they are never retained after the successful atomic publication.
+
 `uv_index_clear_sky` is a required official GFS `CDUVB` field because the API
 also exposes `uv_index_clear_sky_max`. For a one-time upgrade of retained runs,
 use `WEATHER_OM_GFS_FORCE_REUSED_DOWNLOAD=true`,

@@ -294,7 +294,11 @@ The standard CAMS Global air-quality domain uses ECMWF's authenticated ECPDS
 distribution paths `CAMS_GLOBAL` and `CAMS_GLOBAL_ADDITIONAL`. Open-Meteo's
 separate official `cams_global_greenhouse_gases` product uses the Copernicus ADS
 dataset `cams-global-greenhouse-gas-forecasts`; production requests its
-`carbon_monoxide` field for official API parity. The published CAMS group uses
+`carbon_monoxide` field for official API parity. The ADS request is cropped at
+the source to the configured storage bounds. The static ECPDS files have no
+bounding-box endpoint, so the official global NetCDF input is streamed one
+file at a time and sliced by the Swift importer before it is written to OM.
+The published CAMS group uses
 the same two-UTC-day greenhouse release lag as the Open-Meteo bucket instead of
 mixing a newer ADS cycle into an older CAMS release. Put real ECPDS and ADS
 credentials only in `config/singapore.private.env` or a host `.cdsapirc`; the
