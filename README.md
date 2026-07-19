@@ -392,13 +392,13 @@ There is no separate high-frequency greenhouse poller.
 bash scripts/run_cams_ftp_scheduled_cycle.sh
 ```
 
-The production crontab probes only once per upstream model cycle, after the
-complete forecast horizon is normally available. `/etc/cron.d/weather-openmeteo`
-contains these host-local schedules:
+The production 1Panel scheduler probes only once per upstream model cycle,
+after the complete forecast horizon is normally available. It contains these
+two enabled Shell schedules:
 
 ```cron
-17 0,6,12,18 * * * root ... run_gfs_probe_and_cycle.sh
-37 4,16 * * * root ... run_cams_ftp_scheduled_cycle.sh
+17 0,6,12,18 * * * ... run_gfs_probe_and_cycle.sh
+37 4,16 * * * ... run_cams_ftp_scheduled_cycle.sh
 ```
 
 When code is deployed from an immutable release checkout, install with
@@ -406,13 +406,12 @@ When code is deployed from an immutable release checkout, install with
 jobs export that code root while keeping the private environment and OM data
 under `/opt/1panel/apps/weather_forecast_server`.
 
-The installer uses the host cron daemon as the single scheduler because direct
-1Panel database inserts do not register runnable entry IDs in every 1Panel
-release. It removes legacy/high-frequency weather rows from 1Panel, restarts
-only the control panel to retire any in-memory entries, installs the system cron
-file atomically, and reloads or restarts `cron.service` as supported. Download, OM conversion, WebP
-generation, and the single API reload remain one event-driven process chain;
-no cron job polls local completion state and no weather data service is
+The installer uses 1Panel as the single scheduler. It deletes every prior
+weather/Open-Meteo panel row, creates exactly these two enabled rows, deletes
+`/etc/cron.d/weather-openmeteo` without keeping a backup, and restarts only the
+control panel so it registers the replacement rows. Download, OM conversion,
+WebP generation, and the single API reload remain one event-driven process
+chain; no job polls local completion state and no weather data service is
 restarted by the scheduler installer. The chain raises only the Rust WebP
 renderer process's soft open-file limit to 65,536 so the immutable GFS and CAMS
 OM histories can be decoded together; it does not raise worker count or add
