@@ -48,4 +48,23 @@ import Testing
 
         #expect(values == [0.375])
     }
+
+    @Test func nomadsSimplePackingReferenceDoesNotUseRoundedEccodesString() {
+        var values: [Float] = [98336.19375, 99324.99375]
+        let reference = nomadsSimplePackingReferenceValue(
+            decodedValues: values,
+            decimalScaleFactor: 1
+        )
+
+        #expect(reference == 983361.9375)
+        normalizeNomadsRepackedGribValues(
+            &values,
+            referenceValue: reference!,
+            binaryScaleFactor: 2,
+            decimalScaleFactor: 1
+        )
+
+        #expect(values[1] == Float(99324.99375))
+        #expect(values[1] < 99325)
+    }
 }

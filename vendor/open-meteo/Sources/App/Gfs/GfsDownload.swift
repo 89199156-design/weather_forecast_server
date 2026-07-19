@@ -527,6 +527,28 @@ func normalizeNomadsRepackedGribValues(
     }
 }
 
+/// Recover the exact IEEE-754 reference value stored by a NOMADS
+/// `grid_simple` response without going through ecCodes' string formatter.
+///
+/// `GribMessage.get(attribute:)` exposes attributes as strings. For a GRIB
+/// reference such as `983361.9375`, ecCodes formats that string as `983362`,
+/// which is not precise enough around an OM compression half-step. A simple
+/// packed field assigns code zero to its decoded minimum. Scaling that minimum
+/// back to the packed domain and rounding it to Float therefore reproduces the
+/// exact 32-bit reference stored in section 5 of the GRIB message.
+func nomadsSimplePackingReferenceValue(
+    decodedValues: [Float],
+    decimalScaleFactor: Int
+) -> Double? {
+    let decimalMultiplier = pow(10.0, Double(decimalScaleFactor))
+    guard decimalMultiplier.isFinite, decimalMultiplier > 0,
+          let minimum = decodedValues.lazy.filter(\.isFinite).min() else {
+        return nil
+    }
+    let reference = Float(Double(minimum) * decimalMultiplier)
+    return reference.isFinite ? Double(reference) : nil
+}
+
 private enum GfsRegionalDownload {
     struct Slice {
         let fullNx: Int
@@ -553,9 +575,13 @@ private enum GfsRegionalDownload {
                 ny: slice.ny,
                 shift180LongitudeAndFlipLatitudeIfRequired: true
             )
-            if let referenceValue = message.get(attribute: "referenceValue").flatMap(Double.init),
-               let binaryScaleFactor = message.get(attribute: "binaryScaleFactor").flatMap(Int.init),
-               let decimalScaleFactor = message.get(attribute: "decimalScaleFactor").flatMap(Int.init) {
+            if message.get(attribute: "packingType") == "grid_simple",
+               let binaryScaleFactor = message.getLong(attribute: "binaryScaleFactor"),
+               let decimalScaleFactor = message.getLong(attribute: "decimalScaleFactor"),
+               let referenceValue = nomadsSimplePackingReferenceValue(
+                   decodedValues: regional.array.data,
+                   decimalScaleFactor: decimalScaleFactor
+               ) {
                 normalizeNomadsRepackedGribValues(
                     &regional.array.data,
                     referenceValue: referenceValue,
