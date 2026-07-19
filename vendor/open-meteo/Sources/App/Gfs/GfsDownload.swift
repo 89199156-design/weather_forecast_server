@@ -152,11 +152,16 @@ struct GfsDownload: AsyncCommand {
         var landmask: Array2D?
         let curl = Curl(logger: logger, client: application.dedicatedHttpClient)
         var grib2d = GribArray2D(nx: grid.nx, ny: grid.ny)
-        let elevationMessages = WeatherForecastServerSourceConfig.useNomadsRegionalDownload
-            ? try await curl.downloadNomadsRegionalGfs(url: url, variables: ElevationVariable.allCases)
-            : try await curl.downloadIndexedGrib(url: url, variables: ElevationVariable.allCases)
-        for (variable, message) in elevationMessages {
-            if let regional = try GfsRegionalDownload.decodeRegional(message: message, domain: domain) {
+        let elevationMessages: [(variable: ElevationVariable, message: GribMessage, sourcePacking: GfsOriginalPacking?)]
+        if WeatherForecastServerSourceConfig.useNomadsRegionalDownload {
+            elevationMessages = try await curl.downloadNomadsRegionalGfs(url: url, variables: ElevationVariable.allCases)
+        } else {
+            elevationMessages = try await curl.downloadIndexedGrib(url: url, variables: ElevationVariable.allCases).map {
+                ($0.variable, $0.message, nil)
+            }
+        }
+        for (variable, message, sourcePacking) in elevationMessages {
+            if let regional = try GfsRegionalDownload.decodeRegional(message: message, domain: domain, sourcePacking: sourcePacking) {
                 grib2d = regional
             } else if isGlobal {
                 try grib2d.load(message: message)
@@ -333,11 +338,16 @@ struct GfsDownload: AsyncCommand {
                 /// Keep variables in memory. Precip + Frozen percent to calculate snowfall
                 let inMemory = VariablePerMemberStorage<GfsSurfaceVariable>()
                 
-                let gribMessages = WeatherForecastServerSourceConfig.useNomadsRegionalDownload
-                    ? try await curl.downloadNomadsRegionalGfs(url: url, variables: variables, errorOnMissing: !skipMissing)
-                    : try await curl.downloadIndexedGrib(url: url, variables: variables, errorOnMissing: !skipMissing)
+                let gribMessages: [(variable: GfsVariableAndDomain, message: GribMessage, sourcePacking: GfsOriginalPacking?)]
+                if WeatherForecastServerSourceConfig.useNomadsRegionalDownload {
+                    gribMessages = try await curl.downloadNomadsRegionalGfs(url: url, variables: variables, errorOnMissing: !skipMissing)
+                } else {
+                    gribMessages = try await curl.downloadIndexedGrib(url: url, variables: variables, errorOnMissing: !skipMissing).map {
+                        ($0.variable, $0.message, nil)
+                    }
+                }
 
-                for (variable, message) in gribMessages {
+                for (variable, message, sourcePacking) in gribMessages {
                     if skipMissing {
                         // for whatever reason, the `hrrr.t10z.wrfprsf01.grib2` file uses different grib dimensions
                         guard let nx = message.get(attribute: "Nx")?.toInt() else {
@@ -353,7 +363,7 @@ struct GfsDownload: AsyncCommand {
                         }
                     }
                     var grib2d: GribArray2D
-                    if let regional = try GfsRegionalDownload.decodeRegional(message: message, domain: domain) {
+                    if let regional = try GfsRegionalDownload.decodeRegional(message: message, domain: domain, sourcePacking: sourcePacking) {
                         grib2d = regional
                     } else if domain.isGlobal {
                         grib2d = try message.to2D(nx: nx, ny: ny, shift180LongitudeAndFlipLatitudeIfRequired: false)
@@ -563,7 +573,11 @@ private enum GfsRegionalDownload {
         slice(domain: domain).map { (nx: $0.fullNx, ny: $0.fullNy) }
     }
 
-    static func decodeRegional(message: GribMessage, domain: GfsDomain) throws -> GribArray2D? {
+    static func decodeRegional(
+        message: GribMessage,
+        domain: GfsDomain,
+        sourcePacking: GfsOriginalPacking? = nil
+    ) throws -> GribArray2D? {
         guard let slice = slice(domain: domain) else {
             return nil
         }
@@ -575,7 +589,14 @@ private enum GfsRegionalDownload {
                 ny: slice.ny,
                 shift180LongitudeAndFlipLatitudeIfRequired: true
             )
-            if message.get(attribute: "packingType") == "grid_simple",
+            if let sourcePacking {
+                normalizeNomadsRepackedGribValues(
+                    &regional.array.data,
+                    referenceValue: sourcePacking.referenceValue,
+                    binaryScaleFactor: sourcePacking.binaryScaleFactor,
+                    decimalScaleFactor: sourcePacking.decimalScaleFactor
+                )
+            } else if message.get(attribute: "packingType") == "grid_simple",
                let binaryScaleFactor = message.getLong(attribute: "binaryScaleFactor"),
                let decimalScaleFactor = message.getLong(attribute: "decimalScaleFactor"),
                let referenceValue = nomadsSimplePackingReferenceValue(

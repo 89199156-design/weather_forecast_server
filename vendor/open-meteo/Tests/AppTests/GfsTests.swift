@@ -67,4 +67,40 @@ import Testing
         #expect(values[1] == Float(99324.99375))
         #expect(values[1] < 99325)
     }
+
+    @Test func originalGfsPackingHeaderRestoresTheGlobalPressureLattice() {
+        let reference = Float(21938.2578125)
+        var bytes = Array("GRIB".utf8) + [UInt8](repeating: 0, count: 12)
+        bytes[7] = 2
+        bytes += [0, 0, 0, 5, 1]
+        bytes += [
+            0, 0, 0, 21, 5,
+            0, 0, 0, 1,
+            0, 3,
+            UInt8((reference.bitPattern >> 24) & 0xff),
+            UInt8((reference.bitPattern >> 16) & 0xff),
+            UInt8((reference.bitPattern >> 8) & 0xff),
+            UInt8(reference.bitPattern & 0xff),
+            0, 0,
+            0, 2,
+            11,
+            0,
+        ]
+
+        let packing = parseGfsOriginalPackingHeader(bytes)
+        #expect(packing == GfsOriginalPacking(
+            referenceValue: 21938.2578125,
+            binaryScaleFactor: 0,
+            decimalScaleFactor: 2
+        ))
+
+        var regionalValues: [Float] = [Float(273.40255859375)]
+        normalizeNomadsRepackedGribValues(
+            &regionalValues,
+            referenceValue: packing!.referenceValue,
+            binaryScaleFactor: packing!.binaryScaleFactor,
+            decimalScaleFactor: packing!.decimalScaleFactor
+        )
+        #expect(regionalValues == [Float(273.402578125)])
+    }
 }

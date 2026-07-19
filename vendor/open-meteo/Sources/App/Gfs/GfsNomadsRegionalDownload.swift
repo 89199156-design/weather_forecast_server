@@ -8,12 +8,21 @@ private enum GfsNomadsRegionalDownloadError: Error {
     case unsupportedLevel(String)
     case emptySelection(String)
     case messageCountMismatch(url: String, expected: Int, actual: Int)
+    case invalidIndexOffset(String)
+    case invalidOriginalPackingHeader(String)
 }
 
-private struct GfsNomadsIndexRecord {
+struct GfsOriginalPacking: Sendable, Equatable {
+    let referenceValue: Double
+    let binaryScaleFactor: Int
+    let decimalScaleFactor: Int
+}
+
+private struct GfsNomadsIndexRecord: Sendable {
     let line: String
     let variable: String
     let level: String
+    let offset: Int
 }
 
 private actor GfsNomadsRequestGate {
@@ -33,13 +42,14 @@ private actor GfsNomadsRequestGate {
 private enum GfsNomadsRegionalDownload {
     static func parseIndexRecord(_ line: String) -> GfsNomadsIndexRecord? {
         let parts = line.split(separator: ":", omittingEmptySubsequences: false)
-        guard parts.count >= 6 else {
+        guard parts.count >= 6, let offset = Int(parts[1]) else {
             return nil
         }
         return GfsNomadsIndexRecord(
             line: line,
             variable: String(parts[3]),
-            level: String(parts[4])
+            level: String(parts[4]),
+            offset: offset
         )
     }
 
@@ -116,6 +126,13 @@ private enum GfsNomadsRegionalDownload {
         return "https://noaa-gfs-bdp-pds.s3.amazonaws.com/\(objectPath).idx"
     }
 
+    static func sourceDataUrl(inventoryUrl: String) throws -> String {
+        guard inventoryUrl.hasSuffix(".idx") else {
+            throw GfsNomadsRegionalDownloadError.invalidSourceUrl(inventoryUrl)
+        }
+        return String(inventoryUrl.dropLast(4))
+    }
+
     static func filterUrl(sourceUrl: String, records: [GfsNomadsIndexRecord]) throws -> String {
         guard let source = URL(string: sourceUrl) else {
             throw GfsNomadsRegionalDownloadError.invalidSourceUrl(sourceUrl)
@@ -161,6 +178,51 @@ private enum GfsNomadsRegionalDownload {
     }
 }
 
+/// Read the original GRIB2 data-representation metadata from a small prefix of
+/// a message. Section 5 starts after the fixed 16-byte indicator section and
+/// the variable-length identification/grid/product sections. Its first packing
+/// fields are shared by the complex and simple packing templates used by GFS.
+func parseGfsOriginalPackingHeader(_ bytes: [UInt8]) -> GfsOriginalPacking? {
+    guard bytes.count >= 21,
+          bytes[0] == 0x47, bytes[1] == 0x52,
+          bytes[2] == 0x49, bytes[3] == 0x42,
+          bytes[7] == 2 else {
+        return nil
+    }
+
+    func uint32(at offset: Int) -> UInt32 {
+        UInt32(bytes[offset]) << 24
+            | UInt32(bytes[offset + 1]) << 16
+            | UInt32(bytes[offset + 2]) << 8
+            | UInt32(bytes[offset + 3])
+    }
+    func int16(at offset: Int) -> Int {
+        let raw = UInt16(bytes[offset]) << 8 | UInt16(bytes[offset + 1])
+        return Int(Int16(bitPattern: raw))
+    }
+
+    var offset = 16
+    while offset + 5 <= bytes.count {
+        let sectionLength = Int(uint32(at: offset))
+        guard sectionLength >= 5, offset + sectionLength <= bytes.count else {
+            return nil
+        }
+        if bytes[offset + 4] == 5 {
+            guard sectionLength >= 20 else {
+                return nil
+            }
+            let referenceBits = uint32(at: offset + 11)
+            return GfsOriginalPacking(
+                referenceValue: Double(Float(bitPattern: referenceBits)),
+                binaryScaleFactor: int16(at: offset + 15),
+                decimalScaleFactor: int16(at: offset + 17)
+            )
+        }
+        offset += sectionLength
+    }
+    return nil
+}
+
 extension Curl {
     /// Download a NOAA/NOMADS server-side regional GRIB subset while retaining
     /// the official source inventory as the authority for variable matching.
@@ -168,8 +230,8 @@ extension Curl {
         url sourceUrls: [String],
         variables: [Variable],
         errorOnMissing: Bool = true
-    ) async throws -> [(variable: Variable, message: GribMessage)] {
-        var output = [(variable: Variable, message: GribMessage)]()
+    ) async throws -> [(variable: Variable, message: GribMessage, sourcePacking: GfsOriginalPacking?)] {
+        var output = [(variable: Variable, message: GribMessage, sourcePacking: GfsOriginalPacking?)]()
         var matchedNames = Set<String>()
 
         for sourceUrl in sourceUrls {
@@ -208,6 +270,32 @@ extension Curl {
                 return (index, record)
             }
             let filteredUrl = try GfsNomadsRegionalDownload.filterUrl(sourceUrl: sourceUrl, records: desiredRecords)
+            let sourceDataUrl = try GfsNomadsRegionalDownload.sourceDataUrl(inventoryUrl: inventoryUrl)
+            let desiredPackingRecords = desiredByLine.keys.sorted().compactMap { lineIndex -> (Int, GfsNomadsIndexRecord)? in
+                guard lines.indices.contains(lineIndex),
+                      let record = GfsNomadsRegionalDownload.parseIndexRecord(lines[lineIndex]) else {
+                    return nil
+                }
+                return (lineIndex, record)
+            }
+            guard desiredPackingRecords.count == desiredByLine.count else {
+                throw GfsNomadsRegionalDownloadError.invalidIndexOffset(sourceUrl)
+            }
+            let packingPairs = try await desiredPackingRecords.mapConcurrent(
+                nConcurrent: min(16, max(1, desiredPackingRecords.count))
+            ) { lineIndex, record -> (Int, GfsOriginalPacking) in
+                let header = try await self.downloadInMemoryAsync(
+                    url: sourceDataUrl,
+                    range: "\(record.offset)-\(record.offset + 511)",
+                    minSize: 64,
+                    quiet: true
+                )
+                guard let packing = parseGfsOriginalPackingHeader(Array(header.readableBytesView)) else {
+                    throw GfsNomadsRegionalDownloadError.invalidOriginalPackingHeader(record.line)
+                }
+                return (lineIndex, packing)
+            }
+            let sourcePackingByLine = Dictionary(uniqueKeysWithValues: packingPairs)
             let delay = WeatherForecastServerSourceConfig.double(
                 "WEATHER_NOMADS_REQUEST_DELAY_SECONDS",
                 fallback: 2
@@ -230,10 +318,11 @@ extension Curl {
             for ((lineIndex, _), message) in zip(filteredLines, messages) {
                 guard let variable = desiredByLine[lineIndex],
                       let name = variable.gribIndexName,
-                      matchedNames.insert(name).inserted else {
+                      matchedNames.insert(name).inserted,
+                      let sourcePacking = sourcePackingByLine[lineIndex] else {
                     continue
                 }
-                output.append((variable, message))
+                output.append((variable, message, sourcePacking))
             }
         }
 
