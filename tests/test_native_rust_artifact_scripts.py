@@ -133,7 +133,8 @@ def prepare_fake_tools(tmp_path: Path) -> tuple[Path, Path]:
               old_pid="$(cat "$TEST_PID_FILE")"
               kill "$old_pid" 2>/dev/null || true
             fi
-            nohup "$WEATHER_OM_API_ROOT/bin/om-api" 300 >/dev/null 2>&1 9>&- &
+            nohup "$WEATHER_OM_API_ROOT/bin/om-api" 300 >/dev/null 2>&1 \
+              9>&- 8>&- 7>&- 6>&- 5>&- &
             echo "$!" > "$TEST_PID_FILE"
             ;;
           is-active)
@@ -174,7 +175,11 @@ def deployment_env(tmp_path: Path, origin: Path, fake_bin: Path, pid_file: Path)
             "WEATHER_RUST_TARGET_DIR": str(tmp_path / "target"),
             "WEATHER_RUST_BUILD_ROOT": str(tmp_path / "build"),
             "WEATHER_RUST_BUILD_LOCK_FILE": str(tmp_path / "build.lock"),
-            "WEATHER_OM_PIPELINE_LOCK_FILE": str(tmp_path / "pipeline.lock"),
+            "WEATHER_OPENMETEO_GFS_PROBE_LOCK_FILE": str(tmp_path / "gfs-schedule.lock"),
+            "WEATHER_OPENMETEO_GFS_LOCK_FILE": str(tmp_path / "gfs-cycle.lock"),
+            "WEATHER_OPENMETEO_CAMS_FTP_SCHEDULE_LOCK_FILE": str(tmp_path / "cams-ecpds-schedule.lock"),
+            "WEATHER_OPENMETEO_CAMS_FTP_LOCK_FILE": str(tmp_path / "cams-ecpds-cycle.lock"),
+            "WEATHER_OPENMETEO_CAMS_ADS_SCHEDULE_LOCK_FILE": str(tmp_path / "cams-ads-schedule.lock"),
             "WEATHER_OM_API_ROOT": str(tmp_path / "api-root"),
             "WEATHER_OM_WEBP_ROOT": str(tmp_path / "webp-root"),
             "WEATHER_SUDO_BIN": str(fake_bin / "sudo"),
@@ -322,14 +327,24 @@ def test_deploy_uses_one_immutable_release_and_verifies_running_api(tmp_path: Pa
         stop_fake_service(pid_file)
 
 
-def test_deploy_repairs_a_read_only_pipeline_lock(tmp_path: Path):
+def test_deploy_repairs_read_only_task_locks(tmp_path: Path):
     app, origin = prepare_repository(tmp_path)
     fake_bin, pid_file = prepare_fake_tools(tmp_path)
     env = deployment_env(tmp_path, origin, fake_bin, pid_file)
     install_old_links(env)
-    lock_path = Path(env["WEATHER_OM_PIPELINE_LOCK_FILE"])
-    lock_path.touch()
-    lock_path.chmod(0o400)
+    lock_paths = [
+        Path(env[name])
+        for name in (
+            "WEATHER_OPENMETEO_GFS_PROBE_LOCK_FILE",
+            "WEATHER_OPENMETEO_GFS_LOCK_FILE",
+            "WEATHER_OPENMETEO_CAMS_FTP_SCHEDULE_LOCK_FILE",
+            "WEATHER_OPENMETEO_CAMS_FTP_LOCK_FILE",
+            "WEATHER_OPENMETEO_CAMS_ADS_SCHEDULE_LOCK_FILE",
+        )
+    ]
+    for lock_path in lock_paths:
+        lock_path.touch()
+        lock_path.chmod(0o400)
     try:
         completed = run(
             ["bash", str(app / "scripts/deploy_native_rust_artifacts.sh")],
@@ -339,7 +354,8 @@ def test_deploy_repairs_a_read_only_pipeline_lock(tmp_path: Path):
         )
 
         assert completed.returncode == 0, completed.stderr
-        assert lock_path.stat().st_mode & 0o060 == 0o060
+        for lock_path in lock_paths:
+            assert lock_path.stat().st_mode & 0o060 == 0o060
     finally:
         stop_fake_service(pid_file)
 
@@ -369,14 +385,24 @@ def test_deploy_rolls_back_every_link_when_health_check_fails(tmp_path: Path):
         stop_fake_service(pid_file)
 
 
-def test_deploy_refuses_to_overlap_the_native_pipeline(tmp_path: Path):
+@pytest.mark.parametrize(
+    "lock_env",
+    (
+        "WEATHER_OPENMETEO_GFS_PROBE_LOCK_FILE",
+        "WEATHER_OPENMETEO_GFS_LOCK_FILE",
+        "WEATHER_OPENMETEO_CAMS_FTP_SCHEDULE_LOCK_FILE",
+        "WEATHER_OPENMETEO_CAMS_FTP_LOCK_FILE",
+        "WEATHER_OPENMETEO_CAMS_ADS_SCHEDULE_LOCK_FILE",
+    ),
+)
+def test_deploy_refuses_to_overlap_any_production_task(tmp_path: Path, lock_env: str):
     import fcntl
 
     app, origin = prepare_repository(tmp_path)
     fake_bin, pid_file = prepare_fake_tools(tmp_path)
     env = deployment_env(tmp_path, origin, fake_bin, pid_file)
     old_targets = install_old_links(env)
-    lock_path = Path(env["WEATHER_OM_PIPELINE_LOCK_FILE"])
+    lock_path = Path(env[lock_env])
     with lock_path.open("w", encoding="utf-8") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         completed = run(
@@ -387,7 +413,7 @@ def test_deploy_refuses_to_overlap_the_native_pipeline(tmp_path: Path):
         )
 
     assert completed.returncode != 0
-    assert "native model pipeline is active" in completed.stderr
+    assert "is active; refusing concurrent Rust deployment" in completed.stderr
     for link, old_target in old_targets.items():
         assert os.readlink(link) == old_target
     assert not pid_file.exists()

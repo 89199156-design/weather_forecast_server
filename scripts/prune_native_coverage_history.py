@@ -156,7 +156,7 @@ def prune_coverage_history(
     scope: str,
     expected_coverage_id: str,
 ) -> dict[str, object]:
-    if scope not in {"gfs", "cams"}:
+    if scope not in {"gfs", "cams", "cams_greenhouse"}:
         raise ValueError(f"unsupported scope: {scope}")
     expected_coverage_id = validate_coverage_id(
         expected_coverage_id, "expected_coverage_id"
@@ -209,7 +209,11 @@ def prune_coverage_history(
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--producer-root", required=True)
-    parser.add_argument("--scope", choices=("gfs", "cams"), required=True)
+    parser.add_argument(
+        "--scope",
+        choices=("gfs", "cams", "cams_greenhouse"),
+        required=True,
+    )
     parser.add_argument("--expected-coverage-id", required=True)
     args = parser.parse_args()
     try:

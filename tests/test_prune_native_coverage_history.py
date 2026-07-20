@@ -93,6 +93,24 @@ class PruneNativeCoverageHistoryTests(unittest.TestCase):
             self.assertTrue((root / "coverages" / "cams" / current_id).is_dir())
             self.assertTrue((root / "coverages" / "cams" / old_id).is_dir())
 
+    def test_greenhouse_prunes_only_after_exact_current_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            current_id = "cams_greenhouse_native_2026072000_independent-v1"
+            old_id = "cams_greenhouse_native_2026071900_independent-v1"
+            prepare_root(root, "cams_greenhouse", current_id, old_id)
+
+            result = MODULE.prune_coverage_history(
+                root,
+                "cams_greenhouse",
+                current_id,
+            )
+
+            self.assertEqual(result["removed_coverages"], [old_id])
+            self.assertTrue(
+                (root / "coverages" / "cams_greenhouse" / current_id).is_dir()
+            )
+
     def test_traversal_marker_is_rejected_before_any_delete(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

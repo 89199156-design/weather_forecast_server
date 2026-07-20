@@ -19,6 +19,7 @@ from validate_native_om_coverage import (
     validate_coverage_contract,
 )
 from native_grid_contract import gfs_domain_grids
+from seed_native_om_staging import coverage_data_stats
 
 
 def write_json(path: Path, payload: dict) -> None:
@@ -60,7 +61,9 @@ def make_coverage(root: Path) -> Path:
     dem.parent.mkdir(parents=True, exist_ok=True)
     dem.write_bytes(b"dem")
     for domain in ("ncep_gfs013", "ncep_gfs025"):
-        (coverage / domain).mkdir(parents=True)
+        runtime = coverage / domain / "temperature_2m" / "chunk.om"
+        runtime.parent.mkdir(parents=True)
+        runtime.write_bytes(b"runtime")
         write_json(
             coverage / "data_run" / domain / "latest.json",
             {"reference_time": "2026-07-13T00:00:00Z", "valid_times": ["2026-07-13T00:00Z"]},
@@ -86,6 +89,10 @@ def make_coverage(root: Path) -> Path:
                     "variables": ["temperature_2m"],
                 },
             )
+    files, bytes_total = coverage_data_stats(coverage)
+    manifest["files"] = files
+    manifest["bytes"] = bytes_total
+    write_json(coverage / "coverage.json", manifest)
     marker = dict(manifest)
     marker["coverage_path"] = "coverages/gfs/gfs_native_2026071300"
     write_json(root / "groups" / "gfs" / "current" / "ready_for_processing.json", marker)
@@ -96,6 +103,15 @@ def make_coverage(root: Path) -> Path:
 
 
 class ValidateNativeOmCoverageTests(unittest.TestCase):
+    def test_rejects_missing_aggregate_runtime_file_even_when_runs_are_complete(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "producer"
+            coverage = make_coverage(root)
+            (coverage / "ncep_gfs013" / "temperature_2m" / "chunk.om").unlink()
+
+            with self.assertRaisesRegex(ValueError, "missing runtime variables"):
+                validate_coverage_contract(root)
+
     def test_accepts_consistent_five_run_native_coverage(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "producer"

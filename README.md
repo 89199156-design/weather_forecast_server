@@ -135,11 +135,12 @@ configurable if the host is upgraded.
 
 ### No local completion polling
 
-GFS has a 6-hour source cadence and CAMS has a 12-hour source cadence. A remote
-availability probe may run on a conservative retry schedule, but after it
-selects a complete source run there must be no cron/timer that repeatedly asks
-whether a local download, Swift import, WebP process, or API refresh has
-finished. One locked process executes the batch as a return-code-driven chain:
+GFS has a 6-hour source cadence and CAMS ECPDS has a 12-hour source cadence.
+Their lightweight availability probes may run frequently, but after either
+task selects a complete source run there is no cron/timer that repeatedly asks
+whether its local download, Swift import, WebP process, or API refresh has
+finished. Each task owns only its own duplicate-prevention lock and executes
+its batch as a return-code-driven chain:
 
 ```text
 remote run ready -> download/import/validate OM -> atomic OM publish
@@ -151,10 +152,11 @@ service. The Rust API has no 30-second reload timer and never rebuilds a
 snapshot inside a client request. Its `SIGHUP` handler rebuilds in the
 background only after the successful pipeline sends the single publish event.
 
-CAMS retains three consecutive complete 12-hour runs in each coverage. A
-normal cycle hard-links the previous coverage and downloads only the newest
-full run; first start or a missing run downloads the missing members of the
-three-run window. Before publication, both producers delete `data_run` run
+CAMS ECPDS retains three consecutive complete 12-hour runs in its main
+coverage. A normal cycle hard-links the previous coverage and downloads only
+the newest full run; first start or a missing run downloads the missing members
+of the three-run window. CAMS ADS independently retains three consecutive daily
+00 UTC greenhouse runs. Before publication, the producers delete `data_run` run
 directories outside their retained window and remove `download-*` plus
 `http_cache`. GFS publication additionally proves from every `meta.json` and
 OM file that the three historical runs contain exactly `0...5h` and both complete runs
@@ -166,7 +168,9 @@ stored time dimension. GFS latest-run metadata/files use the official 209-frame
 source axis (`0...120` hourly, then `123...384` every three hours). Every CAMS
 main forecast variable stores all 121 direct hourly frames; no local 3-hour
 interpolation is used. The separate official greenhouse product keeps its
-native 41-frame, three-hour schedule and two-day release lag.
+native 41-frame, three-hour schedule. Its target is the 00 UTC run on the same
+UTC date as the locally published ECPDS main run; no fixed release-lag rule is
+applied.
 
 Each coverage marker also records `domain_grids` for every runtime domain. The
 contract contains the actual cropped `nx`, `ny`, `lat_min`, `lon_min`, `dx`,
@@ -298,15 +302,17 @@ dataset `cams-global-greenhouse-gas-forecasts`; production requests its
 the source to the configured storage bounds. The static ECPDS files have no
 bounding-box endpoint, so the official global NetCDF input is streamed one
 file at a time and sliced by the Swift importer before it is written to OM.
-The published CAMS group uses
-the same two-UTC-day greenhouse release lag as the Open-Meteo bucket instead of
-mixing a newer ADS cycle into an older CAMS release. Put real ECPDS and ADS
-credentials only in `config/singapore.private.env` or a host `.cdsapirc`; the
-tracked example config contains empty credential values.
+The two sources publish to independent immutable namespaces. ECPDS main CAMS
+uses `coverages/cams`, `groups/cams`, and `current/cams`; ADS greenhouse uses
+`coverages/cams_greenhouse`, `groups/cams_greenhouse`, and
+`current/cams_greenhouse`. An ECPDS run on either `YYYYMMDD00` or
+`YYYYMMDD12` makes `YYYYMMDD00` the ADS target. A change from 00Z to 12Z on the
+same date therefore does not submit the same ADS run twice. Put real ECPDS and
+ADS credentials only in `config/singapore.private.env` or a host `.cdsapirc`;
+the tracked example config contains empty credential values.
 
-No legacy layer scheduler is installed. Production scheduling is defined below:
-one GFS trigger per six-hour source cycle and one CAMS trigger per twelve-hour
-source cycle, with no local completion polling.
+No legacy layer scheduler is installed. Production scheduling is defined below
+as three independent high-frequency tasks, with no local completion polling.
 
 Point-output parity also requires Open-Meteo's Copernicus DEM90 static data for
 land elevation correction. For production, keep the runtime data local and
@@ -377,32 +383,48 @@ probing or starting another cycle:
 bash scripts/run_gfs_probe_and_cycle.sh
 ```
 
-CAMS FTP/ECPDS uses one low-priority probe per twelve-hour model cycle and checks only the
+CAMS FTP/ECPDS uses a low-priority high-frequency probe and checks only the
 first/final `0,120h` files for each configured variable. The importer still
 validates the complete run before publication. It normally reuses two
-historical full runs and downloads only the newest full run; first start or a damaged history causes the
-missing runs in the three-run window to be downloaded. After that event,
-the same cycle downloads only missing daily 00 UTC greenhouse runs from ADS.
-That three-run window ends two UTC days before the CAMS run, matching the
-official grouped release while preserving two prior complete fallback runs.
-Both domains are then published atomically.
-There is no separate high-frequency greenhouse poller.
+historical full runs and downloads only the newest full run; first start or a
+damaged history causes the missing runs in the three-run window to be
+downloaded. This task publishes only the main CAMS immutable namespace.
 
 ```bash
 bash scripts/run_cams_ftp_scheduled_cycle.sh
 ```
 
-The production 1Panel scheduler probes only once per upstream model cycle,
-after the complete forecast horizon is normally available. It contains these
-two enabled Shell schedules:
+The separate ADS task never asks ADS which run is latest. It reads the locally
+published ECPDS main marker and maps its UTC date to that date's ADS 00Z run. If
+the independent greenhouse marker is older, one ADS request is submitted and
+the same task process stays alive through remote acceptance, queueing, download,
+validation, and publication. While that low-resource wait is in progress, its
+task-local lock makes later ADS ticks no-ops; it does not block GFS or ECPDS.
+
+```bash
+bash scripts/run_cams_ads_scheduled_cycle.sh
+```
+
+The production 1Panel scheduler runs each source task every twenty minutes, with
+offset minutes to avoid unnecessary simultaneous starts. GFS and ECPDS probes
+are read-only and exit immediately when no new complete run exists; ADS checks
+only the local ECPDS/greenhouse markers before deciding whether to submit. Each
+of the three tasks has its own self-exclusion lock to prevent duplicate work by
+that same task;
+there is no shared or global cross-task lock, so GFS, CAMS ECPDS, and CAMS ADS
+may run concurrently. It contains these three enabled Shell schedules in
+Singapore time (UTC+8):
 
 ```cron
-17 0 * * *  ... run_gfs_probe_and_cycle.sh
-17 6 * * *  ... run_gfs_probe_and_cycle.sh
-17 12 * * * ... run_gfs_probe_and_cycle.sh
-17 18 * * * ... run_gfs_probe_and_cycle.sh
-37 4 * * *  ... run_cams_ftp_scheduled_cycle.sh
-37 16 * * * ... run_cams_ftp_scheduled_cycle.sh
+0  * * * *  ... run_gfs_probe_and_cycle.sh
+20 * * * *  ... run_gfs_probe_and_cycle.sh
+40 * * * *  ... run_gfs_probe_and_cycle.sh
+5  * * * *  ... run_cams_ftp_scheduled_cycle.sh
+25 * * * *  ... run_cams_ftp_scheduled_cycle.sh
+45 * * * *  ... run_cams_ftp_scheduled_cycle.sh
+10 * * * *  ... run_cams_ads_scheduled_cycle.sh
+30 * * * *  ... run_cams_ads_scheduled_cycle.sh
+50 * * * *  ... run_cams_ads_scheduled_cycle.sh
 ```
 
 1Panel v1 stores multiple schedules for one job as comma-separated complete
@@ -415,7 +437,7 @@ jobs export that code root while keeping the private environment and OM data
 under `/opt/1panel/apps/weather_forecast_server`.
 
 The installer uses 1Panel as the single scheduler. It deletes every prior
-weather/Open-Meteo panel row, creates exactly these two enabled rows, deletes
+weather/Open-Meteo panel row, creates exactly these three enabled rows, deletes
 `/etc/cron.d/weather-openmeteo` without keeping a backup, and restarts only the
 control panel so it registers the replacement rows. Download, OM conversion,
 WebP generation, and the single API reload remain one event-driven process

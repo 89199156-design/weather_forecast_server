@@ -81,7 +81,9 @@ def infer_state(line: str, *, default_stage: str) -> tuple[str, str | None, bool
         (label for marker, label in PRODUCT_NAMES.items() if marker in combined),
         None,
     )
-    if "probe" in combined or "ready " in combined or "official run" in combined:
+    if "cleanup" in combined or "清理" in combined:
+        stage_text = "清理异常残留"
+    elif "probe" in combined or "ready " in combined or "official run" in combined:
         stage_text = "检查最新批次"
     elif "seed" in combined or "staging" in combined and "reuse" in combined:
         stage_text = "准备历史批次"

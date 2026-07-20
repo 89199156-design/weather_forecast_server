@@ -9,7 +9,6 @@ import json
 import os
 from pathlib import Path
 import re
-import shutil
 import sys
 from typing import Any
 
@@ -18,11 +17,14 @@ from publish_native_om_coverage import (
     atomic_write_json,
     directory_stats,
     ensure_staging_is_scoped,
-    load_coverage_manifests,
     producer_image_ref,
     promote_or_reuse_coverage,
     read_latest,
+    retain_coverages_before_reload,
+    protected_coverage_directories,
+    select_coverage_id_for_publish,
     validate_run_metadata,
+    validate_runtime_variables,
 )
 from native_grid_contract import cams_domain_grids
 
@@ -64,7 +66,7 @@ def publish_cams_coverage(args: argparse.Namespace) -> dict[str, Any]:
         for item in args.greenhouse_source_runs.split(",")
         if item.strip()
     ]
-    if len(greenhouse_source_runs) != 3:
+    if greenhouse_source_runs and len(greenhouse_source_runs) != 3:
         raise ValueError(
             "CAMS greenhouse coverage must contain three source runs, "
             f"got {len(greenhouse_source_runs)}"
@@ -80,10 +82,10 @@ def publish_cams_coverage(args: argparse.Namespace) -> dict[str, Any]:
         for left, right in zip(parsed_greenhouse_runs, parsed_greenhouse_runs[1:])
     ):
         raise ValueError("CAMS greenhouse source runs must be three consecutive daily cycles")
-    expected_greenhouse_latest = parsed_runs[-1].replace(hour=0) - timedelta(days=2)
-    if parsed_greenhouse_runs[-1] != expected_greenhouse_latest:
+    expected_greenhouse_latest = parsed_runs[-1].replace(hour=0)
+    if parsed_greenhouse_runs and parsed_greenhouse_runs[-1] > expected_greenhouse_latest:
         raise ValueError(
-            "latest CAMS greenhouse run must match the official two-day release lag"
+            "latest CAMS greenhouse run cannot be newer than the latest CAMS run UTC date"
         )
     public_start = parse_time(args.public_start_utc)
     public_end = parse_time(args.public_end_utc)
@@ -131,6 +133,7 @@ def publish_cams_coverage(args: argparse.Namespace) -> dict[str, Any]:
             expected_cams_hours,
             stored_counts,
         )
+    validate_runtime_variables(staging, "cams_global", run_meta["variables"])
     expected_greenhouse_hours = list(range(0, 121, 3))
     greenhouse_required_variables = {
         item.strip()
@@ -141,43 +144,66 @@ def publish_cams_coverage(args: argparse.Namespace) -> dict[str, Any]:
         ).split(",")
         if item.strip()
     }
-    read_latest(staging, "cams_global_greenhouse_gases", greenhouse_source_runs[-1])
-    for greenhouse_run in greenhouse_source_runs:
-        run_meta = validate_run_metadata(
-            staging,
-            "cams_global_greenhouse_gases",
-            greenhouse_run,
-            expected_greenhouse_hours,
-        )
-        available_variables = set(run_meta["variables"])
-        missing_variables = sorted(greenhouse_required_variables - available_variables)
-        if missing_variables:
-            raise ValueError(
-                f"cams_global_greenhouse_gases run {greenhouse_run} is missing required variables: "
-                f"{','.join(missing_variables)}"
+    if greenhouse_source_runs:
+        read_latest(staging, "cams_global_greenhouse_gases", greenhouse_source_runs[-1])
+        for greenhouse_run in greenhouse_source_runs:
+            run_meta = validate_run_metadata(
+                staging,
+                "cams_global_greenhouse_gases",
+                greenhouse_run,
+                expected_greenhouse_hours,
             )
-        validate_run_metadata(
+            available_variables = set(run_meta["variables"])
+            missing_variables = sorted(greenhouse_required_variables - available_variables)
+            if missing_variables:
+                raise ValueError(
+                    f"cams_global_greenhouse_gases run {greenhouse_run} is missing required variables: "
+                    f"{','.join(missing_variables)}"
+                )
+            validate_run_metadata(
+                staging,
+                "cams_global_greenhouse_gases",
+                greenhouse_run,
+                expected_greenhouse_hours,
+                {variable: 41 for variable in run_meta["variables"]},
+            )
+        validate_runtime_variables(
             staging,
             "cams_global_greenhouse_gases",
-            greenhouse_run,
-            expected_greenhouse_hours,
-            {variable: 41 for variable in run_meta["variables"]},
+            run_meta["variables"],
         )
-    domain_grids = cams_domain_grids(
+    available_grids = cams_domain_grids(
         getattr(args, "left_lon", 70.0),
         getattr(args, "right_lon", 140.0),
         getattr(args, "bottom_lat", 0.0),
         getattr(args, "top_lat", 58.0),
     )
+    domain_grids = {"cams_global": available_grids["cams_global"]}
+    if greenhouse_source_runs:
+        domain_grids["cams_global_greenhouse_gases"] = available_grids[
+            "cams_global_greenhouse_gases"
+        ]
 
     revision = (getattr(args, "coverage_revision", None) or "").strip()
     if revision and not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,31}", revision):
         raise ValueError("coverage_revision must match [a-z0-9][a-z0-9_-]{0,31}")
-    coverage_id = f"cams_native_{args.run}"
+    greenhouse_identity = (
+        f"ghg_{greenhouse_source_runs[-1]}"
+        if greenhouse_source_runs
+        else "main_only"
+    )
+    coverage_id = f"cams_native_{args.run}_{greenhouse_identity}"
     if revision:
         coverage_id = f"{coverage_id}_{revision}"
+    coverage_id = select_coverage_id_for_publish(
+        output_root,
+        "cams",
+        coverage_id,
+        args.run,
+    )
     coverage_relative = Path("coverages") / "cams" / coverage_id
     coverage_root = output_root / coverage_relative
+    protected_coverages = protected_coverage_directories(output_root, "cams")
 
     files, bytes_total = directory_stats(staging)
     generated_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -196,7 +222,9 @@ def publish_cams_coverage(args: argparse.Namespace) -> dict[str, Any]:
         "local_day_start_utc": args.local_day_start_utc,
         "public_end_utc": public_end.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "public_hours": public_hours,
-        "domains": ["cams_global", "cams_global_greenhouse_gases"],
+        "domains": ["cams_global"] + (
+            ["cams_global_greenhouse_gases"] if greenhouse_source_runs else []
+        ),
         "domain_grids": domain_grids,
         "files": files,
         "bytes": bytes_total,
@@ -234,11 +262,6 @@ def publish_cams_coverage(args: argparse.Namespace) -> dict[str, Any]:
                 "coverage_id": coverage_id,
                 "runtime_domain": "cams_global",
                 "grid": domain_grids["cams_global"],
-            },
-            "cams_global_greenhouse_gases": {
-                "coverage_id": coverage_id,
-                "runtime_domain": "cams_global_greenhouse_gases",
-                "grid": domain_grids["cams_global_greenhouse_gases"],
             }
         },
         "domain_grids": domain_grids,
@@ -247,6 +270,12 @@ def publish_cams_coverage(args: argparse.Namespace) -> dict[str, Any]:
         "generated_at": generated_at,
         "coverage_reused": reused,
     }
+    if greenhouse_source_runs:
+        ready["products"]["cams_global_greenhouse_gases"] = {
+            "coverage_id": coverage_id,
+            "runtime_domain": "cams_global_greenhouse_gases",
+            "grid": domain_grids["cams_global_greenhouse_gases"],
+        }
     if producer_image:
         ready["producer_image"] = producer_image
     atomic_write_json(
@@ -259,22 +288,11 @@ def publish_cams_coverage(args: argparse.Namespace) -> dict[str, Any]:
         ready,
     )
 
-    manifests = load_coverage_manifests(coverage_root.parent)
-    retention_count = max(args.keep_coverages, 2) if revision else args.keep_coverages
-    retained = {coverage_root.resolve()}
-    for candidate, _ in manifests:
-        resolved = candidate.resolve()
-        if resolved in retained:
-            continue
-        if len(retained) < retention_count:
-            retained.add(resolved)
-    for old_root, _ in manifests:
-        resolved = old_root.resolve()
-        if resolved.parent != coverage_root.parent.resolve():
-            raise ValueError(f"refusing to prune coverage outside root: {resolved}")
-        if resolved in retained:
-            continue
-        shutil.rmtree(resolved)
+    retain_coverages_before_reload(
+        coverage_root,
+        args.keep_coverages,
+        protected_coverages,
+    )
 
     return ready
 
@@ -285,7 +303,7 @@ def main() -> int:
     parser.add_argument("--output-root", required=True)
     parser.add_argument("--run", required=True)
     parser.add_argument("--source-runs", required=True)
-    parser.add_argument("--greenhouse-source-runs", required=True)
+    parser.add_argument("--greenhouse-source-runs", default="")
     parser.add_argument("--latest-max-forecast-hour", type=int, required=True)
     parser.add_argument("--public-start-utc", required=True)
     parser.add_argument("--public-end-utc", required=True)

@@ -32,6 +32,7 @@ struct SnapshotCache {
 struct SnapshotIdentity {
     gfs_ready: Option<GroupIdentity>,
     cams_ready: Option<GroupIdentity>,
+    cams_greenhouse_ready: Option<GroupIdentity>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -75,7 +76,16 @@ impl SnapshotIdentity {
         Ok(Self {
             gfs_ready: marker(data_root, "gfs")?,
             cams_ready: marker(data_root, "cams")?,
+            cams_greenhouse_ready: marker(data_root, "cams_greenhouse")?,
         })
+    }
+
+    fn coverage_id(group: &Option<GroupIdentity>) -> &str {
+        group
+            .as_ref()
+            .map(|identity| identity.coverage_id.as_str())
+            .filter(|value| !value.is_empty())
+            .unwrap_or("none")
     }
 }
 
@@ -99,31 +109,46 @@ impl AppState {
     }
 
     fn refresh_if_changed(&self) -> Result<bool> {
-        let identity_before = SnapshotIdentity::read(&self.data_root)?;
-        {
-            let guard = self
+        // GFS, ECPDS and ADS publish independently. If another group switches
+        // its marker while this refresh is reading files, retry the complete
+        // snapshot instead of installing a mixed-generation view or relying
+        // on a second (coalescible) Unix signal.
+        for _ in 0..3 {
+            let identity_before = SnapshotIdentity::read(&self.data_root)?;
+            {
+                let guard = self
+                    .cache
+                    .read()
+                    .map_err(|_| anyhow::anyhow!("snapshot cache poisoned"))?;
+                if guard.identity == identity_before {
+                    return Ok(false);
+                }
+            }
+            let snapshot = Arc::new(OmDataSnapshot::load(&self.data_root)?);
+            let identity_after = SnapshotIdentity::read(&self.data_root)?;
+            if identity_after != identity_before {
+                continue;
+            }
+            let mut guard = self
                 .cache
-                .read()
+                .write()
                 .map_err(|_| anyhow::anyhow!("snapshot cache poisoned"))?;
-            if guard.identity == identity_before {
+            if guard.identity == identity_after {
                 return Ok(false);
             }
+            guard.identity = identity_after;
+            guard.snapshot = snapshot;
+            return Ok(true);
         }
-        let snapshot = Arc::new(OmDataSnapshot::load(&self.data_root)?);
-        let identity_after = SnapshotIdentity::read(&self.data_root)?;
-        if identity_after != identity_before {
-            return Ok(false);
-        }
-        let mut guard = self
+        anyhow::bail!("native coverage identities did not stabilize during refresh")
+    }
+
+    fn cached_identity(&self) -> Result<SnapshotIdentity> {
+        let guard = self
             .cache
-            .write()
+            .read()
             .map_err(|_| anyhow::anyhow!("snapshot cache poisoned"))?;
-        if guard.identity == identity_after {
-            return Ok(false);
-        }
-        guard.identity = identity_after;
-        guard.snapshot = snapshot;
-        Ok(true)
+        Ok(guard.identity.clone())
     }
 
     #[cfg(unix)]
@@ -134,8 +159,16 @@ impl AppState {
         while published.recv().await.is_some() {
             let state = self.clone();
             match tokio::task::spawn_blocking(move || state.refresh_if_changed()).await {
-                Ok(Ok(true)) => tracing::info!("published new immutable OM API snapshot"),
-                Ok(Ok(false)) => {}
+                Ok(Ok(changed)) => {
+                    let identity = self.cached_identity()?;
+                    tracing::info!(
+                        "published new immutable OM API snapshot | gfs={} | cams={} | cams_greenhouse={} | changed={}",
+                        SnapshotIdentity::coverage_id(&identity.gfs_ready),
+                        SnapshotIdentity::coverage_id(&identity.cams_ready),
+                        SnapshotIdentity::coverage_id(&identity.cams_greenhouse_ready),
+                        changed,
+                    );
+                }
                 Ok(Err(error)) => tracing::error!(
                     error = %error,
                     "OM snapshot refresh failed; retaining previous snapshot"

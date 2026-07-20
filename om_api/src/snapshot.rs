@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 pub const GFS_PRODUCTS: &[&str] = &["gfs013_surface", "gfs025", "gfs_pressure_profile"];
 pub const CAMS_PRODUCTS: &[&str] = &["cams_global", "cams_global_greenhouse_gases"];
+pub const CAMS_GREENHOUSE_PRODUCTS: &[&str] = &["cams_global_greenhouse_gases"];
 
 #[derive(Debug)]
 pub struct OmDataSnapshot {
@@ -53,6 +54,24 @@ impl OmDataSnapshot {
                 "cams",
                 CAMS_PRODUCTS,
                 &products,
+                &mut historical_products,
+            )?;
+        }
+        // ADS publishes to its own immutable namespace. Apply it only after
+        // all native-or-legacy CAMS loading so a legacy combined marker can
+        // never overwrite the independent greenhouse product during migration
+        // or rollback.
+        if data_root
+            .join("groups/cams_greenhouse/current/ready_for_processing.json")
+            .is_file()
+        {
+            products.remove("cams_global_greenhouse_gases");
+            historical_products.remove("cams_global_greenhouse_gases");
+            load_native_group_products(
+                &data_root,
+                "cams_greenhouse",
+                CAMS_GREENHOUSE_PRODUCTS,
+                &mut products,
                 &mut historical_products,
             )?;
         }

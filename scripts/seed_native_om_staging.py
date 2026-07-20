@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timedelta
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -15,9 +14,11 @@ from typing import Any
 from gfs_schedule import gfs_forecast_hours
 from publish_native_om_coverage import (
     GFS_DOMAINS,
+    atomic_symlink,
     gfs_stored_frame_counts,
     run_directory,
     validate_run_metadata,
+    validate_runtime_variables,
 )
 
 
@@ -28,10 +29,15 @@ def load_json(path: Path) -> dict[str, Any]:
     return payload
 
 
-def safe_current_coverage(output_root: Path, group: str) -> tuple[Path, dict[str, Any]] | None:
+def safe_current_coverage(
+    output_root: Path,
+    group: str,
+    *,
+    repair_pointer: bool = True,
+) -> tuple[Path, dict[str, Any]] | None:
     marker_path = output_root / "groups" / group / "current" / "ready_for_processing.json"
     current = output_root / "current" / group
-    if not marker_path.is_file() or not current.is_symlink():
+    if not marker_path.is_file():
         return None
     marker = load_json(marker_path)
     if marker.get("status") != "complete" or marker.get("runtime_format") != "openmeteo-native-v1":
@@ -44,7 +50,28 @@ def safe_current_coverage(output_root: Path, group: str) -> tuple[Path, dict[str
         raise ValueError(f"unsafe coverage_path: {relative_value}")
     coverage = (output_root / Path(*relative.parts)).resolve(strict=True)
     expected_parent = (output_root / "coverages" / group).resolve(strict=True)
-    if coverage.parent != expected_parent or current.resolve(strict=True) != coverage:
+    if coverage.parent != expected_parent:
+        raise ValueError("ready marker coverage resolves outside its group")
+    manifest = load_json(coverage / "coverage.json")
+    for field in (
+        "status",
+        "runtime_format",
+        "group",
+        "coverage_id",
+        "latest_complete_run",
+        "source_runs",
+    ):
+        if marker.get(field) != manifest.get(field):
+            raise ValueError(f"ready marker/coverage mismatch for {field}")
+    if current.exists() and not current.is_symlink():
+        raise ValueError("current coverage pointer is not a symlink")
+    if not current.is_symlink() or current.resolve(strict=False) != coverage:
+        if not repair_pointer:
+            return None
+        # The marker is the transaction authority.  This repairs the only
+        # possible kill window: the symlink moved but the marker write did not.
+        atomic_symlink(Path("..") / relative, current)
+    if current.resolve(strict=True) != coverage:
         raise ValueError("current coverage pointer and ready marker do not match")
     return coverage, marker
 
@@ -77,6 +104,8 @@ def reusable_run(staging: Path, group: str, run: str, index: int, run_count: int
             if group == "gfs":
                 stored_counts = gfs_stored_frame_counts(domain, meta["variables"], len(hours))
             validate_run_metadata(staging, domain, run, hours, stored_counts)
+            if index == run_count - 1:
+                validate_runtime_variables(staging, domain, meta["variables"])
     except (OSError, ValueError):
         return False
     return True
@@ -86,30 +115,6 @@ def remove_staged_run(staging: Path, group: str, run: str) -> None:
     domains = GFS_DOMAINS if group == "gfs" else ("cams_global",)
     for domain in domains:
         shutil.rmtree(run_directory(staging, domain, run), ignore_errors=True)
-
-
-def detach_invalid_cams_greenhouse_runs(staging: Path, desired_source_runs: list[str]) -> None:
-    latest = datetime.strptime(desired_source_runs[-1], "%Y%m%d%H")
-    greenhouse_latest = latest.replace(hour=0) - timedelta(days=2)
-    greenhouse_runs = [
-        (greenhouse_latest - timedelta(days=offset)).strftime("%Y%m%d00")
-        for offset in range(2, -1, -1)
-    ]
-    hours = list(range(0, 121, 3))
-    for run in greenhouse_runs:
-        try:
-            validate_run_metadata(
-                staging,
-                "cams_global_greenhouse_gases",
-                run,
-                hours,
-                len(hours),
-            )
-        except (OSError, ValueError):
-            shutil.rmtree(
-                run_directory(staging, "cams_global_greenhouse_gases", run),
-                ignore_errors=True,
-            )
 
 
 def seed_staging(
@@ -131,17 +136,10 @@ def seed_staging(
     reused: list[str] = []
     seeded_from: str | None = None
     seeded_latest_complete_run: str | None = None
-    marker_size_mismatch = False
     if current is not None:
         coverage, marker = current
         current_latest = str(marker.get("latest_complete_run") or "")
         desired_latest = desired_source_runs[-1]
-        actual_files, actual_bytes = coverage_data_stats(coverage)
-        marker_is_intact = (
-            marker.get("files") == actual_files
-            and marker.get("bytes") == actual_bytes
-        )
-        marker_size_mismatch = not marker_is_intact
         if current_latest and current_latest <= desired_latest:
             shutil.copytree(coverage, staging, copy_function=os.link, symlinks=True)
             (staging / "coverage.json").unlink(missing_ok=True)
@@ -166,20 +164,12 @@ def seed_staging(
                         # also detaches a complete run that now occupies one of
                         # the three short-history slots.
                         remove_staged_run(staging, group, run)
-                if group == "cams":
-                    detach_invalid_cams_greenhouse_runs(staging, desired_source_runs)
-
     if seeded_from is None:
         staging.mkdir(parents=True)
     return {
         "seeded_from": seeded_from,
         "seeded_latest_complete_run": seeded_latest_complete_run,
         "reused_source_runs": reused,
-        "seed_rejected_reason": (
-            "coverage_size_mismatch"
-            if current is not None and marker_size_mismatch
-            else None
-        ),
     }
 
 

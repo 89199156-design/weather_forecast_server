@@ -110,35 +110,46 @@ import NIOCore
 enum CdsApiError: Error {
     case jobAborted
     case startError(code: Int, message: String)
+    case submissionRejected(code: Int, message: String)
     case error(message: String, reason: String)
     case waiting(status: CdsState)
+    case uncertainSubmission(stateFile: String)
+    case invalidResponse(message: String)
     case restrictedAccessToValidData
     case invalidCombinationOfValues
 }
 
-enum CdsState: String, Decodable {
+enum CdsState: String, Codable {
     case accepted
     case failed
     case successful
     case running
 }
 
-fileprivate struct CdsApiResponse: Decodable {
+fileprivate struct CdsApiResponse: Codable {
     /// E.g. `reanalysis-era5-single-levels`
     let processID: String
     let status: CdsState
     let jobID: String
 }
 
-fileprivate struct CdsApiErrorResponse: Decodable {
-    /// E.g. `invalid request`
-    let type: String
+fileprivate enum CdsApiResumePhase: String, Codable {
+    case submitting
+    case submitted
+}
 
-    /// E.g. `invalid request`
-    let title: String
-
-    /// E.g. `Request has not produced a valid combination of values, please check your selection.\n{'variable': ['formaldehyde'], 'type': ['validated_reanalysis'], 'level': ['0'], 'month': ['01'], 'year': ['2018'], 'model': ['ensemble']}`
-    let detail: String
+/// Persisted only when WEATHER_CDS_JOB_STATE_FILE is explicitly configured.
+/// It contains no API key. Keeping the original POST body makes it impossible
+/// to resume a job for a different dataset, date, variable list, or crop.
+fileprivate struct CdsApiResumeState: Codable {
+    let version: Int
+    let dataset: String
+    let server: String
+    let requestBody: Data
+    /// Optional for backward compatibility with version 1 state files.  A
+    /// version 2 `submitting` intent deliberately has no job ID yet.
+    let phase: CdsApiResumePhase?
+    let job: CdsApiResponse?
 }
 
 fileprivate struct CdsApiResults: Decodable {
@@ -177,10 +188,12 @@ extension Curl {
      Get GRIB data from the CDS API
      */
     func withCdsApi<Query: Encodable, T>(dataset: String, query: Query, apikey: String, server: String = "https://cds.climate.copernicus.eu/api", body: (AnyAsyncSequence<GribMessage>) async throws -> (T)) async throws -> T {
-        let job = try await startCdsApiJob(dataset: dataset, query: query, apikey: apikey, server: server)
-        let results = try await waitForCdsJob(job: job, apikey: apikey, server: server)
+        let requestBody = try encodeCdsApiRequest(query: query)
+        let job = try await loadOrStartCdsApiJob(dataset: dataset, requestBody: requestBody, apikey: apikey, server: server)
+        let results = try await waitForCdsJobPreservingResumeState(job: job, apikey: apikey, server: server)
         let result = try await withGribStream(url: results.asset.value.href, bzip2Decode: false, body: body)
         try await cleanupCdsApiJob(job: job, apikey: apikey, server: server)
+        try removeCdsApiResumeState()
         return result
     }
 
@@ -188,29 +201,169 @@ extension Curl {
      Get GRIB data from the CDS API and store to file
      */
     func downloadCdsApi<Query: Encodable>(dataset: String, query: Query, apikey: String, server: String = "https://cds.climate.copernicus.eu/api", destinationFile: String) async throws {
-        let job = try await startCdsApiJob(dataset: dataset, query: query, apikey: apikey, server: server)
-        let results = try await waitForCdsJob(job: job, apikey: apikey, server: server)
+        let requestBody = try encodeCdsApiRequest(query: query)
+        let job = try await loadOrStartCdsApiJob(dataset: dataset, requestBody: requestBody, apikey: apikey, server: server)
+        let results = try await waitForCdsJobPreservingResumeState(job: job, apikey: apikey, server: server)
         try await download(url: results.asset.value.href, toFile: destinationFile, bzip2Decode: false, minSize: results.asset.value.size)
         try await cleanupCdsApiJob(job: job, apikey: apikey, server: server)
+        try removeCdsApiResumeState()
+    }
+
+    fileprivate var cdsApiStateFile: String? {
+        guard let value = ProcessInfo.processInfo.environment["WEATHER_CDS_JOB_STATE_FILE"]?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else {
+            return nil
+        }
+        return value
+    }
+
+    fileprivate var cdsApiPollIntervalSeconds: Int {
+        guard let value = ProcessInfo.processInfo.environment["WEATHER_CDS_POLL_INTERVAL_SECONDS"], let parsed = Int(value), (1...3600).contains(parsed) else {
+            return 1
+        }
+        return parsed
+    }
+
+    fileprivate var cdsApiJobDeadline: Date {
+        guard let value = ProcessInfo.processInfo.environment["WEATHER_CDS_JOB_TIMEOUT_HOURS"], let parsed = Double(value), parsed >= 1, parsed <= 24 * 30 else {
+            return deadline
+        }
+        return Date().addingTimeInterval(parsed * 3600)
+    }
+
+    fileprivate func encodeCdsApiRequest<Query: Encodable>(query: Query) throws -> Data {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        return try encoder.encode(["inputs": query])
+    }
+
+    fileprivate func loadOrStartCdsApiJob(dataset: String, requestBody: Data, apikey: String, server: String) async throws -> CdsApiResponse {
+        if let path = cdsApiStateFile, FileManager.default.fileExists(atPath: path) {
+            let attributes = try FileManager.default.attributesOfItem(atPath: path)
+            guard attributes[.type] as? FileAttributeType == .typeRegular else {
+                throw CdsApiError.error(message: "Refusing non-regular CDS resume state", reason: path)
+            }
+            let state = try JSONDecoder().decode(CdsApiResumeState.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
+            guard (state.version == 1 || state.version == 2), state.dataset == dataset, state.server == server, state.requestBody == requestBody else {
+                throw CdsApiError.error(message: "CDS resume state does not match this request", reason: path)
+            }
+            if let job = state.job {
+                logger.info("Resuming existing CDS job \(job.jobID) from \(path)")
+                return job
+            }
+            // A process may have died after the server accepted POST but
+            // before its response/job ID was persisted.  CDS exposes neither
+            // an idempotency key nor a safe request lookup, so fail closed:
+            // never automatically POST the same request again.
+            throw CdsApiError.uncertainSubmission(stateFile: path)
+        }
+        try saveCdsApiResumeState(
+            dataset: dataset,
+            server: server,
+            requestBody: requestBody,
+            phase: .submitting,
+            job: nil
+        )
+        do {
+            // POST is intentionally one-shot.  Any network ambiguity leaves
+            // the durable submitting intent in place instead of risking a
+            // duplicate remote queue entry.
+            let job = try await startCdsApiJob(dataset: dataset, requestBody: requestBody, apikey: apikey, server: server)
+            try saveCdsApiResumeState(
+                dataset: dataset,
+                server: server,
+                requestBody: requestBody,
+                phase: .submitted,
+                job: job
+            )
+            return job
+        } catch let error as CdsApiError {
+            switch error {
+            case .invalidCombinationOfValues, .submissionRejected:
+                // ADS explicitly rejected the POST, so no remote job exists.
+                try removeCdsApiResumeState()
+            case .jobAborted, .startError, .error, .waiting, .uncertainSubmission, .invalidResponse, .restrictedAccessToValidData:
+                break
+            }
+            throw error
+        }
+    }
+
+    fileprivate func saveCdsApiResumeState(dataset: String, server: String, requestBody: Data, phase: CdsApiResumePhase, job: CdsApiResponse?) throws {
+        guard let path = cdsApiStateFile else {
+            return
+        }
+        let url = URL(fileURLWithPath: path)
+        let parent = url.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+        if FileManager.default.fileExists(atPath: path) {
+            let attributes = try FileManager.default.attributesOfItem(atPath: path)
+            guard attributes[.type] as? FileAttributeType == .typeRegular else {
+                throw CdsApiError.error(message: "Refusing non-regular CDS resume state", reason: path)
+            }
+        }
+        let state = CdsApiResumeState(version: 2, dataset: dataset, server: server, requestBody: requestBody, phase: phase, job: job)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        try encoder.encode(state).write(to: url, options: .atomic)
+        if let job {
+            logger.info("Persisted CDS job \(job.jobID) to \(path)")
+        } else {
+            logger.info("Persisted CDS submitting intent to \(path)")
+        }
+    }
+
+    fileprivate func removeCdsApiResumeState() throws {
+        guard let path = cdsApiStateFile, FileManager.default.fileExists(atPath: path) else {
+            return
+        }
+        let attributes = try FileManager.default.attributesOfItem(atPath: path)
+        guard attributes[.type] as? FileAttributeType == .typeRegular else {
+            throw CdsApiError.error(message: "Refusing non-regular CDS resume state", reason: path)
+        }
+        try FileManager.default.removeItem(atPath: path)
+    }
+
+    /// A timeout, cancellation, network outage, or transient 404 preserves the
+    /// persisted job ID so the next process resumes the same ADS queue entry.
+    /// Only an explicit terminal job failure clears it and permits a later POST.
+    fileprivate func waitForCdsJobPreservingResumeState(job: CdsApiResponse, apikey: String, server: String) async throws -> CdsApiResults {
+        do {
+            return try await waitForCdsJob(job: job, apikey: apikey, server: server)
+        } catch let error as CdsApiError {
+            switch error {
+            case .jobAborted, .error, .restrictedAccessToValidData:
+                try? await cleanupCdsApiJob(job: job, apikey: apikey, server: server)
+                try removeCdsApiResumeState()
+            case .startError, .submissionRejected, .waiting, .uncertainSubmission, .invalidResponse, .invalidCombinationOfValues:
+                break
+            }
+            throw error
+        }
     }
 
     /// Start a new job using POST
-    fileprivate func startCdsApiJob<Query: Encodable>(dataset: String, query: Query, apikey: String, server: String) async throws -> CdsApiResponse {
+    fileprivate func startCdsApiJob(dataset: String, requestBody: Data, apikey: String, server: String) async throws -> CdsApiResponse {
         // var request = HTTPClientRequest(url: "\(server)/resources/\(dataset)")
         var request = HTTPClientRequest(url: "\(server)/retrieve/v1/processes/\(dataset)/execute")
 
         request.method = .POST
         request.headers.add(name: "PRIVATE-TOKEN", value: apikey)
         request.headers.add(name: "content-type", value: "application/json")
-        request.body = .bytes(ByteBuffer(data: try JSONEncoder().encode(["inputs": query])))
+        request.body = .bytes(ByteBuffer(data: requestBody))
 
-        let response = try await client.executeRetry(request, logger: logger, deadline: .hours(6))
-        if response.status.code == 400, let errorJson = try await response.readJSONDecodable(CdsApiErrorResponse.self), errorJson.detail.contains("Request has not produced a valid combination of values") {
-            throw CdsApiError.invalidCombinationOfValues
+        let response = try await client.execute(request, timeout: .seconds(60), logger: logger)
+        guard (200..<300).contains(response.status.code) else {
+            let message = try await response.readStringImmutable() ?? ""
+            if response.status.code == 400, message.contains("Request has not produced a valid combination of values") {
+                throw CdsApiError.invalidCombinationOfValues
+            }
+            if (400..<500).contains(response.status.code) {
+                throw CdsApiError.submissionRejected(code: response.status.code, message: message)
+            }
+            throw CdsApiError.startError(code: response.status.code, message: message)
         }
-        guard let job = try await response.checkCode200AndReadJSONDecodable(CdsApiResponse.self) else {
-            let error = try await response.readStringImmutable() ?? ""
-            fatalError("Could not decode \(error)")
+        guard let job = try await response.readJSONDecodable(CdsApiResponse.self) else {
+            throw CdsApiError.invalidResponse(message: "Could not decode CDS job response")
         }
         logger.info("Submitted job \(job)")
         return job
@@ -218,30 +371,40 @@ extension Curl {
 
     /// Wait for josb to finish and return download URL
     fileprivate func waitForCdsJob(job: CdsApiResponse, apikey: String, server: String) async throws -> CdsApiResults {
-        let timeout = TimeoutTracker(logger: self.logger, deadline: .hours(24))
+        let timeout = TimeoutTracker(logger: self.logger, deadline: cdsApiJobDeadline)
         var job = job
-        let backoff = ExponentialBackOff(maximum: .seconds(1))
+        let backoff = ExponentialBackOff(maximum: .seconds(30))
         while true {
             switch job.status {
             case .accepted, .running:
-                try await timeout.check(error: CdsApiError.waiting(status: job.status), delay: 1)
+                try await timeout.check(error: CdsApiError.waiting(status: job.status), delay: cdsApiPollIntervalSeconds)
 
                 var request = HTTPClientRequest(url: "\(server)/retrieve/v1/jobs/\(job.jobID)")
                 request.headers.add(name: "PRIVATE-TOKEN", value: apikey)
                 /// CDS may return error 404 from time to time......
-                let response = try await client.executeRetry(request, logger: logger, backOffSettings: backoff)
-                guard let jobNext = try await response.checkCode200AndReadJSONDecodable(CdsApiResponse.self) else {
-                    let error = try await response.readStringImmutable() ?? ""
-                    fatalError("Could not decode \(error)")
+                let response = try await client.executeRetry(
+                    request,
+                    logger: logger,
+                    deadline: cdsApiJobDeadline,
+                    backOffSettings: backoff,
+                    error404WaitTime: .seconds(Int64(cdsApiPollIntervalSeconds))
+                )
+                guard (200..<300).contains(response.status.code), let jobNext = try await response.readJSONDecodable(CdsApiResponse.self) else {
+                    throw CdsApiError.invalidResponse(message: "Could not decode CDS job status")
                 }
                 job = jobNext
             case .failed:
                 var request = HTTPClientRequest(url: "\(server)/retrieve/v1/jobs/\(job.jobID)/results")
                 request.headers.add(name: "PRIVATE-TOKEN", value: apikey)
-                let response = try await client.executeRetry(request, logger: logger, backOffSettings: backoff)
-                guard let results = try await response.readJSONDecodable(CdsApiResultsError.self) else {
-                    let error = try await response.readStringImmutable() ?? ""
-                    fatalError("Could not decode \(error)")
+                let response = try await client.executeRetry(
+                    request,
+                    logger: logger,
+                    deadline: cdsApiJobDeadline,
+                    backOffSettings: backoff,
+                    error404WaitTime: .seconds(Int64(cdsApiPollIntervalSeconds))
+                )
+                guard (200..<300).contains(response.status.code), let results = try await response.readJSONDecodable(CdsApiResultsError.self) else {
+                    throw CdsApiError.invalidResponse(message: "Could not decode failed CDS job results")
                 }
                 if results.traceback.contains("The job failed with: ValueError") {
                     throw CdsApiError.restrictedAccessToValidData
@@ -250,10 +413,15 @@ extension Curl {
             case .successful:
                 var request = HTTPClientRequest(url: "\(server)/retrieve/v1/jobs/\(job.jobID)/results")
                 request.headers.add(name: "PRIVATE-TOKEN", value: apikey)
-                let response = try await client.executeRetry(request, logger: logger, backOffSettings: backoff)
-                guard let results = try await response.checkCode200AndReadJSONDecodable(CdsApiResults.self) else {
-                    let error = try await response.readStringImmutable() ?? ""
-                    fatalError("Could not decode \(error)")
+                let response = try await client.executeRetry(
+                    request,
+                    logger: logger,
+                    deadline: cdsApiJobDeadline,
+                    backOffSettings: backoff,
+                    error404WaitTime: .seconds(Int64(cdsApiPollIntervalSeconds))
+                )
+                guard (200..<300).contains(response.status.code), let results = try await response.readJSONDecodable(CdsApiResults.self) else {
+                    throw CdsApiError.invalidResponse(message: "Could not decode successful CDS job results")
                 }
                 return results
             }

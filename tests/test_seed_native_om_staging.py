@@ -1,3 +1,4 @@
+from datetime import datetime
 import json
 import os
 from pathlib import Path
@@ -15,8 +16,10 @@ if str(SCRIPTS) not in sys.path:
 from seed_native_om_staging import (
     coverage_data_stats,
     expected_run_hours,
+    safe_current_coverage,
     seed_staging,
 )
+from prepare_cams_ads_staging import prepare_ads_staging
 
 
 def write_fake_om(path: Path, dimensions: tuple[int, int, int]) -> None:
@@ -49,6 +52,9 @@ def write_gfs_run(coverage: Path, run: str, index: int, run_count: int) -> None:
     hours = expected_run_hours("gfs", index, run_count)
     relative = reference.strftime("%Y/%m/%d/%H00Z")
     for domain in ("ncep_gfs013", "ncep_gfs025"):
+        runtime = coverage / domain / "temperature_2m" / "chunk.om"
+        runtime.parent.mkdir(parents=True, exist_ok=True)
+        runtime.write_bytes(b"runtime")
         run_dir = coverage / "data_run" / domain / relative
         run_dir.mkdir(parents=True)
         write_fake_om(run_dir / "temperature_2m.om", (2, 3, len(hours)))
@@ -79,6 +85,9 @@ def write_cams_run(
     reference = datetime.strptime(run, "%Y%m%d%H").replace(tzinfo=timezone.utc)
     run_dir = coverage / "data_run" / domain / reference.strftime("%Y/%m/%d/%H00Z")
     run_dir.mkdir(parents=True)
+    runtime = coverage / domain / variable / "chunk.om"
+    runtime.parent.mkdir(parents=True, exist_ok=True)
+    runtime.write_bytes(b"runtime")
     write_fake_om(run_dir / f"{variable}.om", (2, 3, len(hours)))
     (run_dir / "meta.json").write_text(
         json.dumps(
@@ -96,6 +105,42 @@ def write_cams_run(
 
 
 class SeedNativeOmStagingTests(unittest.TestCase):
+    def test_marker_authority_repairs_pointer_after_publish_kill_window(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "producer"
+            old = root / "coverages" / "gfs" / "old"
+            new = root / "coverages" / "gfs" / "new"
+            old.mkdir(parents=True)
+            new.mkdir(parents=True)
+            marker = {
+                "status": "complete",
+                "runtime_format": "openmeteo-native-v1",
+                "group": "gfs",
+                "coverage_id": "old",
+                "latest_complete_run": "2026071300",
+                "source_runs": [
+                    "2026071200",
+                    "2026071206",
+                    "2026071212",
+                    "2026071218",
+                    "2026071300",
+                ],
+                "coverage_path": "coverages/gfs/old",
+            }
+            (old / "coverage.json").write_text(json.dumps(marker), encoding="utf-8")
+            marker_path = root / "groups/gfs/current/ready_for_processing.json"
+            marker_path.parent.mkdir(parents=True)
+            marker_path.write_text(json.dumps(marker), encoding="utf-8")
+            (root / "current").mkdir()
+            pointer = root / "current" / "gfs"
+            pointer.symlink_to(Path("..") / "coverages" / "gfs" / "new")
+
+            selected = safe_current_coverage(root, "gfs")
+
+            self.assertIsNotNone(selected)
+            self.assertEqual(selected[0], old.resolve())
+            self.assertEqual(pointer.resolve(), old.resolve())
+
     def test_hardlinks_safe_older_coverage_and_reports_reused_runs(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "producer"
@@ -113,12 +158,15 @@ class SeedNativeOmStagingTests(unittest.TestCase):
             marker = {
                 "status": "complete",
                 "runtime_format": "openmeteo-native-v1",
+                "group": "gfs",
+                "coverage_id": coverage.name,
                 "latest_complete_run": "2026071300",
                 "source_runs": existing_runs,
                 "coverage_path": "coverages/gfs/gfs_native_2026071300",
                 "files": files,
                 "bytes": bytes_total,
             }
+            (coverage / "coverage.json").write_text(json.dumps(marker), encoding="utf-8")
             marker_path = root / "groups" / "gfs" / "current" / "ready_for_processing.json"
             marker_path.parent.mkdir(parents=True)
             marker_path.write_text(json.dumps(marker), encoding="utf-8")
@@ -160,12 +208,15 @@ class SeedNativeOmStagingTests(unittest.TestCase):
             marker = {
                 "status": "complete",
                 "runtime_format": "openmeteo-native-v1",
+                "group": "cams",
+                "coverage_id": coverage.name,
                 "latest_complete_run": "2026071312",
                 "source_runs": ["2026071212", "2026071300", "2026071312"],
                 "coverage_path": "coverages/cams/cams_native_2026071312",
                 "files": 0,
                 "bytes": 0,
             }
+            (coverage / "coverage.json").write_text(json.dumps(marker), encoding="utf-8")
             marker_path = root / "groups" / "cams" / "current" / "ready_for_processing.json"
             marker_path.parent.mkdir(parents=True)
             marker_path.write_text(json.dumps(marker), encoding="utf-8")
@@ -179,7 +230,7 @@ class SeedNativeOmStagingTests(unittest.TestCase):
             self.assertIsNone(result["seeded_latest_complete_run"])
             self.assertTrue(staging.is_dir())
 
-    def test_missing_om_file_reuses_other_batches_without_touching_current(self):
+    def test_missing_latest_runtime_redownloads_only_latest_batch(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "producer"
             coverage = root / "coverages" / "gfs" / "gfs_native_2026071300"
@@ -192,39 +243,37 @@ class SeedNativeOmStagingTests(unittest.TestCase):
             ]
             for index, run in enumerate(source_runs):
                 write_gfs_run(coverage, run, index, len(source_runs))
+            runtime_file = coverage / "ncep_gfs013" / "temperature_2m" / "chunk.om"
+            runtime_file.parent.mkdir(parents=True, exist_ok=True)
+            runtime_file.write_bytes(b"published-runtime")
             files, bytes_total = coverage_data_stats(coverage)
             marker = {
                 "status": "complete",
                 "runtime_format": "openmeteo-native-v1",
+                "group": "gfs",
+                "coverage_id": coverage.name,
                 "latest_complete_run": "2026071300",
                 "source_runs": source_runs,
                 "coverage_path": "coverages/gfs/gfs_native_2026071300",
                 "files": files,
                 "bytes": bytes_total,
             }
+            (coverage / "coverage.json").write_text(json.dumps(marker), encoding="utf-8")
             marker_path = root / "groups" / "gfs" / "current" / "ready_for_processing.json"
             marker_path.parent.mkdir(parents=True)
             marker_path.write_text(json.dumps(marker), encoding="utf-8")
             (root / "current").mkdir()
             (root / "current" / "gfs").symlink_to(Path("..") / "coverages" / "gfs" / coverage.name)
-            damaged_run = source_runs[1]
-            damaged_relative = "2026/07/12/0600Z"
             current_survivor = (
                 coverage
                 / "data_run"
                 / "ncep_gfs013"
-                / damaged_relative
+                / "2026/07/12/0600Z"
                 / "temperature_2m.om"
             )
             survivor_inode = os.stat(current_survivor).st_ino
             survivor_bytes = current_survivor.read_bytes()
-            (
-                coverage
-                / "data_run"
-                / "ncep_gfs025"
-                / damaged_relative
-                / "temperature_2m.om"
-            ).unlink()
+            runtime_file.unlink()
             staging = root / "staging" / "gfs_rebuild"
 
             result = seed_staging(
@@ -235,52 +284,39 @@ class SeedNativeOmStagingTests(unittest.TestCase):
             )
 
             self.assertEqual(result["seeded_from"], str(coverage.resolve()))
-            self.assertEqual(result["seed_rejected_reason"], "coverage_size_mismatch")
-            self.assertEqual(
-                result["reused_source_runs"],
-                [run for run in source_runs if run != damaged_run],
-            )
+            self.assertEqual(result["reused_source_runs"], source_runs[:-1])
+            latest_relative = Path("2026/07/13/0000Z")
             for domain in ("ncep_gfs013", "ncep_gfs025"):
-                self.assertFalse((staging / "data_run" / domain / damaged_relative).exists())
-            valid_source = (
-                coverage
-                / "data_run"
-                / "ncep_gfs013"
-                / "2026/07/12/0000Z"
-                / "temperature_2m.om"
-            )
-            valid_staged = staging / valid_source.relative_to(coverage)
-            self.assertEqual(os.stat(valid_source).st_ino, os.stat(valid_staged).st_ino)
+                self.assertFalse((staging / "data_run" / domain / latest_relative).exists())
             self.assertEqual(os.stat(current_survivor).st_ino, survivor_inode)
             self.assertEqual(current_survivor.read_bytes(), survivor_bytes)
 
-    def test_cams_detaches_only_damaged_main_and_greenhouse_batches(self):
+    def test_cams_missing_run_redownloads_only_that_batch(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "producer"
-            coverage = root / "coverages" / "cams" / "cams_native_2026071812"
+            coverage = (
+                root
+                / "coverages"
+                / "cams"
+                / "cams_native_2026071812_main_only"
+            )
             source_runs = ["2026071712", "2026071800", "2026071812"]
-            greenhouse_runs = ["2026071400", "2026071500", "2026071600"]
             for run in source_runs:
                 write_cams_run(coverage, "cams_global", run, list(range(121)), "pm10")
-            for run in greenhouse_runs:
-                write_cams_run(
-                    coverage,
-                    "cams_global_greenhouse_gases",
-                    run,
-                    list(range(0, 121, 3)),
-                    "carbon_monoxide",
-                )
             files, bytes_total = coverage_data_stats(coverage)
             marker = {
                 "status": "complete",
                 "runtime_format": "openmeteo-native-v1",
+                "group": "cams",
+                "coverage_id": coverage.name,
                 "latest_complete_run": source_runs[-1],
                 "source_runs": source_runs,
-                "greenhouse_source_runs": greenhouse_runs,
-                "coverage_path": "coverages/cams/cams_native_2026071812",
+                "greenhouse_source_runs": [],
+                "coverage_path": "coverages/cams/cams_native_2026071812_main_only",
                 "files": files,
                 "bytes": bytes_total,
             }
+            (coverage / "coverage.json").write_text(json.dumps(marker), encoding="utf-8")
             marker_path = root / "groups" / "cams" / "current" / "ready_for_processing.json"
             marker_path.parent.mkdir(parents=True)
             marker_path.write_text(json.dumps(marker), encoding="utf-8")
@@ -290,35 +326,115 @@ class SeedNativeOmStagingTests(unittest.TestCase):
             )
 
             damaged_main = coverage / "data_run/cams_global/2026/07/18/0000Z/pm10.om"
-            damaged_greenhouse = (
-                coverage
-                / "data_run/cams_global_greenhouse_gases/2026/07/15/0000Z/carbon_monoxide.om"
-            )
             damaged_main.unlink()
-            damaged_greenhouse.unlink()
             staging = root / "staging" / "cams_repair"
 
             result = seed_staging(root, staging, "cams", source_runs)
 
+            self.assertEqual(result["seeded_from"], str(coverage.resolve()))
             self.assertEqual(
                 result["reused_source_runs"],
-                [source_runs[0], source_runs[2]],
+                ["2026071712", "2026071812"],
             )
             self.assertFalse(
-                (staging / "data_run/cams_global/2026/07/18/0000Z").exists()
+                (staging / damaged_main.relative_to(coverage)).exists()
             )
-            self.assertFalse(
-                (
-                    staging
-                    / "data_run/cams_global_greenhouse_gases/2026/07/15/0000Z"
-                ).exists()
+
+    def test_independent_ads_seed_preserves_three_physical_greenhouse_runs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "producer"
+            coverage = (
+                root
+                / "coverages"
+                / "cams_greenhouse"
+                / "cams_greenhouse_native_2026071800_independent-v1"
             )
-            intact = (
+            source_runs = ["2026071600", "2026071700", "2026071800"]
+            for run in source_runs:
+                write_cams_run(
+                    coverage,
+                    "cams_global_greenhouse_gases",
+                    run,
+                    list(range(0, 121, 3)),
+                    "carbon_monoxide",
+                )
+            runtime_file = (
                 coverage
-                / "data_run/cams_global_greenhouse_gases/2026/07/14/0000Z/carbon_monoxide.om"
+                / "cams_global_greenhouse_gases"
+                / "carbon_monoxide"
+                / "chunk.om"
             )
-            staged_intact = staging / intact.relative_to(coverage)
-            self.assertEqual(os.stat(intact).st_ino, os.stat(staged_intact).st_ino)
+            runtime_file.parent.mkdir(parents=True, exist_ok=True)
+            runtime_file.write_bytes(b"greenhouse")
+            marker = {
+                "status": "complete",
+                "runtime_format": "openmeteo-native-v1",
+                "group": "cams_greenhouse",
+                "coverage_id": coverage.name,
+                "latest_complete_run": source_runs[-1],
+                "source_runs": source_runs,
+                "coverage_path": (
+                    "coverages/cams_greenhouse/"
+                    "cams_greenhouse_native_2026071800_independent-v1"
+                ),
+                "products": {
+                    "cams_global_greenhouse_gases": {
+                        "runtime_domain": "cams_global_greenhouse_gases"
+                    }
+                },
+            }
+            files, bytes_total = coverage_data_stats(coverage)
+            marker["files"] = files
+            marker["bytes"] = bytes_total
+            (coverage / "coverage.json").write_text(json.dumps(marker), encoding="utf-8")
+            marker_path = (
+                root
+                / "groups"
+                / "cams_greenhouse"
+                / "current"
+                / "ready_for_processing.json"
+            )
+            marker_path.parent.mkdir(parents=True)
+            marker_path.write_text(json.dumps(marker), encoding="utf-8")
+            (root / "current").mkdir()
+            (root / "current" / "cams_greenhouse").symlink_to(
+                Path("..")
+                / "coverages"
+                / "cams_greenhouse"
+                / coverage.name
+            )
+            staging = root / "ads_staging" / "cams_ads_2026071900"
+
+            result = prepare_ads_staging(root, staging)
+
+            self.assertEqual(result["seeded_from"], str(coverage.resolve()))
+            seeded_runtime = (
+                staging
+                / "cams_global_greenhouse_gases"
+                / "carbon_monoxide"
+                / "chunk.om"
+            )
+            self.assertEqual(seeded_runtime.read_bytes(), runtime_file.read_bytes())
+            self.assertNotEqual(os.stat(runtime_file).st_ino, os.stat(seeded_runtime).st_ino)
+            for source_run in source_runs:
+                run_time = datetime.strptime(source_run, "%Y%m%d%H")
+                relative = Path(
+                    run_time.strftime("%Y/%m/%d/%H00Z")
+                ) / "carbon_monoxide.om"
+                source = (
+                    coverage
+                    / "data_run"
+                    / "cams_global_greenhouse_gases"
+                    / relative
+                )
+                seeded = (
+                    staging
+                    / "data_run"
+                    / "cams_global_greenhouse_gases"
+                    / relative
+                )
+                self.assertTrue(seeded.is_file())
+                self.assertEqual(os.stat(source).st_ino, os.stat(seeded).st_ino)
 
 
 if __name__ == "__main__":

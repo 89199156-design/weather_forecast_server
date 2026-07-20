@@ -43,9 +43,11 @@ The OM decoder library is loaded from:
 - A null in the newest complete GFS run may fall back only to the immediately
   previous complete run at the same valid time. If that value is also null, or
   the previous run does not reach the newest tail, the result remains null.
-- CAMS main forecasts retain three complete direct-hourly runs. The separate
-  official greenhouse product keeps its native three-hour schedule and D-2
-  release lag.
+- CAMS main forecasts retain three complete direct-hourly ECPDS runs in the
+  immutable `cams` namespace. The separate ADS greenhouse product retains three
+  daily 00Z runs on its native three-hour schedule in the independent immutable
+  `cams_greenhouse` namespace. Its target 00Z date comes from the locally
+  published ECPDS run date; there is no fixed release-lag rule.
 - Official formulas, units, precision, daily aggregation and weather-code
   semantics are preserved. China AQI, regional cropping and direct-hourly CAMS
   ingestion are documented project-specific behavior.

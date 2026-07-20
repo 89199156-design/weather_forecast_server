@@ -518,6 +518,7 @@ fn validate_ready(ready: &NativeReady, group: &str) -> Result<()> {
     let (expected_runs, cadence_hours) = match group {
         "gfs" => (5, 6),
         "cams" => (3, 12),
+        "cams_greenhouse" => (3, 24),
         _ => bail!("unsupported native group: {group}"),
     };
     if ready.source_runs.len() != expected_runs {
@@ -539,6 +540,9 @@ fn validate_ready(ready: &NativeReady, group: &str) -> Result<()> {
     }
     if ready.public_start_utc != parsed[0] {
         bail!("native public_start_utc is not the oldest retained source run");
+    }
+    if group == "cams_greenhouse" && parsed.iter().any(|run| run.hour() != 0) {
+        bail!("native CAMS greenhouse runs must use the daily 00 UTC cycle");
     }
     if group == "gfs"
         && (ready.short_run_count != Some(3)
@@ -638,7 +642,7 @@ pub fn load_native_group_products(
         let Some(product_ready) = ready.products.get(*product) else {
             continue;
         };
-        let source_runs = if *product == "cams_global_greenhouse_gases" {
+        let source_runs = if group == "cams" && *product == "cams_global_greenhouse_gases" {
             &ready.greenhouse_source_runs
         } else {
             &ready.source_runs

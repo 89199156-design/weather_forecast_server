@@ -80,7 +80,7 @@ prepare_openmeteo_staging_permissions() {
   local owner_gid="${WEATHER_OPENMETEO_GID:-999}"
 
   case "$staging_dir" in
-    "$producer_root/staging/"*) ;;
+    "$producer_root/staging/"*|"$producer_root/ads_staging/"*) ;;
     *)
       printf '%s\n' "Refusing to change directory ownership outside producer staging: $staging_dir" >&2
       return 2
@@ -145,7 +145,21 @@ write_sanitized_env_file() {
 }
 
 run_openmeteo() {
+  local task_scope="${WEATHER_OPENMETEO_TASK_SCOPE:-}"
+  local task_args=()
+  if [[ -n "$task_scope" ]]; then
+    if [[ ! "$task_scope" =~ ^[a-z][a-z0-9_-]{0,31}$ ]]; then
+      printf '%s\n' "Invalid WEATHER_OPENMETEO_TASK_SCOPE=$task_scope" >&2
+      return 2
+    fi
+    task_args=(
+      --name "weather-openmeteo-$task_scope"
+      --label "weather.forecast.transient=true"
+      --label "weather.forecast.task=$task_scope"
+    )
+  fi
   docker run --rm \
+    "${task_args[@]}" \
     --cpus "$OPENMETEO_CPU_LIMIT" \
     --cpu-shares "$OPENMETEO_CPU_SHARES" \
     --blkio-weight "$OPENMETEO_BLKIO_WEIGHT" \
@@ -153,6 +167,57 @@ run_openmeteo() {
     --volume "$DATA_DIR:/app/data" \
     "$IMAGE_NAME:$IMAGE_TAG" \
     "$@"
+}
+
+cleanup_openmeteo_task_container() {
+  local task_scope="${1:?task scope is required}"
+  if [[ ! "$task_scope" =~ ^[a-z][a-z0-9_-]{0,31}$ ]]; then
+    printf '%s\n' "Invalid Open-Meteo task scope=$task_scope" >&2
+    return 2
+  fi
+  local container_name="weather-openmeteo-$task_scope"
+  local state
+  state="$(openmeteo_task_container_state "$task_scope")"
+  if [[ "$state" == "absent" ]]; then
+    printf '{"stage":"cleanup","removed_container":null}\n'
+  elif [[ "$state" == "running" ]]; then
+    printf '{"stage":"cleanup","preserved_running_container":"%s"}\n' "$container_name"
+  else
+    docker rm "$container_name" >/dev/null
+    printf '{"stage":"cleanup","removed_container":"%s"}\n' "$container_name"
+  fi
+}
+
+openmeteo_task_container_state() {
+  local task_scope="${1:?task scope is required}"
+  if [[ ! "$task_scope" =~ ^[a-z][a-z0-9_-]{0,31}$ ]]; then
+    printf '%s\n' "Invalid Open-Meteo task scope=$task_scope" >&2
+    return 2
+  fi
+  local container_name="weather-openmeteo-$task_scope"
+  local inspect_result
+  if ! inspect_result="$(docker container inspect \
+    --format '{{ index .Config.Labels "weather.forecast.task" }}|{{.State.Running}}' \
+    "$container_name" 2>&1)"; then
+    if [[ "$inspect_result" == *"No such container:"* || "$inspect_result" == *"No such object:"* ]]; then
+      printf '%s\n' "absent"
+      return
+    fi
+    printf '%s\n' "Cannot safely inspect task container $container_name: $inspect_result" >&2
+    return 3
+  fi
+  local label="${inspect_result%%|*}"
+  local running="${inspect_result#*|}"
+  if [[ "$label" != "$task_scope" ]]; then
+    printf '%s\n' \
+      "Refusing container with unexpected task label: $container_name label=$label" >&2
+    return 2
+  fi
+  if [[ "$running" == "true" ]]; then
+    printf '%s\n' "running"
+  else
+    printf '%s\n' "stopped"
+  fi
 }
 
 append_run_arg() {

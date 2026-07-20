@@ -142,12 +142,15 @@ def publisher_args(output_root: Path, staging: Path, run: str) -> argparse.Names
     )
 
 
-def make_cams_staging(output_root: Path, run: str) -> Path:
+def make_cams_main_staging(output_root: Path, run: str) -> Path:
     staging = output_root / "staging" / f"cams_{run}_test"
     reference = f"{run[0:4]}-{run[4:6]}-{run[6:8]}T{run[8:10]}:00:00Z"
     domain = staging / "cams_global" / "pm2_5"
     domain.mkdir(parents=True)
     (domain / "chunk.om").write_bytes(b"cams")
+    dust_domain = staging / "cams_global" / "dust"
+    dust_domain.mkdir(parents=True)
+    (dust_domain / "chunk.om").write_bytes(b"cams")
     latest = staging / "data_run" / "cams_global" / "latest.json"
     latest.parent.mkdir(parents=True)
     latest.write_text(
@@ -182,12 +185,17 @@ def make_cams_staging(output_root: Path, run: str) -> Path:
             ),
             encoding="utf-8",
         )
-    greenhouse_domain = (
-        staging / "cams_global_greenhouse_gases" / "carbon_monoxide"
-    )
+    return staging
+
+
+def make_cams_greenhouse_staging(output_root: Path, run: str) -> Path:
+    staging = output_root / "staging" / f"cams_greenhouse_{run}_test"
+    greenhouse_domain = staging / "cams_global_greenhouse_gases" / "carbon_monoxide"
     greenhouse_domain.mkdir(parents=True)
     (greenhouse_domain / "chunk.om").write_bytes(b"greenhouse")
-    greenhouse_latest_base = base_latest.replace(hour=0) - timedelta(days=2)
+    greenhouse_latest_base = datetime.strptime(run, "%Y%m%d%H").replace(
+        tzinfo=timezone.utc
+    )
     greenhouse_latest = (
         staging / "data_run" / "cams_global_greenhouse_gases" / "latest.json"
     )
@@ -233,6 +241,59 @@ def make_cams_staging(output_root: Path, run: str) -> Path:
 
 
 class NativeOmProducerTests(unittest.TestCase):
+    def test_pre_reload_retention_keeps_exact_applied_coverage_over_newer_orphan(self):
+        publisher = load_publisher_module()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "producer"
+            coverages = root / "coverages" / "gfs"
+            identities = {
+                "applied": "2026-07-20T00:00:00Z",
+                "newer_orphan": "2026-07-21T00:00:00Z",
+                "new_publish": "2026-07-22T00:00:00Z",
+            }
+            for coverage_id, generated_at in identities.items():
+                coverage = coverages / coverage_id
+                coverage.mkdir(parents=True)
+                (coverage / "coverage.json").write_text(
+                    json.dumps(
+                        {
+                            "status": "complete",
+                            "group": "gfs",
+                            "coverage_id": coverage_id,
+                            "latest_complete_run": "2026072000",
+                            "generated_at": generated_at,
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+            current = {
+                "status": "complete",
+                "runtime_format": "openmeteo-native-v1",
+                "group": "gfs",
+                "coverage_id": "applied",
+            }
+            current_path = root / "groups/gfs/current/ready_for_processing.json"
+            current_path.parent.mkdir(parents=True)
+            current_path.write_text(json.dumps(current), encoding="utf-8")
+            applied_path = root / "groups/gfs/applied/current.json"
+            applied_path.parent.mkdir(parents=True)
+            applied_path.write_text(
+                json.dumps({"status": "applied", "coverage_id": "applied"}),
+                encoding="utf-8",
+            )
+
+            protected = publisher.protected_coverage_directories(root, "gfs")
+            publisher.retain_coverages_before_reload(
+                coverages / "new_publish",
+                1,
+                protected,
+            )
+
+            self.assertEqual(
+                sorted(path.name for path in coverages.iterdir()),
+                ["applied", "new_publish"],
+            )
+
     def test_publishes_immutable_coverage_and_ready_marker(self):
         publisher = load_publisher_module()
         with tempfile.TemporaryDirectory() as directory:
@@ -342,7 +403,7 @@ class NativeOmProducerTests(unittest.TestCase):
                 "gfs_native_2026071300_repair-v2",
             )
 
-    def test_revisioned_coverage_cannot_reuse_legacy_horizon_identity(self):
+    def test_same_revision_repair_never_reuses_damaged_current_coverage(self):
         publisher = load_publisher_module()
         with tempfile.TemporaryDirectory() as directory:
             output_root = Path(directory) / "producer"
@@ -365,12 +426,22 @@ class NativeOmProducerTests(unittest.TestCase):
             retry = make_staging(output_root, "2026071300")
             retry_args = publisher_args(output_root, retry, "2026071300")
             retry_args.coverage_revision = "three-short-two-full-v1"
-            with self.assertRaisesRegex(
-                ValueError, "identity mismatch for historical_max_forecast_hour"
-            ):
-                publisher.publish_gfs_coverage(retry_args)
+            ready = publisher.publish_gfs_coverage(retry_args)
 
-            self.assertTrue(retry.exists())
+            self.assertRegex(
+                ready["coverage_id"],
+                r"^gfs_native_2026071300_three-short-two-full-v1_repair_",
+            )
+            self.assertFalse(ready["coverage_reused"])
+            repaired_manifest = json.loads(
+                (
+                    output_root
+                    / ready["coverage_path"]
+                    / "coverage.json"
+                ).read_text(encoding="utf-8")
+            )
+            self.assertEqual(repaired_manifest["historical_max_forecast_hour"], 5)
+            self.assertFalse(retry.exists())
 
     def test_rejects_unsafe_coverage_revision(self):
         publisher = load_publisher_module()
@@ -739,7 +810,7 @@ resolve_openmeteo_cpu_limit 2.5
 
         self.assertEqual(completed.stdout.strip(), "1.5")
 
-    def test_publishes_cams_coverage_without_webp_or_api(self):
+    def test_publishes_main_only_cams_ecpds_coverage(self):
         path = ROOT / "scripts" / "publish_native_cams_coverage.py"
         scripts_dir = str(path.parent)
         if scripts_dir not in sys.path:
@@ -753,14 +824,14 @@ resolve_openmeteo_cpu_limit 2.5
 
         with tempfile.TemporaryDirectory() as directory:
             output_root = Path(directory) / "producer"
-            staging = make_cams_staging(output_root, "2026071300")
+            staging = make_cams_main_staging(output_root, "2026071300")
             ready = publisher.publish_cams_coverage(
                 argparse.Namespace(
                     staging_dir=str(staging),
                     output_root=str(output_root),
                     run="2026071300",
                     source_runs="2026071200,2026071212,2026071300",
-                    greenhouse_source_runs="2026070900,2026071000,2026071100",
+                    greenhouse_source_runs="",
                     latest_max_forecast_hour=120,
                     public_start_utc="2026-07-12T00:00:00Z",
                     public_end_utc="2026-07-18T00:00:00Z",
@@ -773,7 +844,12 @@ resolve_openmeteo_cpu_limit 2.5
                 )
             )
 
-            coverage = output_root / "coverages" / "cams" / "cams_native_2026071300"
+            coverage = (
+                output_root
+                / "coverages"
+                / "cams"
+                / "cams_native_2026071300_main_only"
+            )
             self.assertTrue((coverage / "coverage.json").is_file())
             self.assertEqual(ready["products"]["cams_global"]["runtime_domain"], "cams_global")
             self.assertEqual(
@@ -785,18 +861,82 @@ resolve_openmeteo_cpu_limit 2.5
                 ready["products"]["cams_global"]["grid"],
                 ready["domain_grids"]["cams_global"],
             )
-            self.assertEqual(
-                ready["products"]["cams_global_greenhouse_gases"]["runtime_domain"],
-                "cams_global_greenhouse_gases",
-            )
-            self.assertEqual(
-                ready["greenhouse_source_runs"],
-                ["2026070900", "2026071000", "2026071100"],
-            )
+            self.assertEqual(ready["greenhouse_source_runs"], [])
+            self.assertNotIn("cams_global_greenhouse_gases", ready["products"])
+            self.assertFalse((coverage / "cams_global_greenhouse_gases").exists())
+            for source_run in ready["source_runs"]:
+                run_time = datetime.strptime(source_run, "%Y%m%d%H")
+                run_dir = (
+                    coverage
+                    / "data_run"
+                    / "cams_global"
+                    / run_time.strftime("%Y/%m/%d/%H00Z")
+                )
+                self.assertTrue((run_dir / "meta.json").is_file())
+                self.assertTrue((run_dir / "pm2_5.om").is_file())
             self.assertEqual(ready["latest_max_forecast_hour"], 120)
             self.assertTrue((output_root / "current" / "cams").is_symlink())
 
+    def test_publishes_independent_three_run_cams_ads_coverage(self):
+        path = ROOT / "scripts" / "publish_native_cams_greenhouse_coverage.py"
+        spec = importlib.util.spec_from_file_location(
+            "publish_native_cams_greenhouse_coverage", path
+        )
+        assert spec is not None
+        assert spec.loader is not None
+        publisher = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = publisher
+        spec.loader.exec_module(publisher)
+
+        with tempfile.TemporaryDirectory() as directory:
+            output_root = Path(directory) / "producer"
+            staging = make_cams_greenhouse_staging(output_root, "2026071300")
+            ready = publisher.publish_greenhouse_coverage(
+                argparse.Namespace(
+                    staging_dir=str(staging),
+                    output_root=str(output_root),
+                    run="2026071300",
+                    source_runs="2026071100,2026071200,2026071300",
+                    latest_max_forecast_hour=120,
+                    keep_coverages=3,
+                    required_variables="carbon_monoxide",
+                    coverage_revision="independent-v1",
+                    left_lon=70.0,
+                    right_lon=140.0,
+                    bottom_lat=0.0,
+                    top_lat=58.0,
+                )
+            )
+
+            coverage = (
+                output_root
+                / "coverages"
+                / "cams_greenhouse"
+                / "cams_greenhouse_native_2026071300_independent-v1"
+            )
+            self.assertEqual(ready["group"], "cams_greenhouse")
+            self.assertEqual(
+                ready["source_runs"],
+                ["2026071100", "2026071200", "2026071300"],
+            )
+            self.assertEqual(set(ready["products"]), {"cams_global_greenhouse_gases"})
+            for source_run in ready["source_runs"]:
+                run_time = datetime.strptime(source_run, "%Y%m%d%H")
+                run_dir = (
+                    coverage
+                    / "data_run"
+                    / "cams_global_greenhouse_gases"
+                    / run_time.strftime("%Y/%m/%d/%H00Z")
+                )
+                self.assertTrue((run_dir / "meta.json").is_file())
+                self.assertTrue((run_dir / "carbon_monoxide.om").is_file())
+            self.assertTrue((output_root / "current" / "cams_greenhouse").is_symlink())
+
+    def test_cams_ecpds_and_ads_use_independent_producers(self):
         producer = (ROOT / "scripts" / "run_cams_om_production_cycle.sh").read_text(
+            encoding="utf-8"
+        )
+        ads_scheduler = (ROOT / "scripts" / "run_cams_ads_scheduled_cycle.sh").read_text(
             encoding="utf-8"
         )
         scheduler = (ROOT / "scripts" / "run_cams_ftp_scheduled_cycle.sh").read_text(
@@ -810,15 +950,13 @@ resolve_openmeteo_cpu_limit 2.5
         self.assertIn('SOURCE_RUN_COUNT="${WEATHER_CAMS_REQUIRED_SOURCE_RUN_COUNT:-3}"', producer)
         self.assertIn('KEEP_COVERAGES="${WEATHER_OM_CAMS_KEEP_COVERAGES:-1}"', producer)
         self.assertIn("prune_native_om_runs.py", producer)
-        self.assertIn("download_openmeteo_cams_greenhouse_data.sh", producer)
-        self.assertIn('GREENHOUSE_SOURCE_RUN_COUNT="${WEATHER_CAMS_GREENHOUSE_SOURCE_RUN_COUNT:-3}"', producer)
-        self.assertIn('WEATHER_CAMS_COVERAGE_REVISION:-greenhouse-region-v3', producer)
-        self.assertIn('WEATHER_CAMS_FORCE_GREENHOUSE_DOWNLOAD:-false', producer)
-        self.assertIn('is_truthy "$FORCE_GREENHOUSE_DOWNLOAD"', producer)
-        self.assertIn('rm -rf -- "$STAGING_DIR/cams_global_greenhouse_gases"', producer)
-        self.assertIn("run.replace(hour=0) - timedelta(days=2)", producer)
-        self.assertIn('GREENHOUSE_LATEST_JSON.tmp.$$"', producer)
-        self.assertIn('mv -f "$GREENHOUSE_LATEST_JSON.tmp.$$" "$GREENHOUSE_LATEST_JSON"', producer)
+        self.assertIn('--greenhouse-source-runs ""', producer)
+        self.assertNotIn("download_openmeteo_cams_greenhouse_data.sh", producer)
+        self.assertNotIn("publish_native_cams_greenhouse_coverage.py", producer)
+        self.assertIn('"$STAGING_DIR/cams_global_greenhouse_gases"', producer)
+        self.assertIn("download_openmeteo_cams_greenhouse_data.sh", ads_scheduler)
+        self.assertIn("publish_native_cams_greenhouse_coverage.py", ads_scheduler)
+        self.assertIn("--group cams_greenhouse", ads_scheduler)
         self.assertNotIn("build_openmeteo_cams_layers.sh", producer)
         self.assertNotIn("build_webp.py", producer)
         self.assertNotIn("run_openmeteo_api_server.sh", producer)

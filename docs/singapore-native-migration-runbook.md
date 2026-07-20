@@ -14,15 +14,29 @@ for rollback.
   binaries pass health and parity gates.
 - No fixed free-disk threshold is used.
 - No local process/directory completion polling is installed.
-- A batch is one synchronous chain: OM publish, WebP publish, one API reload.
-- Scheduled checks only probe small remote sentinel files. They never scan OM
-  data, inspect local processes, call the client API, or rebuild an API index.
-- A source run already present in the complete group marker is a no-op. The
-  same GFS/CAMS run must not be regenerated merely because the probe ran again.
+- GFS, CAMS ECPDS, and CAMS ADS are three independent 1Panel tasks. Each task
+  has only its own non-blocking self-lock; there is no cross-task or global
+  mutual exclusion.
+- GFS and ECPDS scheduled checks probe only small remote sentinel files. ADS
+  does not probe a remote latest run: it reads the local ECPDS and greenhouse
+  markers. No check scans OM data, calls the client API, or rebuilds an API
+  index.
+- After acquiring its self-lock, each task removes only stale containers and
+  staging directories bearing that task's scope. It must not clean another
+  task's active or resumable data.
+- A source run already present in its complete group marker is a no-op. The
+  same GFS/CAMS run must not be regenerated merely because another
+  high-frequency tick occurred.
 - GFS keeps five runs: three strict `f000...f005` histories followed by the
   previous and latest complete official `f000...f384` runs. No older `f006`
   value is mixed into the next run's `f000`.
-- CAMS keeps three complete runs through `f120`.
+- CAMS ECPDS main keeps three consecutive complete 12-hour runs through `f120`
+  in the immutable `cams` namespace.
+- CAMS ADS keeps three consecutive daily 00Z runs through `f120` on its native
+  three-hour axis in the independent immutable `cams_greenhouse` namespace.
+- Every successful publication validates a task-owned staging tree, atomically
+  changes only that namespace's current marker/symlink, and then applies its
+  run/coverage retention cleanup.
 - Failure preserves the previous immutable OM/API/WebP snapshots.
 
 ## 1. Prepare production artifacts
@@ -54,27 +68,44 @@ may be raised only after a host upgrade and a latency check.
 The Rust production API reads the real producer root, accepts `SIGHUP` reloads,
 and has no refresh timer. Client requests read the current immutable in-memory
 snapshot only; they never scan the producer directory or wait for a refresh.
+There is no separate high-frequency watcher.
 
 ## 2a. Batch trigger contract
 
-GFS is a six-hour product and CAMS is a twelve-hour product. The scheduler probes
-once per source cadence, after the full forecast is normally available. That
-probe reads only remote boundary/sentinel objects and the small local current
-marker. It must
-exit without starting Swift, WebP, or API reload when no newer complete run is
-available.
+1Panel is the only scheduler and contains exactly three enabled Shell tasks in
+Singapore local time (UTC+8):
 
-Once a new run is selected, one locked foreground process owns the whole chain:
+| 1Panel task | Complete 1Panel schedule expressions | Entrypoint |
+| --- | --- | --- |
+| `weather_gfs_probe_cycle` | `0 * * * *,20 * * * *,40 * * * *` | `run_gfs_probe_and_cycle.sh` |
+| `weather_cams_ecpds_probe_cycle` | `5 * * * *,25 * * * *,45 * * * *` | `run_cams_ftp_scheduled_cycle.sh` |
+| `weather_cams_ads_cycle` | `10 * * * *,30 * * * *,50 * * * *` | `run_cams_ads_scheduled_cycle.sh` |
+
+The GFS task probes official GFS sentinels, and the ECPDS task probes the first
+and final files required for a complete main CAMS run. Both exit without
+starting Swift, WebP, or an API reload when no newer complete run is available.
+The ADS task reads only the locally published ECPDS main date and the independent
+greenhouse marker before deciding whether work is required.
+
+Each task's own locked foreground process owns its selected batch chain. The
+locks prevent a task from duplicating itself but do not prevent the other two
+tasks from running:
 
 ```text
-remote ready -> download/import/validate OM -> atomic OM publish
-             -> render/validate/atomic WebP publish -> one API SIGHUP
+GFS/ECPDS ready -> download/import/validate OM -> atomic OM publish
+                 -> render/validate/atomic WebP publish -> one API SIGHUP
+local ADS target -> submit/wait/download/import/validate OM
+                 -> atomic greenhouse OM publish -> one API SIGHUP
 ```
 
-Each stage starts only after the preceding command exits successfully. There is
-no separate high-frequency watcher for download completion, Swift completion,
-WebP completion, or API refresh. A failed stage stops the chain and leaves the
-previous immutable snapshots serving clients.
+Each stage starts only after the preceding command exits successfully. ADS maps
+a local ECPDS `YYYYMMDD00` or `YYYYMMDD12` run to the same date's
+`YYYYMMDD00` greenhouse target. It never polls ADS for a latest run. When it
+submits a missing target, that same low-resource foreground process remains
+running through ADS acceptance, queueing, download, validation, atomic
+publication, and API reload. Later ADS ticks fail its self-lock and cannot
+submit a duplicate; GFS and ECPDS remain free to run. A failed stage stops only
+its task chain and leaves the previous immutable snapshots serving clients.
 
 ## 2b. GFS regional-download contract
 
@@ -96,12 +127,7 @@ run/object family. This split avoids repeatedly querying the NOMADS inventory
 edge while preserving server-side spatial cropping and the production disk
 budget.
 
-## 3. Select same source runs as Shanghai
-
-Read the two Shanghai group markers and record `latest_complete_run` for GFS
-and CAMS. Run the real Singapore GFS/CAMS pipelines manually for those exact
-latest runs. Do not allow scheduled jobs to start a newer batch during this
-same-run comparison stage.
+## 3. Production rollover and retained windows
 
 The GFS cycle validates every seeded run against its assigned role before
 reuse. During a healthy rollover it reuses two short runs and the old latest
@@ -110,38 +136,41 @@ complete run, reduces the former previous-complete run to strict
 two downloads; a cold start downloads all five missing roles. It restores both
 domain `latest.json` files after any history repair,
 validates every required surface and 22-level pressure file, and removes
-raw/cache data after successful publication. If no explicit revision is set,
-same-run repair publishes the distinct `three-short-two-full-v1` coverage rather than
-colliding with the existing immutable coverage. The CAMS cycle imports missing
-members of the latest three-run window, validates 121 direct hourly frames for
-every main forecast variable and 41 native three-hour frames for the separate
-greenhouse product, and then removes raw/cache data.
+raw/cache data after successful publication. The ECPDS cycle independently
+imports missing members of its latest three-run 12-hour window, validates all
+121 direct hourly frames for every main forecast variable, and atomically
+publishes only `coverages/cams`, `groups/cams`, and `current/cams`.
+
+The ADS task derives its target only from the date of the locally published
+ECPDS main run. If `groups/cams_greenhouse/current` is older, it prepares the
+three consecutive daily 00Z window, validates 41 native three-hour frames per
+run, and atomically publishes only `coverages/cams_greenhouse`,
+`groups/cams_greenhouse`, and `current/cams_greenhouse`. An ECPDS change from
+00Z to 12Z on the same UTC date is already satisfied by that date's existing
+ADS 00Z marker and does not submit again. No fixed date offset is applied.
 
 The greenhouse ADS request performs server-side cropping to the configured
 storage bounds. The official CAMS Global ECPDS distribution consists of static
 global NetCDF files and exposes no bounding-box request, so those files are
 downloaded one at a time and cropped in the Swift importer before OM output;
 they are never retained after the successful atomic publication.
-`WEATHER_CAMS_FORCE_GREENHOUSE_DOWNLOAD=true` is reserved for a one-time
-same-run source-path repair; normal cycles leave it false and download only
-missing greenhouse batches.
 
-`uv_index_clear_sky` is a required official GFS `CDUVB` field because the API
-also exposes `uv_index_clear_sky_max`. For a one-time upgrade of retained runs,
-use `WEATHER_OM_GFS_FORCE_REUSED_DOWNLOAD=true`,
-`WEATHER_OM_GFS_REPAIR_SURFACE_ONLY=true`,
-`WEATHER_OM_GFS_COVERAGE_REVISION=uv-clear-v1`,
-`WEATHER_GFS013_SURFACE_VARIABLES=uv_index_clear_sky`, and
-`WEATHER_GFS_SKIP_GFS025=true`. These are manual repair flags, not scheduler
-settings. Partial metadata is merged with the retained run before the final
-complete-coverage validation and atomic publish.
+At task startup, cleanup is bounded by the task scope (`gfs`, `cams_ecpds`, or
+`cams_ads`) and removes only prior abnormal containers/staging that match the
+scope's strict name pattern. After a successful atomic switch, source-run
+directories outside the required rolling window, raw downloads, HTTP caches,
+temporary publish staging, and immutable coverages beyond the configured keep
+count are removed. Cleanup never precedes validation/publication of the
+replacement coverage.
 
 ## 4. Prove run identity
 
 Generate `compare_model_run_identities.py inventory` on each server and copy
 only the JSON inventories to the validation workstation. Run its `compare`
-command. Both `matched_latest_runs.gfs` and `matched_latest_runs.cams` must be
-present and the report must have `passed=true`.
+command against batches reached by the normal production tasks; do not force a
+batch for comparison. Both `matched_latest_runs.gfs` and
+`matched_latest_runs.cams` must be present and the report must have
+`passed=true`.
 
 ## 5. API parity gate
 
@@ -180,16 +209,20 @@ passes.
 
 ## 7. Acceptance
 
-Do not accept the migration unless all native coverage reports, same-run
+Do not accept the migration unless all native coverage reports, production run
 identity report, API report and WebP report pass. Save the reports and artifact
-hashes. Install low-priority GFS six-hour and CAMS twelve-hour remote-sentinel
-jobs, then monitor latency/errors. Keep the previous service and WebP release
-available for rollback until retirement is explicitly authorized.
+hashes. Install exactly the three low-priority 1Panel tasks and schedules from
+the batch trigger contract, then monitor latency/errors. Keep the previous
+service and WebP release available for rollback until retirement is explicitly
+authorized.
 
 ## 8. Cleanup
 
-Raw downloads are removed by successful model cycles. The GFS, CAMS main, and
-greenhouse source-range debug caches are disabled by default, preventing a full
-horizon from accumulating tens of gigabytes before the command-level cleanup
-point. Docker build cache or obsolete images may be reclaimed only after an
-explicit cleanup approval; active images and rollback releases are excluded.
+Each task first cleans only stale task-owned staging left by an abnormal prior
+run. Successful model cycles remove raw downloads, temporary task staging, and
+source runs/immutable coverages outside their configured retention windows. The
+GFS, CAMS main, and greenhouse source-range debug caches are disabled by
+default, preventing a full horizon from accumulating tens of gigabytes before
+the command-level cleanup point. Docker build cache or obsolete images may be
+reclaimed only after explicit cleanup approval; active images and rollback
+releases are excluded.

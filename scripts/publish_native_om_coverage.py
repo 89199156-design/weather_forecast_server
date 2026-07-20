@@ -256,6 +256,26 @@ def validate_run_metadata(
     return payload
 
 
+def validate_runtime_variables(
+    staging: Path,
+    domain: str,
+    variables: list[str] | set[str],
+) -> None:
+    """Require the latest runtime chunks without using directory-wide totals."""
+    missing = []
+    for variable in variables:
+        variable_root = staging / domain / variable
+        if not variable_root.is_dir() or not any(
+            path.is_file() and not path.is_symlink() and path.stat().st_size > 0
+            for path in variable_root.glob("*.om")
+        ):
+            missing.append(variable)
+    if missing:
+        raise ValueError(
+            f"{domain} is missing runtime variables: {','.join(sorted(missing)[:20])}"
+        )
+
+
 def validate_gfs_retained_run(
     staging: Path,
     run: str,
@@ -318,6 +338,57 @@ def atomic_symlink(target: Path, link: Path) -> None:
         temporary.unlink()
     temporary.symlink_to(target)
     os.replace(temporary, link)
+
+
+def select_coverage_id_for_publish(
+    output_root: Path,
+    group: str,
+    base_coverage_id: str,
+    latest_run: str,
+) -> str:
+    """Choose a new immutable identity only for a repair of the current run.
+
+    A coverage directory may already exist because the process was interrupted
+    after moving staging but before publishing the current marker.  In that
+    case the base identity must be reused so marker publication can resume.
+    Once a complete marker already identifies the same run, however, a fresh
+    staging directory is a physical repair and must never be discarded in
+    favour of the previously published (possibly damaged) directory.
+    """
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", base_coverage_id):
+        raise ValueError("base coverage_id is unsafe")
+    coverage_root = output_root / "coverages" / group / base_coverage_id
+    if not coverage_root.exists():
+        return base_coverage_id
+
+    marker_path = (
+        output_root
+        / "groups"
+        / group
+        / "current"
+        / "ready_for_processing.json"
+    )
+    try:
+        marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return base_coverage_id
+    if (
+        marker.get("status") != "complete"
+        or marker.get("group") != group
+        or str(marker.get("latest_complete_run") or "") != latest_run
+    ):
+        return base_coverage_id
+
+    stamp = datetime.now(UTC).strftime("%Y%m%dt%H%M%S%f")
+    repair_base = f"{base_coverage_id}_repair_{stamp}_{os.getpid()}"
+    candidate = repair_base
+    sequence = 0
+    while (output_root / "coverages" / group / candidate).exists():
+        sequence += 1
+        candidate = f"{repair_base}_{sequence}"
+    if len(candidate) > 160:
+        raise ValueError("repair coverage_id exceeds the supported length")
+    return candidate
 
 
 def promote_or_reuse_coverage(
@@ -390,6 +461,58 @@ def load_coverage_manifests(coverages_root: Path) -> list[tuple[Path, dict[str, 
     return manifests
 
 
+def protected_coverage_directories(output_root: Path, group: str) -> set[Path]:
+    """Return exact native coverages that may still be open by the API."""
+    protected: set[Path] = set()
+    identifiers: set[str] = set()
+    current_path = output_root / "groups" / group / "current" / "ready_for_processing.json"
+    if current_path.is_file():
+        current = json.loads(current_path.read_text(encoding="utf-8"))
+        if current.get("runtime_format") == "openmeteo-native-v1":
+            identifiers.add(str(current.get("coverage_id") or ""))
+    applied_path = output_root / "groups" / group / "applied" / "current.json"
+    if applied_path.is_file():
+        applied = json.loads(applied_path.read_text(encoding="utf-8"))
+        identifiers.add(str(applied.get("coverage_id") or ""))
+    root = output_root / "coverages" / group
+    for coverage_id in identifiers:
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,160}", coverage_id):
+            raise ValueError(f"invalid protected coverage_id for {group}")
+        coverage = (root / coverage_id).resolve(strict=True)
+        if coverage.parent != root.resolve(strict=True):
+            raise ValueError("protected coverage resolves outside its group")
+        manifest = json.loads((coverage / "coverage.json").read_text(encoding="utf-8"))
+        if (
+            manifest.get("status") != "complete"
+            or manifest.get("group") != group
+            or manifest.get("coverage_id") != coverage_id
+        ):
+            raise ValueError(f"invalid protected coverage manifest: {coverage_id}")
+        protected.add(coverage)
+    return protected
+
+
+def retain_coverages_before_reload(
+    coverage_root: Path,
+    keep_coverages: int,
+    protected: set[Path],
+) -> None:
+    """Bound history without deleting the exact snapshot still served by API."""
+    manifests = load_coverage_manifests(coverage_root.parent)
+    retained = {coverage_root.resolve(), *protected}
+    retention_count = max(keep_coverages, 2)
+    for candidate, _ in manifests:
+        resolved = candidate.resolve()
+        if resolved not in retained and len(retained) < retention_count:
+            retained.add(resolved)
+    for old_root, _ in manifests:
+        resolved = old_root.resolve()
+        if resolved.parent != coverage_root.parent.resolve():
+            raise ValueError(f"refusing to prune coverage outside root: {resolved}")
+        if resolved not in retained:
+            shutil.rmtree(resolved)
+
+
 def product_contract(coverage_id: str, domain_grids: dict[str, Any]) -> dict[str, Any]:
     return {
         "gfs013_surface": {
@@ -434,6 +557,14 @@ def publish_gfs_coverage(args: argparse.Namespace) -> dict[str, Any]:
             max_forecast_hour,
             required_by_domain,
         )
+    for domain in GFS_DOMAINS:
+        latest_metadata = validate_run_metadata(
+            staging,
+            domain,
+            args.latest_run,
+            gfs_forecast_hours(args.latest_max_forecast_hour),
+        )
+        validate_runtime_variables(staging, domain, latest_metadata["variables"])
 
     domain_grids = gfs_domain_grids(
         getattr(args, "left_lon", 70.0),
@@ -455,8 +586,15 @@ def publish_gfs_coverage(args: argparse.Namespace) -> dict[str, Any]:
     coverage_id = f"gfs_native_{args.latest_run}"
     if revision:
         coverage_id = f"{coverage_id}_{revision}"
+    coverage_id = select_coverage_id_for_publish(
+        output_root,
+        "gfs",
+        coverage_id,
+        args.latest_run,
+    )
     coverage_relative = Path("coverages") / "gfs" / coverage_id
     coverage_root = output_root / coverage_relative
+    protected_coverages = protected_coverage_directories(output_root, "gfs")
 
     files, bytes_total = directory_stats(staging)
     generated_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -536,25 +674,11 @@ def publish_gfs_coverage(args: argparse.Namespace) -> dict[str, Any]:
         ready,
     )
 
-    manifests = load_coverage_manifests(coverage_root.parent)
-    # A same-run repair is mostly hard links to the current coverage. Keep the
-    # prior immutable directory as a zero-copy rollback until the next normal
-    # run; that later run can apply the configured retention count again.
-    retention_count = max(args.keep_coverages, 2) if revision else args.keep_coverages
-    retained = {coverage_root.resolve()}
-    for candidate, _ in manifests:
-        resolved = candidate.resolve()
-        if resolved in retained:
-            continue
-        if len(retained) < retention_count:
-            retained.add(resolved)
-    for old_root, _ in manifests:
-        resolved = old_root.resolve()
-        if resolved.parent != coverage_root.parent.resolve():
-            raise ValueError(f"refusing to prune coverage outside root: {resolved}")
-        if resolved in retained:
-            continue
-        shutil.rmtree(resolved)
+    retain_coverages_before_reload(
+        coverage_root,
+        args.keep_coverages,
+        protected_coverages,
+    )
 
     return ready
 

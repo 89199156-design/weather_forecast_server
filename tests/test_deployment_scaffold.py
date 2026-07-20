@@ -1088,10 +1088,15 @@ def test_gfs_probe_cycle_uses_official_indices_before_gfs_only_production():
     assert "scripts/probe_gfs_official_run.py" in cycle
     assert "CYCLE_LOCK_FILE" in cycle
     assert "GFS production cycle already running, skip probe." in cycle
-    assert "GLOBAL_LOCK_FILE" in cycle
-    assert "another Open-Meteo production cycle is running, skip probe." in cycle
+    assert "WEATHER_OPENMETEO_GFS_PROBE_LOCK_FILE" in cycle
+    assert "WEATHER_OPENMETEO_GFS_LOCK_FILE" in cycle
+    assert "GLOBAL_LOCK_FILE" not in cycle
+    assert "WEATHER_OPENMETEO_GLOBAL_LOCK_FILE" not in cycle
+    assert "another Open-Meteo production cycle is running, skip probe." not in cycle
     assert "scripts/run_native_model_pipeline.sh gfs" in cycle
     assert "scripts/run_gfs_om_production_cycle.sh" in pipeline
+    assert "PIPELINE_LOCK" not in pipeline
+    assert "WEATHER_OM_PIPELINE_LOCK_FILE" not in pipeline
     assert "scripts/download_openmeteo_gfs_data.sh" in production
     assert "scripts/model_source_run_plan.py" in production
     assert "scripts/publish_native_om_coverage.py" in production
@@ -1137,7 +1142,21 @@ def test_gfs_probe_cycle_starts_latest_ready_run_after_newer_not_ready(tmp_path)
         encoding="utf-8",
     )
     (scripts_dir / "openmeteo_runtime_common.sh").write_text(
-        "load_weather_env() { :; }\n",
+        "load_weather_env() { :; }\n"
+        "openmeteo_task_container_state() { printf 'absent\\n'; }\n"
+        "cleanup_openmeteo_task_container() { :; }\n",
+        encoding="utf-8",
+    )
+    (scripts_dir / "cleanup_native_task_staging.py").write_text(
+        "print('{\"stage\":\"cleanup\",\"removed_directories\":0}')\n",
+        encoding="utf-8",
+    )
+    (scripts_dir / "reconcile_native_current_pointer.py").write_text(
+        "print('{\"stage\":\"cleanup\",\"current\":null}')\n",
+        encoding="utf-8",
+    )
+    (scripts_dir / "pending_native_api_coverage.py").write_text(
+        "print('NONE')\n",
         encoding="utf-8",
     )
     (scripts_dir / "run_native_model_pipeline.sh").write_text(
@@ -1164,7 +1183,6 @@ def test_gfs_probe_cycle_starts_latest_ready_run_after_newer_not_ready(tmp_path)
             "WEATHER_OPENMETEO_BUILD_LOG_DIR": str(log_dir),
             "WEATHER_OPENMETEO_GFS_PROBE_LOCK_FILE": str(tmp_path / "probe.lock"),
             "WEATHER_OPENMETEO_GFS_LOCK_FILE": str(tmp_path / "cycle.lock"),
-            "WEATHER_OPENMETEO_GLOBAL_LOCK_FILE": str(tmp_path / "global.lock"),
             "WEATHER_TEST_PRODUCTION_RUN_FILE": str(run_file),
             "PATH": f"{bin_dir}{os.pathsep}{env.get('PATH', '')}",
         }
@@ -1186,7 +1204,7 @@ def test_gfs_probe_cycle_starts_latest_ready_run_after_newer_not_ready(tmp_path)
     assert "最后处理批次：2026070600" in completed.stdout
 
 
-def test_openmeteo_cron_installer_uses_one_1panel_scheduler_for_gfs_and_cams_ftp():
+def test_openmeteo_cron_installer_creates_three_independent_1panel_tasks():
     script = (ROOT / "scripts" / "install_openmeteo_cron.sh").read_text(encoding="utf-8")
 
     assert "PANEL_DB=" in script
@@ -1198,17 +1216,25 @@ def test_openmeteo_cron_installer_uses_one_1panel_scheduler_for_gfs_and_cams_ftp
     assert "OM_GFS_WEBP_BUILD" in script
     assert "OM_CAMS_WEBP_BUILD" in script
     assert "/etc/cron.d/weather-openmeteo" in script
-    gfs_spec = "17 0 * * *,17 6 * * *,17 12 * * *,17 18 * * *"
-    cams_spec = "37 4 * * *,37 16 * * *"
+    gfs_spec = "0 * * * *,20 * * * *,40 * * * *"
+    cams_ecpds_spec = "5 * * * *,25 * * * *,45 * * * *"
+    cams_ads_spec = "10 * * * *,30 * * * *,50 * * * *"
     assert gfs_spec in script
-    assert cams_spec in script
-    assert "17 0,6,12,18 * * *" not in script
-    assert "37 4,16 * * *" not in script
-    assert all(len(expression.split()) == 5 for expression in gfs_spec.split(","))
-    assert all(len(expression.split()) == 5 for expression in cams_spec.split(","))
+    assert cams_ecpds_spec in script
+    assert cams_ads_spec in script
+    assert "0,20,40 * * * *" not in script
+    assert "5,25,45 * * * *" not in script
+    assert "10,30,50 * * * *" not in script
+    for spec in (gfs_spec, cams_ecpds_spec, cams_ads_spec):
+        assert all(len(expression.split()) == 5 for expression in spec.split(","))
     assert "INSERT INTO cronjobs" in script
-    assert "weather_gfs_probe_cycle" in script
-    assert "weather_cams_ftp_probe_cycle" in script
+    task_names = re.findall(r'^\s{12}"(weather_[a-z0-9_]+)",\s*$', script, re.MULTILINE)
+    assert task_names == [
+        "weather_gfs_probe_cycle",
+        "weather_cams_ecpds_probe_cycle",
+        "weather_cams_ads_cycle",
+    ]
+    assert "weather_cams_ftp_probe_cycle" not in script
     assert '"17 * * * *"' not in script
     assert '"37 */2 * * *"' not in script
     assert "/usr/bin/nice -n 15 /usr/bin/ionice -c 3" in script
@@ -1221,7 +1247,7 @@ def test_openmeteo_cron_installer_uses_one_1panel_scheduler_for_gfs_and_cams_ftp
     assert "WEATHER_OM_PRODUCER_ROOT={producer_root}" in script
     assert "scripts/run_gfs_probe_and_cycle.sh" in script
     assert "scripts/run_cams_ftp_scheduled_cycle.sh" in script
-    assert "scripts/run_cams_ads_scheduled_cycle.sh" not in script
+    assert "scripts/run_cams_ads_scheduled_cycle.sh" in script
     assert "0 10,22 * * *" not in script
     assert 'rm -f -- "$SYSTEM_CRON_FILE"' in script
     assert "CRON_TZ=UTC" not in script
@@ -1267,8 +1293,11 @@ def test_cams_ftp_scheduled_cycle_probes_remote_batches_like_gfs():
     assert "ftp|ecpds|ftp_ecpds)" not in scheduled
     assert "ads|cds|ads_cds)" not in scheduled
     assert "CAMS FTP/ECPDS production cycle already running, skip probe." in scheduled
-    assert "GLOBAL_LOCK_FILE" in scheduled
-    assert "another Open-Meteo production cycle is running, skip probe." in scheduled
+    assert "WEATHER_OPENMETEO_CAMS_FTP_SCHEDULE_LOCK_FILE" in scheduled
+    assert "WEATHER_OPENMETEO_CAMS_FTP_LOCK_FILE" in scheduled
+    assert "GLOBAL_LOCK_FILE" not in scheduled
+    assert "WEATHER_OPENMETEO_GLOBAL_LOCK_FILE" not in scheduled
+    assert "another Open-Meteo production cycle is running, skip probe." not in scheduled
     assert "datetime.now(timezone.utc)" not in scheduled
     assert "now.hour >= 22" not in scheduled
     assert "now.hour >= 10" not in scheduled
@@ -1290,7 +1319,8 @@ def test_cams_ftp_scheduled_cycle_probes_remote_batches_like_gfs():
     assert "run_cams_production_cycle.sh" not in scheduled
     assert "run_cams_scheduled_cycle.sh" not in scheduled
     assert "download_openmeteo_cams_ads_data.sh" not in scheduled
-    assert "download_openmeteo_cams_greenhouse_data.sh" in production
+    assert "download_openmeteo_cams_greenhouse_data.sh" not in production
+    assert "cams_global_greenhouse_gases" not in download
     assert "WEATHER_OPENMETEO_LAYER_FRAME_COUNT" not in production
     assert "restart local Open-Meteo API" not in production
     assert "scripts/deploy_singapore_candidate.sh" not in production
@@ -1300,22 +1330,38 @@ def test_cams_ftp_scheduled_cycle_probes_remote_batches_like_gfs():
     assert "CST" not in scheduled
 
 
-def test_obsolete_generic_cams_ads_backup_is_removed_but_greenhouse_is_kept():
-    assert not (ROOT / "scripts" / "run_cams_ads_scheduled_cycle.sh").exists()
+def test_cams_ads_has_an_independent_scheduler_and_publication_namespace():
+    ads_path = ROOT / "scripts" / "run_cams_ads_scheduled_cycle.sh"
+    assert ads_path.exists()
     assert not (ROOT / "scripts" / "run_cams_ads_production_cycle.sh").exists()
     assert not (ROOT / "scripts" / "download_openmeteo_cams_ads_data.sh").exists()
     assert (ROOT / "scripts" / "download_openmeteo_cams_greenhouse_data.sh").exists()
 
+    ads = ads_path.read_text(encoding="utf-8")
+    assert "WEATHER_OPENMETEO_CAMS_ADS_SCHEDULE_LOCK_FILE" in ads
+    assert "WEATHER_OPENMETEO_CAMS_FTP_LOCK_FILE" not in ads
+    assert "WEATHER_OPENMETEO_GFS_LOCK_FILE" not in ads
+    assert "GLOBAL_LOCK_FILE" not in ads
+    assert "PIPELINE_LOCK" not in ads
+    assert "run_native_model_pipeline.sh" not in ads
+    assert "scripts/plan_cams_ads_update.py" in ads
+    assert 'if [[ "$state" == RESUME\\ * ]]' in ads
+    assert 'ordered_runs+=("$resume_pending_run")' in ads
+    assert "scripts/download_openmeteo_cams_greenhouse_data.sh" in ads
+    assert "scripts/publish_native_cams_greenhouse_coverage.py" in ads
+    assert "--group cams_greenhouse" in ads
+    assert "reload_native_api_snapshot.sh cams_greenhouse" in ads
 
-def test_cams_native_production_contract_keeps_three_complete_regional_runs():
+
+def test_cams_ecpds_production_keeps_three_complete_runs_without_downloading_ads():
     production = (ROOT / "scripts" / "run_cams_om_production_cycle.sh").read_text(encoding="utf-8")
 
     assert 'WEATHER_CAMS_REQUIRED_SOURCE_RUN_COUNT:-3' in production
     assert 'WEATHER_CAMS_REQUIRED_MAX_FORECAST_HOUR:-120' in production
-    assert 'WEATHER_CAMS_GREENHOUSE_SOURCE_RUN_COUNT:-3' in production
-    assert 'WEATHER_CAMS_GREENHOUSE_MAX_FORECAST_HOUR:-120' in production
-    assert 'download_openmeteo_cams_greenhouse_data.sh' in production
-    assert '--greenhouse-source-runs "$GREENHOUSE_SOURCE_RUNS"' in production
+    assert 'WEATHER_CAMS_GREENHOUSE_SOURCE_RUN_COUNT' not in production
+    assert 'WEATHER_CAMS_GREENHOUSE_MAX_FORECAST_HOUR' not in production
+    assert 'download_openmeteo_cams_greenhouse_data.sh' not in production
+    assert '--greenhouse-source-runs ""' in production
     assert 'WEATHER_CAMS_STORAGE_LEFT_LON:-69' in production
     assert 'WEATHER_CAMS_STORAGE_RIGHT_LON:-141' in production
     assert 'WEATHER_CAMS_STORAGE_BOTTOM_LAT:--1' in production
@@ -1325,25 +1371,32 @@ def test_cams_native_production_contract_keeps_three_complete_regional_runs():
     assert "reuse validated history" in production
     assert "reuse validated latest" in production
     assert "{variable: 121 for variable in meta[\"variables\"]}" in production
-    assert "validate_staged_greenhouse_run" in production
-    assert "{variable: 41 for variable in meta[\"variables\"]}" in production
+    assert "validate_staged_greenhouse_run" not in production
+    assert "{variable: 41 for variable in meta[\"variables\"]}" not in production
     assert 'restore_cams_latest_metadata "$RUN"' in production
 
 
-def test_openmeteo_production_cycles_share_global_lock():
-    scripts = [
-        ROOT / "scripts" / "run_gfs_om_production_cycle.sh",
-        ROOT / "scripts" / "run_cams_om_production_cycle.sh",
-        ROOT / "scripts" / "run_gfs_production_cycle.sh",
-        ROOT / "scripts" / "run_cams_ftp_production_cycle.sh",
-    ]
+def test_openmeteo_tasks_use_only_scope_specific_self_locks():
+    scripts = {
+        ROOT / "scripts" / "run_gfs_om_production_cycle.sh": "WEATHER_OPENMETEO_GFS_LOCK_FILE",
+        ROOT / "scripts" / "run_gfs_production_cycle.sh": "WEATHER_OPENMETEO_GFS_LOCK_FILE",
+        ROOT / "scripts" / "run_cams_om_production_cycle.sh": "WEATHER_OPENMETEO_CAMS_FTP_LOCK_FILE",
+        ROOT / "scripts" / "run_cams_ftp_production_cycle.sh": "WEATHER_OPENMETEO_CAMS_FTP_LOCK_FILE",
+        ROOT / "scripts" / "run_cams_ads_scheduled_cycle.sh": "WEATHER_OPENMETEO_CAMS_ADS_SCHEDULE_LOCK_FILE",
+    }
 
-    for path in scripts:
+    for path, expected_self_lock in scripts.items():
         script = path.read_text(encoding="utf-8")
-        assert "GLOBAL_LOCK_FILE" in script, path.name
-        assert "WEATHER_OPENMETEO_GLOBAL_LOCK_FILE" in script, path.name
-        assert "/tmp/weather_openmeteo_production.lock" in script, path.name
-        assert "another Open-Meteo production cycle is running, skip." in script, path.name
+        assert expected_self_lock in script, path.name
+        assert "flock -n" in script, path.name
+        assert "GLOBAL_LOCK_FILE" not in script, path.name
+        assert "WEATHER_OPENMETEO_GLOBAL_LOCK_FILE" not in script, path.name
+        assert "/tmp/weather_openmeteo_production.lock" not in script, path.name
+
+    pipeline = (ROOT / "scripts" / "run_native_model_pipeline.sh").read_text(encoding="utf-8")
+    assert "flock" not in pipeline
+    assert "PIPELINE_LOCK" not in pipeline
+    assert "WEATHER_OM_PIPELINE_LOCK_FILE" not in pipeline
 
 
 def test_split_layer_builders_publish_only_their_product():

@@ -13,7 +13,9 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 from native_grid_contract import cams_domain_grids
+from seed_native_om_staging import coverage_data_stats
 from validate_native_cams_coverage import validate_cams_contract
+from validate_native_cams_greenhouse_coverage import validate_greenhouse_contract
 
 
 def write_fake_om(path: Path, dimensions: tuple[int, int, int]) -> None:
@@ -45,9 +47,8 @@ def write_json(path: Path, payload: dict) -> None:
 
 
 def make_cams_coverage(root: Path) -> Path:
-    coverage = root / "coverages" / "cams" / "cams_native_2026071312"
+    coverage = root / "coverages" / "cams" / "cams_native_2026071312_main_only"
     source_runs = ["2026071212", "2026071300", "2026071312"]
-    greenhouse_source_runs = ["2026070900", "2026071000", "2026071100"]
     manifest = {
         "status": "complete",
         "runtime_format": "openmeteo-native-v1",
@@ -55,7 +56,7 @@ def make_cams_coverage(root: Path) -> Path:
         "coverage_id": coverage.name,
         "latest_complete_run": source_runs[-1],
         "source_runs": source_runs,
-        "greenhouse_source_runs": greenhouse_source_runs,
+        "greenhouse_source_runs": [],
         "latest_max_forecast_hour": 120,
         "public_start_utc": "2026-07-12T12:00:00Z",
         "local_day_start_utc": "2026-07-12T16:00:00Z",
@@ -64,8 +65,9 @@ def make_cams_coverage(root: Path) -> Path:
         "domain_grids": cams_domain_grids(),
     }
     write_json(coverage / "coverage.json", manifest)
-    (coverage / "cams_global").mkdir(parents=True)
-    (coverage / "cams_global_greenhouse_gases").mkdir(parents=True)
+    runtime = coverage / "cams_global" / "pm2_5" / "chunk.om"
+    runtime.parent.mkdir(parents=True)
+    runtime.write_bytes(b"runtime")
     for source_run in source_runs:
         base = datetime.strptime(source_run, "%Y%m%d%H").replace(tzinfo=timezone.utc)
         run_dir = coverage / "data_run" / "cams_global" / base.strftime("%Y/%m/%d/%H00Z")
@@ -82,7 +84,60 @@ def make_cams_coverage(root: Path) -> Path:
                 "variables": ["pm2_5"],
             },
         )
-    for source_run in greenhouse_source_runs:
+    files, bytes_total = coverage_data_stats(coverage)
+    manifest["files"] = files
+    manifest["bytes"] = bytes_total
+    write_json(coverage / "coverage.json", manifest)
+    marker = dict(manifest)
+    marker["coverage_path"] = f"coverages/cams/{coverage.name}"
+    marker["products"] = {
+        "cams_global": {
+            "coverage_id": coverage.name,
+            "runtime_domain": "cams_global",
+            "grid": manifest["domain_grids"]["cams_global"],
+        }
+    }
+    write_json(root / "groups" / "cams" / "current" / "ready_for_processing.json", marker)
+    (root / "current").mkdir(parents=True)
+    (root / "current" / "cams").symlink_to(Path("..") / "coverages" / "cams" / coverage.name)
+    return coverage
+
+
+def make_greenhouse_coverage(root: Path) -> Path:
+    coverage = (
+        root
+        / "coverages"
+        / "cams_greenhouse"
+        / "cams_greenhouse_native_2026071300_independent-v1"
+    )
+    source_runs = ["2026071100", "2026071200", "2026071300"]
+    greenhouse_grid = cams_domain_grids()["cams_global_greenhouse_gases"]
+    manifest = {
+        "status": "complete",
+        "runtime_format": "openmeteo-native-v1",
+        "group": "cams_greenhouse",
+        "coverage_id": coverage.name,
+        "latest_complete_run": source_runs[-1],
+        "source_runs": source_runs,
+        "latest_max_forecast_hour": 120,
+        "public_start_utc": "2026-07-11T00:00:00Z",
+        "local_day_start_utc": "2026-07-11T00:00:00Z",
+        "public_end_utc": "2026-07-18T00:00:00Z",
+        "public_hours": 168,
+        "domain_grids": {
+            "cams_global_greenhouse_gases": greenhouse_grid,
+        },
+    }
+    write_json(coverage / "coverage.json", manifest)
+    runtime = (
+        coverage
+        / "cams_global_greenhouse_gases"
+        / "carbon_monoxide"
+        / "chunk.om"
+    )
+    runtime.parent.mkdir(parents=True)
+    runtime.write_bytes(b"runtime")
+    for source_run in source_runs:
         base = datetime.strptime(source_run, "%Y%m%d%H").replace(tzinfo=timezone.utc)
         run_dir = (
             coverage
@@ -103,16 +158,73 @@ def make_cams_coverage(root: Path) -> Path:
                 "variables": ["carbon_monoxide"],
             },
         )
+    latest_base = datetime(2026, 7, 13, tzinfo=timezone.utc)
+    write_json(
+        coverage
+        / "data_run"
+        / "cams_global_greenhouse_gases"
+        / "latest.json",
+        {
+            "reference_time": "2026-07-13T00:00:00Z",
+            "valid_times": [
+                (latest_base + timedelta(hours=hour)).strftime("%Y-%m-%dT%H:%MZ")
+                for hour in range(0, 121, 3)
+            ],
+        },
+    )
+    files, bytes_total = coverage_data_stats(coverage)
+    manifest["files"] = files
+    manifest["bytes"] = bytes_total
+    write_json(coverage / "coverage.json", manifest)
     marker = dict(manifest)
-    marker["coverage_path"] = f"coverages/cams/{coverage.name}"
-    write_json(root / "groups" / "cams" / "current" / "ready_for_processing.json", marker)
-    (root / "current").mkdir(parents=True)
-    (root / "current" / "cams").symlink_to(Path("..") / "coverages" / "cams" / coverage.name)
+    marker["coverage_path"] = f"coverages/cams_greenhouse/{coverage.name}"
+    marker["products"] = {
+        "cams_global_greenhouse_gases": {
+            "coverage_id": coverage.name,
+            "runtime_domain": "cams_global_greenhouse_gases",
+            "grid": greenhouse_grid,
+        }
+    }
+    write_json(
+        root
+        / "groups"
+        / "cams_greenhouse"
+        / "current"
+        / "ready_for_processing.json",
+        marker,
+    )
+    (root / "current").mkdir(parents=True, exist_ok=True)
+    (root / "current" / "cams_greenhouse").symlink_to(
+        Path("..") / "coverages" / "cams_greenhouse" / coverage.name
+    )
     return coverage
 
 
 class ValidateNativeCamsCoverageTests(unittest.TestCase):
-    def test_accepts_three_complete_cams_runs(self):
+    def test_rejects_missing_ecpds_runtime_file_with_complete_run_metadata(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "producer"
+            coverage = make_cams_coverage(root)
+            (coverage / "cams_global" / "pm2_5" / "chunk.om").unlink()
+
+            with self.assertRaisesRegex(ValueError, "missing runtime variables"):
+                validate_cams_contract(root)
+
+    def test_rejects_missing_ads_runtime_file_with_complete_run_metadata(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "producer"
+            coverage = make_greenhouse_coverage(root)
+            (
+                coverage
+                / "cams_global_greenhouse_gases"
+                / "carbon_monoxide"
+                / "chunk.om"
+            ).unlink()
+
+            with self.assertRaisesRegex(ValueError, "missing runtime variables"):
+                validate_greenhouse_contract(root)
+
+    def test_accepts_three_complete_main_only_ecpds_runs(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "producer"
             coverage = make_cams_coverage(root)
@@ -121,10 +233,39 @@ class ValidateNativeCamsCoverageTests(unittest.TestCase):
 
             self.assertEqual(contract["coverage_path"], str(coverage.resolve()))
             self.assertEqual(contract["source_runs"], ["2026071212", "2026071300", "2026071312"])
+            self.assertEqual(contract["greenhouse_source_runs"], [])
+            self.assertFalse((coverage / "cams_global_greenhouse_gases").exists())
+
+    def test_accepts_independent_three_complete_ads_runs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "producer"
+            coverage = make_greenhouse_coverage(root)
+
+            contract = validate_greenhouse_contract(root)
+
+            self.assertEqual(contract["coverage_path"], str(coverage.resolve()))
             self.assertEqual(
-                contract["greenhouse_source_runs"],
-                ["2026070900", "2026071000", "2026071100"],
+                contract["source_runs"],
+                ["2026071100", "2026071200", "2026071300"],
             )
+
+    def test_rejects_missing_historical_ads_run(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "producer"
+            coverage = make_greenhouse_coverage(root)
+            missing = (
+                coverage
+                / "data_run"
+                / "cams_global_greenhouse_gases"
+                / "2026/07/11/0000Z"
+            )
+            for path in sorted(missing.rglob("*"), reverse=True):
+                if path.is_file():
+                    path.unlink()
+            missing.rmdir()
+
+            with self.assertRaisesRegex(ValueError, "missing retained run metadata"):
+                validate_greenhouse_contract(root)
 
     def test_rejects_missing_historical_cams_run(self):
         with tempfile.TemporaryDirectory() as directory:

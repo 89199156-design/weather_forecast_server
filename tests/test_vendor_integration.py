@@ -162,6 +162,32 @@ def test_cams_greenhouse_ads_download_is_cropped_server_side_and_decoded_as_regi
     assert "camsRegionalSlice" not in cams_greenhouse
 
 
+def test_cds_ads_queue_state_is_fail_closed_and_post_is_never_retried():
+    cds = read_vendor("Sources/App/Helper/Download/Curl+CDS.swift")
+
+    assert "case uncertainSubmission" in cds
+    assert "fileprivate enum CdsApiResumePhase" in cds
+    assert "case submitting" in cds
+    assert "case submitted" in cds
+    assert "phase: .submitting" in cds
+    assert "job: nil" in cds
+    assert "throw CdsApiError.uncertainSubmission" in cds
+    assert "case submissionRejected" in cds
+    assert "case .invalidCombinationOfValues, .submissionRejected:" in cds
+    assert "if (400..<500).contains(response.status.code)" in cds
+    assert "throw CdsApiError.submissionRejected" in cds
+    assert 'throw CdsApiError.invalidResponse(message: "Could not decode CDS job response")' in cds
+    assert "phase: .submitted" in cds
+    start = cds.split("fileprivate func startCdsApiJob", 1)[1].split(
+        "fileprivate func waitForCdsJob", 1
+    )[0]
+    assert "client.execute(request" in start
+    assert "executeRetry" not in start
+    assert "error404WaitTime" in cds
+    assert 'environment["WEATHER_CDS_POLL_INTERVAL_SECONDS"]' in cds
+    assert 'environment["WEATHER_CDS_JOB_TIMEOUT_HOURS"]' in cds
+
+
 def test_openmeteo_raw_download_is_the_default_runtime_data_mode():
     script = (ROOT / "scripts" / "download_openmeteo_gfs_data.sh").read_text(encoding="utf-8")
     singapore_env = (ROOT / "config" / "singapore.example.env").read_text(encoding="utf-8")

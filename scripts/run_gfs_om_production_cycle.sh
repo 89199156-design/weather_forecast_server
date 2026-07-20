@@ -11,7 +11,6 @@ if [[ -z "$RUN" ]]; then
 fi
 LOG_DIR="${WEATHER_OPENMETEO_BUILD_LOG_DIR:-/opt/1panel/apps/weather/logs}"
 LOCK_FILE="${WEATHER_OPENMETEO_GFS_LOCK_FILE:-/tmp/weather_openmeteo_gfs_cycle.lock}"
-GLOBAL_LOCK_FILE="${WEATHER_OPENMETEO_GLOBAL_LOCK_FILE:-/tmp/weather_openmeteo_production.lock}"
 PRODUCER_ROOT="${WEATHER_OM_PRODUCER_ROOT:-$APP_DIR/data/om_producer}"
 RESUME_STAGING="${WEATHER_OM_GFS_RESUME_STAGING:-}"
 FORCE_REUSED_DOWNLOAD="${WEATHER_OM_GFS_FORCE_REUSED_DOWNLOAD:-false}"
@@ -70,11 +69,14 @@ mkdir -p "$LOG_DIR" "$PRODUCER_ROOT/staging"
     exit 0
   }
 
-  exec 8>"$GLOBAL_LOCK_FILE"
-  flock -n 8 || {
-    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_GFS_OM] another Open-Meteo production cycle is running, skip."
-    exit 0
-  }
+  export WEATHER_OPENMETEO_TASK_SCOPE=gfs
+  if ! is_truthy "${WEATHER_TASK_CLEANUP_DONE:-false}"; then
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_GFS_OM] stage=cleanup previous abnormal task residue"
+    cleanup_openmeteo_task_container "$WEATHER_OPENMETEO_TASK_SCOPE"
+    python3 "$APP_DIR/scripts/cleanup_native_task_staging.py" \
+      --producer-root "$PRODUCER_ROOT" \
+      --scope gfs
+  fi
 
   cd "$APP_DIR"
   read -r SOURCE_RUNS PUBLIC_START_UTC PUBLIC_END_UTC PUBLIC_HOURS LOCAL_DAY_START_UTC < <(
@@ -328,6 +330,7 @@ PY
     rm -rf -- "$RESUME_SOURCE"
   fi
 
+  echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_GFS_OM] stage=cleanup retention applied and temporary source data removed"
   trap - EXIT
   echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_GFS_OM] completed run=$RUN sources=$SOURCE_RUNS"
 } 9>"$LOCK_FILE" 2>&1 | tee -a "$LOG_DIR/openmeteo_gfs_om_cycle.log"

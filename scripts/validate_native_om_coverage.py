@@ -18,7 +18,9 @@ from publish_native_om_coverage import (
     GFS013_SKIP_HOUR_ZERO,
     GFS025_SKIP_HOUR_ZERO,
     validate_run_metadata,
+    validate_runtime_variables,
 )
+from seed_native_om_staging import coverage_data_stats
 
 
 UTC = timezone.utc
@@ -31,6 +33,24 @@ DEFAULT_VARIABLES = (
     "uv_index_clear_sky",
     "temperature_850hPa",
 )
+
+
+def validate_coverage_data_stats(
+    coverage: Path,
+    marker: dict[str, Any],
+    manifest: dict[str, Any],
+    label: str,
+) -> None:
+    if marker.get("files") != manifest.get("files") or marker.get("bytes") != manifest.get("bytes"):
+        print(f"warning: {label} marker/manifest size audit mismatch", file=sys.stderr)
+    actual_files, actual_bytes = coverage_data_stats(coverage)
+    if marker.get("files") != actual_files or marker.get("bytes") != actual_bytes:
+        print(
+            f"warning: {label} published file stats audit mismatch "
+            f"recorded={marker.get('files')}/{marker.get('bytes')} "
+            f"actual={actual_files}/{actual_bytes}",
+            file=sys.stderr,
+        )
 GFS_SKIP_HOUR_ZERO = frozenset(GFS013_SKIP_HOUR_ZERO | GFS025_SKIP_HOUR_ZERO)
 
 
@@ -105,10 +125,13 @@ def validate_coverage_contract(producer_root: Path, min_public_hours: int = 300)
         "public_hours",
         "domain_grids",
         "static_sources",
+        "files",
+        "bytes",
     )
     for field in required_identity:
         if marker.get(field) != manifest.get(field):
             raise ValueError(f"marker/manifest mismatch for {field}")
+    validate_coverage_data_stats(coverage, marker, manifest, "GFS")
     if marker.get("status") != "complete":
         raise ValueError("coverage status is not complete")
     if marker.get("runtime_format") != "openmeteo-native-v1":
@@ -228,6 +251,13 @@ def validate_coverage_contract(producer_root: Path, min_public_hours: int = 300)
                 source_run,
                 gfs_forecast_hours(max_forecast_hour),
             )
+        latest_metadata = validate_run_metadata(
+            coverage,
+            domain,
+            str(source_runs[-1]),
+            gfs_forecast_hours(int(latest_max)),
+        )
+        validate_runtime_variables(coverage, domain, latest_metadata["variables"])
 
     return {
         "producer_root": str(producer_root),

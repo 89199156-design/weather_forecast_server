@@ -11,29 +11,42 @@ ROOT = Path(__file__).resolve().parents[1]
 class NativeModelPipelineTests(unittest.TestCase):
     def test_pipeline_is_event_driven_and_strictly_ordered(self):
         source = (ROOT / "scripts" / "run_native_model_pipeline.sh").read_text(encoding="utf-8")
+        reload_helper = (ROOT / "scripts" / "reload_native_api_snapshot.sh").read_text(
+            encoding="utf-8"
+        )
         om = source.index("run_gfs_om_production_cycle.sh")
         nofile = source.index('ulimit -S -n "$WEBP_NOFILE_LIMIT"')
         webp = source.index("nice -n 10 ionice")
-        signal = source.index("systemctl reload")
+        reload = source.index("reload_native_api_snapshot.sh")
         prune = source.index("prune_native_coverage_history.py")
 
         self.assertLess(om, webp)
         self.assertLess(nofile, webp)
-        self.assertLess(webp, signal)
-        self.assertLess(signal, prune)
+        self.assertLess(webp, reload)
+        self.assertLess(reload, prune)
         self.assertIn("published_identity", source)
         self.assertIn('actual_run" != "$RUN', source)
+        self.assertIn(
+            'bash "$APP_DIR/scripts/reload_native_api_snapshot.sh" "$SCOPE" "$actual_coverage_id"',
+            source,
+        )
+        self.assertIn('MODE="${3:-produce}"', source)
+        self.assertIn('"apply-published"', source)
+        self.assertNotIn("PIPELINE_LOCK", source)
+        self.assertNotIn("WEATHER_OM_PIPELINE_LOCK_FILE", source)
+        self.assertNotIn("flock", source)
         self.assertNotIn("sleep ", source)
         self.assertNotIn("while true", source)
         self.assertNotIn("find ", source)
         self.assertIn('--public-root "$WEBP_PUBLIC_ROOT"', source)
         self.assertIn('--workers "$WEBP_WORKERS"', source)
         self.assertIn('WEATHER_OM_WEBP_NOFILE_LIMIT:-65536', source)
-        self.assertIn("--show-cursor", source)
-        self.assertIn('--after-cursor="$journal_cursor"', source)
-        self.assertIn("--follow", source)
-        self.assertIn('if [[ "$reload_confirmed" == "true" ]]', source)
-        self.assertIn("old coverage retained", source)
+        self.assertNotIn("systemctl reload", source)
+        self.assertIn("systemctl reload", reload_helper)
+        self.assertIn("--show-cursor", reload_helper)
+        self.assertIn('--after-cursor="$cursor"', reload_helper)
+        self.assertIn("--follow", reload_helper)
+        self.assertIn('if [[ "$confirmed" != "true" ]]', reload_helper)
 
     def test_installer_retires_legacy_five_minute_webp_jobs(self):
         installer = (ROOT / "scripts" / "install_openmeteo_cron.sh").read_text(
@@ -118,25 +131,11 @@ printf '{"status":"complete","runtime_format":"openmeteo-native-v1","latest_comp
                 encoding="utf-8",
             )
             webp.chmod(0o755)
-            bin_dir = root / "bin"
-            bin_dir.mkdir()
-            systemctl = bin_dir / "systemctl"
-            systemctl.write_text(
-                "#!/usr/bin/env bash\nprintf 'SYSTEMCTL %s\n' \"$*\" >> \"$WEATHER_TEST_EVENT_LOG\"\nexit 0\n",
+            (scripts / "reload_native_api_snapshot.sh").write_text(
+                "#!/usr/bin/env bash\n"
+                "printf 'RELOAD %s\\n' \"$*\" >> \"$WEATHER_TEST_EVENT_LOG\"\n",
                 encoding="utf-8",
             )
-            systemctl.chmod(0o755)
-            journalctl = bin_dir / "journalctl"
-            journalctl.write_text(
-                """#!/usr/bin/env bash
-case " $* " in
-  *" --show-cursor "*) printf '%s\n' '-- cursor: test-cursor' ;;
-  *" --follow "*) printf '%s\n' 'published new immutable OM API snapshot' ;;
-esac
-""",
-                encoding="utf-8",
-            )
-            journalctl.chmod(0o755)
             (scripts / "prune_native_coverage_history.py").write_text(
                 """import os
 import sys
@@ -150,13 +149,11 @@ with open(os.environ["WEATHER_TEST_EVENT_LOG"], "a", encoding="utf-8") as output
                 {
                     "WEATHER_FORECAST_APP_DIR": str(app),
                     "WEATHER_OM_PRODUCER_ROOT": str(producer),
-                    "WEATHER_OM_PIPELINE_LOCK_FILE": str(root / "pipeline.lock"),
                     "WEATHER_OM_WEBP_BIN": str(webp),
                     "WEATHER_OM_WEBP_DATA_ROOT": str(root / "webp"),
                     "WEATHER_OM_WEBP_PUBLIC_ROOT": str(root / "public"),
                     "WEATHER_OMFILE_LIB": str(decoder),
                     "WEATHER_TEST_EVENT_LOG": str(log),
-                    "PATH": f"{bin_dir}{os.pathsep}{env['PATH']}",
                 }
             )
             completed = subprocess.run(
@@ -173,12 +170,11 @@ with open(os.environ["WEATHER_TEST_EVENT_LOG"], "a", encoding="utf-8") as output
             self.assertTrue(events[1].startswith("WEBP --scope gfs"))
             self.assertIn(f"--public-root {root / 'public'}", events[1])
             self.assertIn("--workers 1", events[1])
-            self.assertEqual(events[2], "SYSTEMCTL is-active --quiet weather-om-api.service")
-            self.assertEqual(events[3], "SYSTEMCTL reload weather-om-api.service")
-            self.assertIn("PRUNE --producer-root", events[4])
-            self.assertIn("--scope gfs", events[4])
-            self.assertIn("--expected-coverage-id gfs_native_2026071300", events[4])
-            self.assertEqual(len(events), 5)
+            self.assertEqual(events[2], "RELOAD gfs gfs_native_2026071300")
+            self.assertIn("PRUNE --producer-root", events[3])
+            self.assertIn("--scope gfs", events[3])
+            self.assertIn("--expected-coverage-id gfs_native_2026071300", events[3])
+            self.assertEqual(len(events), 4)
 
 
 if __name__ == "__main__":

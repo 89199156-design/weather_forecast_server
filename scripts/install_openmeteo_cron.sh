@@ -55,7 +55,9 @@ with sqlite3.connect(panel_db) as conn:
             # 1Panel v1 uses commas to separate complete cron expressions.
             # Do not use a standard comma-separated hour field here: the
             # scheduler would split it into invalid fragments at startup.
-            "17 0 * * *,17 6 * * *,17 12 * * *,17 18 * * *",
+            # Probe every twenty minutes. The probe is read-only and the
+            # production locks prevent duplicate model pipelines.
+            "0 * * * *,20 * * * *,40 * * * *",
             "\n".join(
                 (
                     "#!/bin/bash",
@@ -69,8 +71,10 @@ with sqlite3.connect(panel_db) as conn:
             ),
         ),
         (
-            "weather_cams_ftp_probe_cycle",
-            "37 4 * * *,37 16 * * *",
+            "weather_cams_ecpds_probe_cycle",
+            # ECPDS probes are cheap HEAD requests and become no-ops when the
+            # local three-run window is complete. Offset them from GFS.
+            "5 * * * *,25 * * * *,45 * * * *",
             "\n".join(
                 (
                     "#!/bin/bash",
@@ -79,6 +83,24 @@ with sqlite3.connect(panel_db) as conn:
                     f"export WEATHER_OPENMETEO_ENV_FILE={env_file}",
                     f"export WEATHER_OM_PRODUCER_ROOT={producer_root}",
                     f"exec /usr/bin/nice -n 15 /usr/bin/ionice -c 3 /bin/bash {app_dir}/scripts/run_cams_ftp_scheduled_cycle.sh",
+                    "",
+                )
+            ),
+        ),
+        (
+            "weather_cams_ads_cycle",
+            # ADS never probes remote availability. This frequent local check
+            # reacts only after ECPDS publishes a new UTC date. Its own lock is
+            # held from the single POST through queueing, download and publish.
+            "10 * * * *,30 * * * *,50 * * * *",
+            "\n".join(
+                (
+                    "#!/bin/bash",
+                    "set -euo pipefail",
+                    f"export WEATHER_FORECAST_APP_DIR={app_dir}",
+                    f"export WEATHER_OPENMETEO_ENV_FILE={env_file}",
+                    f"export WEATHER_OM_PRODUCER_ROOT={producer_root}",
+                    f"exec /usr/bin/nice -n 15 /usr/bin/ionice -c 3 /bin/bash {app_dir}/scripts/run_cams_ads_scheduled_cycle.sh",
                     "",
                 )
             ),
@@ -96,7 +118,7 @@ with sqlite3.connect(panel_db) as conn:
 PY
 
 # 1Panel is the sole scheduler. Remove the exact legacy host cron after the
-# two enabled 1Panel rows are committed; it is deliberately not retained.
+# three enabled 1Panel rows are committed; it is deliberately not retained.
 if [[ -f "$SYSTEM_CRON_FILE" ]]; then
   "${SUDO[@]}" rm -f -- "$SYSTEM_CRON_FILE"
 fi
@@ -107,4 +129,4 @@ if command -v systemctl >/dev/null 2>&1 \
   && "${SUDO[@]}" systemctl is-active --quiet "$PANEL_SERVICE"; then
   "${SUDO[@]}" systemctl restart "$PANEL_SERVICE"
 fi
-printf '%s\n' "Installed enabled 1Panel Open-Meteo cronjobs: weather_gfs_probe_cycle, weather_cams_ftp_probe_cycle"
+printf '%s\n' "Installed enabled 1Panel Open-Meteo cronjobs: weather_gfs_probe_cycle, weather_cams_ecpds_probe_cycle, weather_cams_ads_cycle"

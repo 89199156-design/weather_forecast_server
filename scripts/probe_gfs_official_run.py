@@ -36,12 +36,12 @@ def read_local_state(data_dir: Path) -> tuple[datetime | None, set[str]]:
         try:
             payload = json.loads(group_ready.read_text(encoding="utf-8"))
             if payload.get("status") == "complete":
-                run = payload.get("latest_complete_run")
-                if run:
-                    source_runs = payload.get("source_runs")
+                run = str(payload.get("latest_complete_run") or "")
+                source_runs = payload.get("source_runs")
+                if run and isinstance(source_runs, list):
                     return (
                         datetime.strptime(run, "%Y%m%d%H").replace(tzinfo=UTC),
-                        set(source_runs) if isinstance(source_runs, list) else set(),
+                        set(str(value) for value in source_runs),
                     )
         except (OSError, ValueError, json.JSONDecodeError):
             pass
