@@ -275,4 +275,4 @@ PY
 
   trap - EXIT
   echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_OM] completed run=$RUN sources=$SOURCE_RUNS greenhouse_sources=$GREENHOUSE_SOURCE_RUNS"
-} 9>"$LOCK_FILE" >> "$LOG_DIR/openmeteo_cams_om_cycle.log" 2>&1
+} 9>"$LOCK_FILE" 2>&1 | tee -a "$LOG_DIR/openmeteo_cams_om_cycle.log"

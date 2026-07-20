@@ -330,4 +330,4 @@ PY
 
   trap - EXIT
   echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_GFS_OM] completed run=$RUN sources=$SOURCE_RUNS"
-} 9>"$LOCK_FILE" >> "$LOG_DIR/openmeteo_gfs_om_cycle.log" 2>&1
+} 9>"$LOCK_FILE" 2>&1 | tee -a "$LOG_DIR/openmeteo_gfs_om_cycle.log"

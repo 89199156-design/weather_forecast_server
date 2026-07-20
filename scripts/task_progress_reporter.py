@@ -23,14 +23,22 @@ PRODUCT_NAMES = {
     "gfs013_surface": "GFS 0.13°地面层",
     "ncep_gfs013": "GFS 0.13°地面层",
     "gfs013": "GFS 0.13°地面层",
+    "gfs025_pressure": "GFS 0.25°气压层",
+    "gfs_pressure_profile": "GFS 0.25°气压层",
+    "pressure_profile": "GFS 0.25°气压层",
+    "gfs025_surface": "GFS 0.25°地面层",
     "gfs025": "GFS 0.25°地面层",
     "ncep_gfs025": "GFS 0.25°地面层",
-    "gfs_pressure_profile": "GFS 气压层",
-    "pressure_profile": "GFS 气压层",
     "cams_global_greenhouse_gases": "CAMS 温室气体",
     "greenhouse": "CAMS 温室气体",
     "cams_global": "CAMS 全球空气质量",
 }
+
+FORECAST_HOUR_PATTERN = re.compile(r"\bforecastHour\s+(\d+)\b", re.IGNORECASE)
+HORIZON_PATTERNS = (
+    re.compile(r"\bhorizon=(\d+)\b", re.IGNORECASE),
+    re.compile(r"--max-forecast-hour\s+(\d+)\b", re.IGNORECASE),
+)
 
 
 def utc_text() -> str:
@@ -88,7 +96,15 @@ def infer_state(line: str, *, default_stage: str) -> tuple[str, str | None, bool
     elif "planning" in combined or " plan" in combined:
         stage_text = "分析下载范围"
     elif "download" in combined or product_text:
-        stage_text = f"下载 {product_text}" if product_text else "下载原始数据"
+        if product_text:
+            stage_text = f"下载 {product_text}"
+        elif default_stage.startswith("下载 "):
+            # Open-Meteo's per-frame lines only contain ``forecastHour``. Keep
+            # the product selected by the preceding input-group line instead
+            # of degrading the report back to the generic download stage.
+            stage_text = default_stage
+        else:
+            stage_text = "下载原始数据"
     else:
         stage_text = default_stage
 
@@ -112,6 +128,9 @@ def report_progress(
     log_file.parent.mkdir(parents=True, exist_ok=True)
     stage = default_stage
     run = "-"
+    target_run = "-"
+    forecast_hour: int | None = None
+    max_forecast_hour: int | None = None
     skipped = False
     return_code: int | None = None
     last_size = directory_bytes(watch_roots)
@@ -140,8 +159,14 @@ def report_progress(
         current_size = directory_bytes(watch_roots)
         elapsed = max(now - last_report_at, 0.001)
         growth = max(current_size - last_size, 0)
+        frame_text = ""
+        if forecast_hour is not None:
+            frame_text = f"｜当前时效：f{forecast_hour:03d}"
+            if max_forecast_hour is not None:
+                frame_text += f"/f{max_forecast_hour:03d}"
         print(
-            f"{utc_text()}｜进度｜任务：{task}｜阶段：{stage}｜批次：{run}"
+            f"{utc_text()}｜进度｜任务：{task}｜阶段：{stage}"
+            f"｜目标批次：{target_run}｜当前批次：{run}{frame_text}"
             f"｜近一分钟增长：{growth / 1024 / 1024:.1f} MiB"
             f"｜速度：{growth / elapsed / 1024 / 1024:.2f} MiB/s",
             flush=True,
@@ -176,9 +201,24 @@ def report_progress(
             inferred_stage, inferred_run, line_skipped = infer_state(
                 line, default_stage=stage
             )
+            if inferred_run and target_run == "-":
+                target_run = inferred_run
+            if inferred_run and inferred_run != run:
+                forecast_hour = None
+                max_forecast_hour = None
+            if inferred_stage != stage and inferred_stage.startswith("下载 "):
+                forecast_hour = None
             stage = inferred_stage
             if inferred_run:
                 run = inferred_run
+            for horizon_pattern in HORIZON_PATTERNS:
+                horizon_match = horizon_pattern.search(line)
+                if horizon_match:
+                    max_forecast_hour = int(horizon_match.group(1))
+                    break
+            forecast_hour_match = FORECAST_HOUR_PATTERN.search(line)
+            if forecast_hour_match:
+                forecast_hour = int(forecast_hour_match.group(1))
             skipped = skipped or line_skipped
 
             now = time.monotonic()
@@ -197,7 +237,11 @@ def report_progress(
     elif skipped:
         print(f"{utc_text()}｜跳过｜任务：{task}｜原因：已有任务运行或没有新批次", flush=True)
     else:
-        print(f"{utc_text()}｜完成｜任务：{task}｜批次：{run}", flush=True)
+        print(
+            f"{utc_text()}｜完成｜任务：{task}｜目标批次：{target_run}"
+            f"｜最后处理批次：{run}",
+            flush=True,
+        )
     return return_code
 
 
