@@ -1182,7 +1182,8 @@ def test_gfs_probe_cycle_starts_latest_ready_run_after_newer_not_ready(tmp_path)
     assert completed.returncode == 0, completed.stderr
     assert run_file.read_text(encoding="utf-8").strip() == "2026070600"
     assert "开始｜任务：GFS 生产更新" in completed.stdout
-    assert "完成｜任务：GFS 生产更新｜批次：2026070600" in completed.stdout
+    assert "完成｜任务：GFS 生产更新｜目标批次：2026070600" in completed.stdout
+    assert "最后处理批次：2026070600" in completed.stdout
 
 
 def test_openmeteo_cron_installer_uses_one_1panel_scheduler_for_gfs_and_cams_ftp():
