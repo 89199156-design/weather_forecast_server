@@ -73,7 +73,7 @@ def make_coverage(root: Path) -> Path:
             forecast_hours = (
                 list(range(6))
                 if source_index < manifest["short_run_count"]
-                else list(range(121)) + list(range(123, 385, 3))
+                else list(range(385))
             )
             run_dir = coverage / "data_run" / domain / base.strftime("%Y/%m/%d/%H00Z")
             run_dir.mkdir(parents=True, exist_ok=True)

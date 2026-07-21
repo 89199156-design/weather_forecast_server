@@ -11,7 +11,7 @@ import shutil
 import sys
 from typing import Any
 
-from gfs_schedule import gfs_forecast_hours
+from gfs_schedule import gfs_full_run_hours
 from publish_native_om_coverage import (
     GFS_DOMAINS,
     atomic_symlink,
@@ -90,7 +90,7 @@ def coverage_data_stats(coverage: Path) -> tuple[int, int]:
 def expected_run_hours(group: str, index: int, run_count: int) -> list[int]:
     if group == "gfs":
         max_forecast_hour = 5 if index < run_count - 2 else 384
-        return gfs_forecast_hours(max_forecast_hour)
+        return gfs_full_run_hours(max_forecast_hour)
     return list(range(121))
 
 

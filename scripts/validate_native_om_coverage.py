@@ -13,7 +13,7 @@ from typing import Any
 import urllib.parse
 import urllib.request
 
-from gfs_schedule import gfs_forecast_hours
+from gfs_schedule import gfs_full_run_hours
 from publish_native_om_coverage import (
     GFS013_SKIP_HOUR_ZERO,
     GFS025_SKIP_HOUR_ZERO,
@@ -249,13 +249,13 @@ def validate_coverage_contract(producer_root: Path, min_public_hours: int = 300)
                 coverage,
                 domain,
                 source_run,
-                gfs_forecast_hours(max_forecast_hour),
+                gfs_full_run_hours(max_forecast_hour),
             )
         latest_metadata = validate_run_metadata(
             coverage,
             domain,
             str(source_runs[-1]),
-            gfs_forecast_hours(int(latest_max)),
+            gfs_full_run_hours(int(latest_max)),
         )
         validate_runtime_variables(coverage, domain, latest_metadata["variables"])
 

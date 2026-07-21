@@ -4,13 +4,18 @@ import SwiftNetCDF
 import Foundation
 import Logging
 
-/// The native per-run CAMS files are consumed directly by the regional Rust
-/// runtime, so they must expose the same hourly axis as the ordinary Open-Meteo
-/// time-series database. Model-level CAMS source handles are intentionally
-/// three-hourly and are interpolated onto this axis while exporting.
+/// Native per-run files are consumed directly by the regional Rust runtime, so
+/// GFS and CAMS must expose the same hourly public axis as the ordinary
+/// Open-Meteo time-series database. Sparse source handles are interpolated onto
+/// this axis while exporting, before output-scale compression.
 func fullRunTimestamps(domainRegistry: DomainRegistry, dtSeconds: Int, sourceTimes: [Timestamp]) -> [Timestamp] {
     let sorted = sourceTimes.uniqued().sorted()
-    guard domainRegistry == .cams_global, let first = sorted.first, let last = sorted.last else {
+    let requiresHourlyFullRun = [
+        DomainRegistry.cams_global,
+        .ncep_gfs013,
+        .ncep_gfs025,
+    ].contains(domainRegistry)
+    guard requiresHourlyFullRun, let first = sorted.first, let last = sorted.last else {
         return sorted
     }
     return Array(TimerangeDt(start: first, to: last.add(dtSeconds), dtSeconds: dtSeconds))

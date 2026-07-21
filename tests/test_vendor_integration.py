@@ -175,7 +175,8 @@ def test_cams_full_run_export_uses_official_hourly_interpolation_axis():
         "private static func convertConcurrent", 1
     )[0]
 
-    assert "domainRegistry == .cams_global" in helper
+    for domain in (".cams_global", ".ncep_gfs013", ".ncep_gfs025"):
+        assert domain in helper
     assert "last.add(dtSeconds)" in helper
     assert "let requiresInterpolation = sourceTimes.count != time.count" in full_run
     assert "data3d.interpolateInplace(" in full_run

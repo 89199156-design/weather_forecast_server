@@ -13,7 +13,7 @@ import shutil
 import sys
 from typing import Any
 
-from gfs_schedule import gfs_forecast_hours
+from gfs_schedule import gfs_forecast_hours, gfs_full_run_hours
 from native_grid_contract import gfs_domain_grids
 from om_v3_metadata import read_array_dimensions
 
@@ -283,7 +283,7 @@ def validate_gfs_retained_run(
     required_by_domain: dict[str, set[str]],
 ) -> None:
     """Validate one retained GFS run with the same contract used at publish time."""
-    expected_forecast_hours = gfs_forecast_hours(max_forecast_hour)
+    expected_forecast_hours = gfs_full_run_hours(max_forecast_hour)
     for domain in GFS_DOMAINS:
         run_meta = validate_run_metadata(
             staging,
@@ -562,7 +562,7 @@ def publish_gfs_coverage(args: argparse.Namespace) -> dict[str, Any]:
             staging,
             domain,
             args.latest_run,
-            gfs_forecast_hours(args.latest_max_forecast_hour),
+            gfs_full_run_hours(args.latest_max_forecast_hour),
         )
         validate_runtime_variables(staging, domain, latest_metadata["variables"])
 

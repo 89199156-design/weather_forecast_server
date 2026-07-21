@@ -16,3 +16,11 @@ def gfs_forecast_hours(max_forecast_hour: int) -> list[int]:
     if max_forecast_hour > 120:
         hours.extend(range(123, max_forecast_hour + 1, 3))
     return hours
+
+
+def gfs_full_run_hours(max_forecast_hour: int) -> list[int]:
+    """Return the dense public hourly axis stored in native per-run files."""
+    # Reuse the source-schedule validation so both representations enforce the
+    # same official horizon.
+    gfs_forecast_hours(max_forecast_hour)
+    return list(range(max_forecast_hour + 1))

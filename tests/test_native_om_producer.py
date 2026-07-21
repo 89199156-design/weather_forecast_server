@@ -86,9 +86,9 @@ def make_staging(output_root: Path, run: str) -> Path:
             forecast_hours = (
                 list(range(6))
                 if source_index < 3
-                else list(range(121)) + list(range(123, 385, 3))
+                else list(range(385))
             )
-            stored_frames = 6 if source_index < 3 else 209
+            stored_frames = 6 if source_index < 3 else 385
             run_dir = staging / "data_run" / domain / base.strftime("%Y/%m/%d/%H00Z")
             run_dir.mkdir(parents=True, exist_ok=True)
             write_fake_om(run_dir / "temperature_2m.om", (2, 3, stored_frames))
@@ -580,9 +580,9 @@ class NativeOmProducerTests(unittest.TestCase):
                 / latest.strftime("%Y/%m/%d/%H00Z")
                 / "temperature_2m.om"
             )
-            write_fake_om(om_path, (2, 3, 208))
+            write_fake_om(om_path, (2, 3, 384))
 
-            with self.assertRaisesRegex(ValueError, "stored time count 208, expected 209"):
+            with self.assertRaisesRegex(ValueError, "stored time count 384, expected 385"):
                 publisher.publish_gfs_coverage(
                     publisher_args(output_root, staging, "2026071300")
                 )
@@ -593,21 +593,21 @@ class NativeOmProducerTests(unittest.TestCase):
         gfs013 = publisher.gfs_stored_frame_counts(
             "ncep_gfs013",
             ["temperature_2m", "precipitation", "cloud_cover", "uv_index"],
-            209,
+            385,
         )
         gfs025 = publisher.gfs_stored_frame_counts(
             "ncep_gfs025",
             ["pressure_msl", "categorical_freezing_rain", "temperature_1000hPa"],
-            209,
+            385,
         )
 
-        self.assertEqual(gfs013["temperature_2m"], 209)
-        self.assertEqual(gfs013["precipitation"], 208)
-        self.assertEqual(gfs013["cloud_cover"], 208)
-        self.assertEqual(gfs013["uv_index"], 208)
-        self.assertEqual(gfs025["pressure_msl"], 209)
-        self.assertEqual(gfs025["categorical_freezing_rain"], 208)
-        self.assertEqual(gfs025["temperature_1000hPa"], 209)
+        self.assertEqual(gfs013["temperature_2m"], 385)
+        self.assertEqual(gfs013["precipitation"], 384)
+        self.assertEqual(gfs013["cloud_cover"], 384)
+        self.assertEqual(gfs013["uv_index"], 384)
+        self.assertEqual(gfs025["pressure_msl"], 385)
+        self.assertEqual(gfs025["categorical_freezing_rain"], 384)
+        self.assertEqual(gfs025["temperature_1000hPa"], 385)
 
         historical = publisher.gfs_stored_frame_counts(
             "ncep_gfs013",

@@ -44,6 +44,20 @@ import Logging
         )
     }
 
+    @Test func gfsFullRunExpandsOfficialSparseTailToHourlyAxis() {
+        let sourceHours = Array(0...120) + Array(stride(from: 123, through: 384, by: 3))
+        let sourceTimes = sourceHours.map { Timestamp($0 * 3600) }
+
+        for domain in [DomainRegistry.ncep_gfs013, .ncep_gfs025] {
+            let fullRunTimes = fullRunTimestamps(
+                domainRegistry: domain,
+                dtSeconds: 3600,
+                sourceTimes: sourceTimes
+            )
+            #expect(fullRunTimes.map(\.timeIntervalSince1970) == Array(0...384).map { $0 * 3600 })
+        }
+    }
+
     @Test func testAwsSign() async throws {
         let url = "https://examplebucket.s3.amazonaws.com/test.txt"
         var request = HTTPClientRequest(url: url)
