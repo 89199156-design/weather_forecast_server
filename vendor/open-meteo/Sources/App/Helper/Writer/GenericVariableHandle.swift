@@ -4,6 +4,18 @@ import SwiftNetCDF
 import Foundation
 import Logging
 
+/// The native per-run CAMS files are consumed directly by the regional Rust
+/// runtime, so they must expose the same hourly axis as the ordinary Open-Meteo
+/// time-series database. Model-level CAMS source handles are intentionally
+/// three-hourly and are interpolated onto this axis while exporting.
+func fullRunTimestamps(domainRegistry: DomainRegistry, dtSeconds: Int, sourceTimes: [Timestamp]) -> [Timestamp] {
+    let sorted = sourceTimes.uniqued().sorted()
+    guard domainRegistry == .cams_global, let first = sorted.first, let last = sorted.last else {
+        return sorted
+    }
+    return Array(TimerangeDt(start: first, to: last.add(dtSeconds), dtSeconds: dtSeconds))
+}
+
 
 /// Downloaders return FileHandles to keep files open while downloading
 /// If another download starts and would overlap, this still keeps the old file open
@@ -144,8 +156,15 @@ struct GenericVariableHandle: Sendable {
             let variable = handles[0].variable
             let nMembers = (handles.max(by: { $0.member < $1.member })?.member ?? 0) + 1
             let nMembersStr = nMembers > 1 ? " (\(nMembers) nMembers)" : ""
-            let time: [Timestamp] = handles.flatMap({Array($0.time)}).uniqued().sorted()
+            let sourceTimes: [Timestamp] = handles.flatMap({Array($0.time)}).uniqued().sorted()
+            let time = fullRunTimestamps(
+                domainRegistry: domain.domainRegistry,
+                dtSeconds: domain.dtSeconds,
+                sourceTimes: sourceTimes
+            )
             let nTime = time.count
+            let timeRange = TimerangeDt(start: time[0], nTime: nTime, dtSeconds: domain.dtSeconds)
+            let requiresInterpolation = sourceTimes.count != time.count
             
             let progress = TransferAmountTracker(logger: logger, totalSize: nx * ny * nTime * nMembers * MemoryLayout<Float>.size, name: "Convert \(variable.rawValue)\(nMembersStr) \(nTime) timesteps")
             
@@ -199,6 +218,19 @@ struct GenericVariableHandle: Sendable {
                             data3d[0..<nLoc, reader.member, timeArrayIndex] = read[0..<nLoc]
                         }
                     }
+                    if requiresInterpolation {
+                        let locationRange1D = RegularGridSlice(
+                            grid: domain.grid,
+                            yRange: Int(yRange.lowerBound) ..< Int(yRange.upperBound),
+                            xRange: Int(xRange.lowerBound) ..< Int(xRange.upperBound)
+                        )
+                        data3d.interpolateInplace(
+                            type: variable.interpolation,
+                            time: timeRange,
+                            grid: domain.grid,
+                            locationRange: locationRange1D
+                        )
+                    }
                     try writer.writeData(
                         array: data3d.data,
                         arrayDimensions: thisChunkDimensions
@@ -227,7 +259,11 @@ struct GenericVariableHandle: Sendable {
             try fn.linkTemporary(file: filePath)
             await progress.finish()
         }
-        let validTimes = handles.flatMap({$0.time.map({$0})}).uniqued().sorted()
+        let validTimes = fullRunTimestamps(
+            domainRegistry: domain.domainRegistry,
+            dtSeconds: domain.dtSeconds,
+            sourceTimes: handles.flatMap({$0.time.map({$0})})
+        )
         if !skipMeta {
             try FullRunMetaJson.write(domain: domain, run: run, validTimes: validTimes)
         }
@@ -475,4 +511,3 @@ actor GribDeaverager {
         return await deaccumulateIfRequired(variable: variable, member: member, stepType: stepType, stepRange: stepRange, array2d: &grib2d.array)
     }
 }
-

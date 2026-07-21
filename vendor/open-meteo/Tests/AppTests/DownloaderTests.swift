@@ -26,6 +26,24 @@ import Logging
         #expect(roundf(values[5] * 10) / 10 == 0.0)
     }
 
+    @Test func camsGlobalFullRunExpandsSparseSourceTimesToHourlyAxis() {
+        let sourceTimes = [0, 3, 6, 9].map { Timestamp($0 * 3600) }
+        let fullRunTimes = fullRunTimestamps(
+            domainRegistry: .cams_global,
+            dtSeconds: 3600,
+            sourceTimes: sourceTimes
+        )
+
+        #expect(fullRunTimes.map(\.timeIntervalSince1970) == Array(0...9).map { $0 * 3600 })
+        #expect(
+            fullRunTimestamps(
+                domainRegistry: .cams_global_greenhouse_gases,
+                dtSeconds: 3 * 3600,
+                sourceTimes: sourceTimes
+            ) == sourceTimes
+        )
+    }
+
     @Test func testAwsSign() async throws {
         let url = "https://examplebucket.s3.amazonaws.com/test.txt"
         var request = HTTPClientRequest(url: url)

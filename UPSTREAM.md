@@ -71,6 +71,14 @@ Weather-code derivation, model reader behavior, interpolation, model fallback,
 unit precision, and JSON/API semantics must come from recorded Open-Meteo source
 paths, not from a separately maintained Python clone or local formula.
 
+The regional native runtime also consumes per-run files written by
+`GenericVariableHandle.generateFullRunData`. For `cams_global` only, this
+product-source boundary expands the official three-hour model-level source
+cadence to the domain's hourly axis and invokes the existing upstream
+`variable.interpolation`. It does not define or modify an interpolation
+formula; it mirrors the ordinary Open-Meteo time-series conversion for the
+additional native per-run representation.
+
 ## Local Patches In Vendored Open-Meteo
 
 The vendored directory starts from upstream

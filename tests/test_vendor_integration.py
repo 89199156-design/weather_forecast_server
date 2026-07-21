@@ -165,6 +165,24 @@ def test_cams_greenhouse_ads_download_keeps_upstream_full_grid_values_and_crops_
     assert "data.multiplyAdd(multiply: scaling, add: 0)" in cams_greenhouse
 
 
+def test_cams_full_run_export_uses_official_hourly_interpolation_axis():
+    writer = read_vendor("Sources/App/Helper/Writer/GenericVariableHandle.swift")
+
+    helper = writer.split("func fullRunTimestamps", 1)[1].split(
+        "struct GenericVariableHandle", 1
+    )[0]
+    full_run = writer.split("static func generateFullRunData", 1)[1].split(
+        "private static func convertConcurrent", 1
+    )[0]
+
+    assert "domainRegistry == .cams_global" in helper
+    assert "last.add(dtSeconds)" in helper
+    assert "let requiresInterpolation = sourceTimes.count != time.count" in full_run
+    assert "data3d.interpolateInplace(" in full_run
+    assert "type: variable.interpolation" in full_run
+    assert "time: timeRange" in full_run
+
+
 def test_cds_ads_queue_state_is_fail_closed_and_post_is_never_retried():
     cds = read_vendor("Sources/App/Helper/Download/Curl+CDS.swift")
 

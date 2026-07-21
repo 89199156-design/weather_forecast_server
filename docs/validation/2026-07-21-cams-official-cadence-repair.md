@@ -30,6 +30,8 @@ The repair restores the upstream cadence contract:
 - surface CAMS variables remain direct hourly source files;
 - model-level variables use forecast hours divisible by three;
 - the standard Open-Meteo conversion fills all 121 public hourly frames;
+- the native `data_run` exporter now applies that same existing interpolation
+  while expanding sparse model-level handles to the 121-frame hourly axis;
 - the remote completeness probe checks the same per-variable source cadence;
 - a guarded current-run repair mode rebuilds all three retained ECPDS runs in
   clean staging and publishes a new immutable coverage revision.
