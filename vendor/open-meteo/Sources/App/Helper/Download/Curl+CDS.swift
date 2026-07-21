@@ -358,9 +358,9 @@ extension Curl {
                 throw CdsApiError.invalidCombinationOfValues
             }
             if (400..<500).contains(response.status.code) {
-                throw CdsApiError.submissionRejected(code: response.status.code, message: message)
+                throw CdsApiError.submissionRejected(code: Int(response.status.code), message: message)
             }
-            throw CdsApiError.startError(code: response.status.code, message: message)
+            throw CdsApiError.startError(code: Int(response.status.code), message: message)
         }
         guard let job = try await response.readJSONDecodable(CdsApiResponse.self) else {
             throw CdsApiError.invalidResponse(message: "Could not decode CDS job response")
