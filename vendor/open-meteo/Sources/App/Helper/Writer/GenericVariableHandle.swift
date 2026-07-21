@@ -21,6 +21,18 @@ func fullRunTimestamps(domainRegistry: DomainRegistry, dtSeconds: Int, sourceTim
     return Array(TimerangeDt(start: first, to: last.add(dtSeconds), dtSeconds: dtSeconds))
 }
 
+/// The ordinary reader quantises every interpolated value to the variable's
+/// public scale factor before returning it. Full-run exports that materialise
+/// those interpolation frames must do the same before OM compression; relying
+/// on the compressor alone can preserve half-step values that the reader would
+/// have rounded (for example CAMS CO 218.49998 -> 218 at scale factor 1).
+func quantizeFullRunInterpolationInplace(_ values: inout [Float], scalefactor: Float) {
+    precondition(scalefactor > 0)
+    for index in values.indices where values[index].isFinite {
+        values[index] = roundf(values[index] * scalefactor) / scalefactor
+    }
+}
+
 
 /// Downloaders return FileHandles to keep files open while downloading
 /// If another download starts and would overlap, this still keeps the old file open
@@ -234,6 +246,10 @@ struct GenericVariableHandle: Sendable {
                             time: timeRange,
                             grid: domain.grid,
                             locationRange: locationRange1D
+                        )
+                        quantizeFullRunInterpolationInplace(
+                            &data3d.data,
+                            scalefactor: variable.scalefactor
                         )
                     }
                     try writer.writeData(

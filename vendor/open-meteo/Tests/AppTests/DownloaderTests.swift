@@ -58,6 +58,21 @@ import Logging
         }
     }
 
+    @Test func fullRunInterpolationUsesPublicReaderScaleFactorRounding() {
+        var values: [Float] = [218.49998, 218.5, 0.049, Float.nan]
+
+        quantizeFullRunInterpolationInplace(&values, scalefactor: 1)
+
+        #expect(values[0] == 218)
+        #expect(values[1] == 219)
+        #expect(values[2] == 0)
+        #expect(values[3].isNaN)
+
+        var tenths: [Float] = [0.049, 0.05, 0.149]
+        quantizeFullRunInterpolationInplace(&tenths, scalefactor: 10)
+        #expect(tenths == [0, 0.1, 0.1])
+    }
+
     @Test func testAwsSign() async throws {
         let url = "https://examplebucket.s3.amazonaws.com/test.txt"
         var request = HTTPClientRequest(url: url)

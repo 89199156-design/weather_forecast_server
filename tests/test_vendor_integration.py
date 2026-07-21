@@ -182,6 +182,8 @@ def test_cams_full_run_export_uses_official_hourly_interpolation_axis():
     assert "data3d.interpolateInplace(" in full_run
     assert "type: variable.interpolation" in full_run
     assert "time: timeRange" in full_run
+    assert "quantizeFullRunInterpolationInplace(" in full_run
+    assert "scalefactor: variable.scalefactor" in full_run
 
 
 def test_cds_ads_queue_state_is_fail_closed_and_post_is_never_retried():

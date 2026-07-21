@@ -78,6 +78,12 @@ cadences to the domain's hourly public axis and invokes the existing upstream
 `variable.interpolation` before output-scale compression. It does not define
 or modify an interpolation formula; it mirrors the ordinary Open-Meteo
 time-series conversion for the additional native per-run representation.
+The materialised frames are rounded with the variable's existing
+`scalefactor` after interpolation, matching the quantisation already performed
+by the ordinary Open-Meteo reader before a public value is returned. This does
+not introduce a new precision rule; it prevents the extra native
+representation from retaining sub-scale half steps that the public reader
+discards.
 
 ## Local Patches In Vendored Open-Meteo
 

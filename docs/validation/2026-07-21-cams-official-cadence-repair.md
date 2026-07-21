@@ -38,3 +38,26 @@ The repair restores the upstream cadence contract:
 
 This is a production input-contract correction, not a comparison exception,
 API response override, batch freeze, or test-only value substitution.
+
+## Full-run interpolation quantisation follow-up
+
+After the cadence repair, the first four frozen points matched completely. At
+point `16.22519,101.953125`, the frozen official response returned carbon
+monoxide `218.0` for `2026-07-25T01:00`, while the Singapore response returned
+`218.5`. The selected CAMS grid coordinate was identical on both sides, and
+the surrounding hourly values matched.
+
+The ordinary Open-Meteo interpolation path rounds each generated value with
+the variable's public `scalefactor`. Carbon monoxide uses a scale factor of
+`1`, so a Hermite result of approximately `218.49998` becomes `218` before it
+is returned. The native full-run exporter used the same interpolation formula
+but wrote the unrounded result to OM compression. At the transition between
+CAMS Global and the greenhouse-gas coverage, that one-unit source difference
+was mixed at 50%, producing the observed public difference of `0.5`.
+
+The exporter now applies the existing variable scale-factor rounding after it
+materialises a sparse source axis. Direct source frames are already stored at
+that scale, so the operation is idempotent for them. The change is generic to
+the production full-run representation and is covered by a Swift rounding
+test plus the integration contract test; it is not a coordinate-specific
+override or an API response correction.
