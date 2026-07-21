@@ -27,6 +27,18 @@ different evening edge.
 The repair mirrors the official assignment point and ordering. It does not
 inspect the output variable, point, timestamp, or expected value. Paired
 regressions cover both sides of the boundary:
-`sparse_solar_interpolation_keeps_official_nan_d_at_night` and
-`sparse_solar_interpolation_copies_finite_pre_recovery_c_to_nighttime_d`.
+`sparse_solar_full_series_keeps_official_nan_d_at_night` and
+`sparse_solar_full_series_copies_finite_pre_recovery_c_to_nighttime_d`.
 Both repositories' complete Rust test suites passed before deployment.
+
+The subsequent Shanghai point-4 mismatch also showed why the full operation is
+required: official solar-derived inputs were positive at
+`9.899124,137.8125`, `2026-07-31T01:00Z`, while the pointwise sparse reader
+returned zero. Open-Meteo processes the complete hourly array sequentially and
+deaverages C in place after each interval. That processed C is then the A or B
+input of the next interval. The shared Rust reader now ports the full official
+operation, while Singapore's already-dense 385-frame production files bypass
+the sparse path. Regression
+`sparse_solar_full_series_reuses_deaveraged_values_sequentially` covers this
+cross-interval dependency without encoding the failed point or expected API
+value.
