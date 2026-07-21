@@ -449,6 +449,18 @@ def test_ads_current_repair_forces_all_sources_and_survives_remote_resume() -> N
     assert '! is_truthy "$FORCE_REBUILD_CURRENT"' in script
 
 
+def test_ecpds_current_repair_rebuilds_all_retained_runs_in_clean_staging() -> None:
+    script = read_script("run_cams_om_production_cycle.sh")
+
+    assert "WEATHER_CAMS_FORCE_REBUILD_CURRENT" in script
+    assert "WEATHER_CAMS_COVERAGE_REVISION is required" in script
+    assert "refusing CAMS repair for non-current run" in script
+    assert '"$STAGING_DIR/cams_global"' in script
+    assert '"$STAGING_DIR/data_run/cams_global"' in script
+    assert 'REUSED_SOURCE_RUNS=""' in script
+    assert script.count('! is_truthy "$FORCE_REBUILD_CURRENT"') >= 2
+
+
 def test_ads_first_publish_skips_only_a_missing_current_marker() -> None:
     script = read_script("run_cams_ads_scheduled_cycle.sh")
 

@@ -6,6 +6,26 @@ import NIOCore
 import Logging
 
 @Suite struct DownloaderTests {
+    @Test func camsGlobalUsesOfficialThreeHourlyModelLevelSourceCadence() {
+        #expect(camsGlobalShouldDownloadForecastHour(isMultiLevel: false, forecastHour: 1))
+        #expect(camsGlobalShouldDownloadForecastHour(isMultiLevel: true, forecastHour: 0))
+        #expect(!camsGlobalShouldDownloadForecastHour(isMultiLevel: true, forecastHour: 1))
+        #expect(!camsGlobalShouldDownloadForecastHour(isMultiLevel: true, forecastHour: 2))
+        #expect(camsGlobalShouldDownloadForecastHour(isMultiLevel: true, forecastHour: 3))
+
+        // Frozen 2026072012 NO2 regression: consuming the ECPDS hourly values
+        // produced 0.1 at f59. The official three-hour source series uses
+        // f54/f57/f60/f63 = 0.1/0.1/0.0/0.0 and therefore yields 0.0.
+        var values: [Float] = [
+            0.1, .nan, .nan,
+            0.1, .nan, .nan,
+            0.0, .nan, .nan,
+            0.0,
+        ]
+        values.interpolateInplaceHermite(nTime: values.count, bounds: 0...Float.infinity)
+        #expect(roundf(values[5] * 10) / 10 == 0.0)
+    }
+
     @Test func testAwsSign() async throws {
         let url = "https://examplebucket.s3.amazonaws.com/test.txt"
         var request = HTTPClientRequest(url: url)

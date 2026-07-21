@@ -3,6 +3,14 @@ import Vapor
 import SwiftNetCDF
 import OmFileFormat
 
+/// Open-Meteo's public CAMS database treats the model-level products as a
+/// three-hour source series and fills the public hourly database with the
+/// variable's Hermite interpolation. ECPDS also exposes intermediate hourly
+/// files, but ingesting those files changes the public interpolation frames.
+func camsGlobalShouldDownloadForecastHour(isMultiLevel: Bool, forecastHour: Int) -> Bool {
+    !isMultiLevel || forecastHour % 3 == 0
+}
+
 /// Download CAMS Global air-quality forecasts from ECMWF ECPDS.
 struct DownloadCamsCommand: AsyncCommand {
     /// Request schema used by the official CAMS ADS datasets.
@@ -153,6 +161,12 @@ struct DownloadCamsCommand: AsyncCommand {
 
             let jobs = variables.compactMap { variable -> CamsGlobalDownloadJob? in
                 guard let meta = variable.getCamsGlobalMeta() else {
+                    return nil
+                }
+                guard camsGlobalShouldDownloadForecastHour(
+                    isMultiLevel: meta.isMultiLevel,
+                    forecastHour: hour
+                ) else {
                     return nil
                 }
                 let levelType = meta.isMultiLevel ? "ml137" : "sfc"

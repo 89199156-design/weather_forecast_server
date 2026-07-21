@@ -843,7 +843,7 @@ def test_cams_global_uses_ecpds_and_greenhouse_uses_official_ads():
     assert "getCamsGlobalAreaApiName" not in cams_domain
 
 
-def test_cams_ftp_concurrent_option_drives_hourly_file_downloads():
+def test_cams_ftp_concurrent_option_preserves_official_source_cadence():
     cams_download = (ROOT / "vendor" / "open-meteo" / "Sources" / "App" / "Cams" / "CamsDownload.swift").read_text(
         encoding="utf-8"
     )
@@ -853,8 +853,8 @@ def test_cams_ftp_concurrent_option_drives_hourly_file_downloads():
     assert "func downloadCamsGlobal(" in cams_download
     assert "concurrent: Int" in download_function
     assert "jobs.foreachConcurrent" in download_function
-    assert "hour % 3 != 0" not in download_function
-    assert "meta.isMultiLevel &&" not in download_function
+    assert "camsGlobalShouldDownloadForecastHour" in download_function
+    assert "forecastHour: hour" in download_function
     assert "curl.download(url: job.remoteFile, toFile: job.tempNc" in download_function
     assert r'"\(domain.downloadDirectory)/temp.nc"' not in cams_download
     assert r'temp_\(hour.zeroPadded(len: 3))_\(meta.gribname).nc' in cams_download
@@ -1310,8 +1310,7 @@ def test_cams_ftp_scheduled_cycle_probes_remote_batches_like_gfs():
     assert "Authorization" in probe
     assert "READY" in probe
     assert "NOT_READY" in probe
-    assert "forecast_hour % 3" not in probe
-    assert "hour % 3" not in probe
+    assert "is_multi_level and forecast_hour % 3 != 0" in probe
     assert "scripts/download_openmeteo_cams_data.sh" in production
     assert "scripts/publish_native_cams_coverage.py" in production
     assert "scripts/build_openmeteo_cams_layers.sh" not in production

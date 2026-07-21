@@ -16,6 +16,7 @@ KEEP_COVERAGES="${WEATHER_OM_CAMS_KEEP_COVERAGES:-1}"
 SOURCE_RUN_COUNT="${WEATHER_CAMS_REQUIRED_SOURCE_RUN_COUNT:-3}"
 MAX_FORECAST_HOUR="${WEATHER_CAMS_REQUIRED_MAX_FORECAST_HOUR:-120}"
 COVERAGE_REVISION="${WEATHER_CAMS_COVERAGE_REVISION:-main-region-v1}"
+FORCE_REBUILD_CURRENT="${WEATHER_CAMS_FORCE_REBUILD_CURRENT:-false}"
 LOCAL_UTC_OFFSET_HOURS="${WEATHER_CAMS_LOCAL_UTC_OFFSET_HOURS:-8}"
 CAMS_STORAGE_LEFT_LON="${WEATHER_CAMS_STORAGE_LEFT_LON:-69}"
 CAMS_STORAGE_RIGHT_LON="${WEATHER_CAMS_STORAGE_RIGHT_LON:-141}"
@@ -55,6 +56,28 @@ mkdir -p "$LOG_DIR" "$PRODUCER_ROOT/staging"
       --local-utc-offset-hours "$LOCAL_UTC_OFFSET_HOURS" \
       --format fields
   )
+  if is_truthy "$FORCE_REBUILD_CURRENT"; then
+    if [[ -z "${WEATHER_CAMS_COVERAGE_REVISION:-}" ]]; then
+      printf '%s\n' \
+        "WEATHER_CAMS_COVERAGE_REVISION is required for a current-run CAMS repair" >&2
+      exit 2
+    fi
+    python3 - "$PRODUCER_ROOT/groups/cams/current/ready_for_processing.json" "$RUN" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+marker = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+expected = sys.argv[2]
+if marker.get("status") != "complete":
+    raise SystemExit("current CAMS marker is not complete")
+actual = str(marker.get("latest_complete_run") or "")
+if actual != expected:
+    raise SystemExit(
+        f"refusing CAMS repair for non-current run {expected}; current run is {actual}"
+    )
+PY
+  fi
   STAGING_DIR="$PRODUCER_ROOT/staging/cams_${RUN}_$$"
   cleanup_staging() {
     if [[ -n "${STAGING_DIR:-}" && "$STAGING_DIR" == "$PRODUCER_ROOT/staging/"* ]]; then
@@ -74,6 +97,20 @@ mkdir -p "$LOG_DIR" "$PRODUCER_ROOT/staging"
   rm -rf -- \
     "$STAGING_DIR/cams_global_greenhouse_gases" \
     "$STAGING_DIR/data_run/cams_global_greenhouse_gases"
+  if is_truthy "$FORCE_REBUILD_CURRENT"; then
+    case "$STAGING_DIR" in
+      "$PRODUCER_ROOT/staging/"*) ;;
+      *)
+        printf '%s\n' "refusing CAMS repair outside producer staging: $STAGING_DIR" >&2
+        exit 2
+        ;;
+    esac
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_OM] repair current run=$RUN; rebuild all retained source runs"
+    rm -rf -- \
+      "$STAGING_DIR/cams_global" \
+      "$STAGING_DIR/data_run/cams_global"
+    REUSED_SOURCE_RUNS=""
+  fi
   prepare_openmeteo_staging_permissions "$STAGING_DIR"
   export WEATHER_OPENMETEO_DATA_DIR="$STAGING_DIR"
 
@@ -127,7 +164,8 @@ PY
 
   IFS=',' read -ra PLANNED_SOURCE_RUNS <<< "$SOURCE_RUNS"
   for SOURCE_RUN in "${PLANNED_SOURCE_RUNS[@]:0:${#PLANNED_SOURCE_RUNS[@]}-1}"; do
-    if [[ ",$REUSED_SOURCE_RUNS," == *",$SOURCE_RUN,"* ]]; then
+    if ! is_truthy "$FORCE_REBUILD_CURRENT" \
+      && [[ ",$REUSED_SOURCE_RUNS," == *",$SOURCE_RUN,"* ]]; then
       if validate_staged_cams_run "$SOURCE_RUN"; then
         echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_OM] reuse validated history run=$SOURCE_RUN"
         continue
@@ -141,7 +179,8 @@ PY
     validate_staged_cams_run "$SOURCE_RUN"
   done
 
-  if [[ ",$REUSED_SOURCE_RUNS," == *",$RUN,"* ]] \
+  if ! is_truthy "$FORCE_REBUILD_CURRENT" \
+    && [[ ",$REUSED_SOURCE_RUNS," == *",$RUN,"* ]] \
     && validate_staged_cams_run "$RUN"; then
     echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_OM] reuse validated latest run=$RUN"
   else

@@ -125,6 +125,8 @@ def cams_urls(run: datetime, variables: list[str], forecast_hours: list[int]) ->
     for forecast_hour in forecast_hours:
         for variable in variables:
             gribname, is_multi_level = CAMS_GLOBAL_META[variable]
+            if is_multi_level and forecast_hour % 3 != 0:
+                continue
             level_type = "ml137" if is_multi_level else "sfc"
             directory = "CAMS_GLOBAL_ADDITIONAL" if is_multi_level else "CAMS_GLOBAL"
             filename = f"z_cams_c_ecmf_{date_run}0000_prod_fc_{level_type}_{forecast_hour:03d}_{gribname}.nc"

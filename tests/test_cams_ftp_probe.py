@@ -17,7 +17,7 @@ def load_module():
     return module
 
 
-def test_cams_probe_checks_all_hourly_forecast_files_by_default():
+def test_cams_probe_checks_official_source_cadence_by_variable():
     probe = load_module()
     run = datetime(2026, 7, 3, 0, tzinfo=timezone.utc)
     variables = list(probe.CAMS_GLOBAL_META)
@@ -28,10 +28,14 @@ def test_cams_probe_checks_all_hourly_forecast_files_by_default():
         forecast_hours=probe.probe_forecast_hours(None, max_forecast_hour=120),
     )
 
-    assert len(urls) == len(variables) * 121
+    surface_variables = sum(not meta[1] for meta in probe.CAMS_GLOBAL_META.values())
+    multi_level_variables = sum(meta[1] for meta in probe.CAMS_GLOBAL_META.values())
+    assert len(urls) == surface_variables * 121 + multi_level_variables * 41
     assert any("_fc_sfc_001_pm2p5.nc" in url for url in urls)
     assert any("_fc_ml137_120_no2.nc" in url for url in urls)
     assert any("_fc_sfc_002_pm2p5.nc" in url for url in urls)
+    assert not any("_fc_ml137_001_no2.nc" in url for url in urls)
+    assert not any("_fc_ml137_002_no2.nc" in url for url in urls)
 
 
 def test_cams_probe_forecast_hours_are_sorted_unique_and_bounded():

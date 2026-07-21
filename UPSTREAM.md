@@ -78,7 +78,8 @@ The vendored directory starts from upstream
 change is copied verbatim from upstream commit
 `6059e2bd7e009b765caadd6a619002af3fd9ee21`; it is not a locally invented
 formula. Product-source changes for the regional NOMADS path, regional grids,
-CAMS hourly files, and selected outputs are the project-specific boundary. The
+CAMS hourly surface files, three-hour model-level files, and selected outputs
+are the project-specific boundary. The
 regional NOMADS adapter also restores the original source-message packing
 metadata for pressure fields whose decoded values would otherwise change when
 NOMADS repacks a cropped response. This input-fidelity repair does not alter
