@@ -273,6 +273,41 @@ def test_ads_plan_skips_when_same_day_00z_is_already_complete(
     assert result == "SKIP ads_already_complete 2026072000"
 
 
+def test_ads_plan_can_explicitly_rebuild_the_current_complete_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    producer = tmp_path / "producer"
+    marker = (
+        producer
+        / "groups"
+        / "cams_greenhouse"
+        / "current"
+        / "ready_for_processing.json"
+    )
+    marker.parent.mkdir(parents=True)
+    marker.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(
+        plan_cams_ads_update,
+        "validate_cams_contract",
+        lambda _root: {
+            "source_runs": ["2026071912", "2026072000", "2026072012"]
+        },
+    )
+    monkeypatch.setattr(
+        plan_cams_ads_update,
+        "validate_greenhouse_contract",
+        lambda _root: {"latest_complete_run": "2026072000"},
+    )
+
+    result = plan_cams_ads_update.plan_update(producer, force_current=True)
+
+    assert result == (
+        "READY 2026072012 2026072000 "
+        "2026071800,2026071900,2026072000"
+    )
+
+
 def test_ads_plan_fails_closed_for_an_invalid_existing_greenhouse_marker(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -391,12 +426,27 @@ def test_ads_validated_run_clears_resume_state_before_next_submission() -> None:
     script = read_script("run_cams_ads_scheduled_cycle.sh")
 
     assert 'state_file="$work_dir/.ads_jobs/${source_run}.json"' in script
-    assert script.count('rm -f -- "$state_file"') == 2
+    assert script.count('rm -f -- "$state_file"') == 3
     reuse = script.split(
-        'if validate_greenhouse_run "$source_run" >/dev/null 2>&1; then',
+        'if ! is_truthy "$FORCE_REBUILD_CURRENT"',
         1,
     )[1].split("continue", 1)[0]
     assert 'rm -f -- "$state_file"' in reuse
+
+
+def test_ads_current_repair_forces_all_sources_and_survives_remote_resume() -> None:
+    script = read_script("run_cams_ads_scheduled_cycle.sh")
+
+    assert "WEATHER_CAMS_GREENHOUSE_FORCE_REBUILD_CURRENT" in script
+    assert "--force-current" in script
+    assert 'force_rebuild_marker="$work_dir/.force_rebuild_current"' in script
+    assert '[[ -f "$force_rebuild_marker" ]]' in script
+    assert 'rebuild_complete="$work_dir/.full_grid_rebuild_complete/$source_run"' in script
+    assert '[[ -f "$rebuild_complete" ]]' in script
+    assert '[[ ! -f "$state_file" ]]' in script
+    assert ': > "$rebuild_complete"' in script
+    assert '"$published_latest" == "$target_run"' in script
+    assert '! is_truthy "$FORCE_REBUILD_CURRENT"' in script
 
 
 def test_ads_first_publish_skips_only_a_missing_current_marker() -> None:

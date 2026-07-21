@@ -84,7 +84,7 @@ def find_persisted_request(producer_root: Path) -> tuple[str, str, str] | None:
     return found[0] if found else None
 
 
-def plan_update(producer_root: Path) -> str:
+def plan_update(producer_root: Path, force_current: bool = False) -> str:
     persisted = find_persisted_request(producer_root)
     if persisted is not None:
         target_run, source_runs, pending_run = persisted
@@ -113,7 +113,7 @@ def plan_update(producer_root: Path) -> str:
         greenhouse = validate_greenhouse_contract(producer_root)
     if greenhouse is not None:
         greenhouse_latest = str(greenhouse["latest_complete_run"])
-        if greenhouse_latest == target_run:
+        if greenhouse_latest == target_run and not force_current:
             return f"SKIP ads_already_complete {target_run}"
         if greenhouse_latest > target_run:
             return "ERROR local_ads_run_is_newer_than_ecpds_date"
@@ -128,9 +128,14 @@ def plan_update(producer_root: Path) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--producer-root", required=True)
+    parser.add_argument(
+        "--force-current",
+        action="store_true",
+        help="rebuild and republish the current target run through the normal immutable pipeline",
+    )
     args = parser.parse_args()
     try:
-        result = plan_update(Path(args.producer_root))
+        result = plan_update(Path(args.producer_root), force_current=args.force_current)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         print(f"ERROR {exc}")
         return 2

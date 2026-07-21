@@ -15,6 +15,7 @@ CAMS_STORAGE_LEFT_LON="${WEATHER_CAMS_STORAGE_LEFT_LON:-69}"
 CAMS_STORAGE_RIGHT_LON="${WEATHER_CAMS_STORAGE_RIGHT_LON:-141}"
 CAMS_STORAGE_BOTTOM_LAT="${WEATHER_CAMS_STORAGE_BOTTOM_LAT:--1}"
 CAMS_STORAGE_TOP_LAT="${WEATHER_CAMS_STORAGE_TOP_LAT:-59}"
+FORCE_REBUILD_CURRENT="${WEATHER_CAMS_GREENHOUSE_FORCE_REBUILD_CURRENT:-false}"
 
 export WEATHER_REGION_LEFT_LON="$CAMS_STORAGE_LEFT_LON"
 export WEATHER_REGION_RIGHT_LON="$CAMS_STORAGE_RIGHT_LON"
@@ -81,7 +82,13 @@ trap on_task_exit EXIT
     exit 0
   fi
 
-  if state="$(python3 scripts/plan_cams_ads_update.py --producer-root "$PRODUCER_ROOT")"; then
+  force_plan_arg=()
+  if is_truthy "$FORCE_REBUILD_CURRENT"; then
+    force_plan_arg+=(--force-current)
+  fi
+  if state="$(python3 scripts/plan_cams_ads_update.py \
+    --producer-root "$PRODUCER_ROOT" \
+    "${force_plan_arg[@]}")"; then
     plan_rc=0
   else
     plan_rc=$?
@@ -126,7 +133,15 @@ trap on_task_exit EXIT
   python3 scripts/prepare_cams_ads_staging.py \
     --producer-root "$PRODUCER_ROOT" \
     --staging-dir "$work_dir"
-  mkdir -p "$work_dir/.ads_jobs"
+  mkdir -p "$work_dir/.ads_jobs" "$work_dir/.full_grid_rebuild_complete"
+  force_rebuild_marker="$work_dir/.force_rebuild_current"
+  if is_truthy "$FORCE_REBUILD_CURRENT"; then
+    : > "$force_rebuild_marker"
+  elif [[ -f "$force_rebuild_marker" ]]; then
+    # A resumed remote request must keep the repair semantics that created its
+    # private staging directory even if the later invocation omitted the flag.
+    FORCE_REBUILD_CURRENT=true
+  fi
   prepare_openmeteo_staging_permissions "$work_dir"
   export WEATHER_OPENMETEO_DATA_DIR="$work_dir"
 
@@ -179,13 +194,24 @@ PY
   done
   for source_run in "${ordered_runs[@]}"; do
     state_file="$work_dir/.ads_jobs/${source_run}.json"
-    if validate_greenhouse_run "$source_run" >/dev/null 2>&1; then
+    rebuild_complete="$work_dir/.full_grid_rebuild_complete/$source_run"
+    if is_truthy "$FORCE_REBUILD_CURRENT" && \
+       [[ -f "$rebuild_complete" ]] && \
+       validate_greenhouse_run "$source_run" >/dev/null 2>&1; then
+      rm -f -- "$state_file"
+      echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_ADS] reuse full-grid rebuilt run=$source_run"
+      continue
+    fi
+    if ! is_truthy "$FORCE_REBUILD_CURRENT" && \
+       validate_greenhouse_run "$source_run" >/dev/null 2>&1; then
       rm -f -- "$state_file"
       echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_ADS] reuse validated run=$source_run"
       continue
     fi
     run_dir="$work_dir/data_run/cams_global_greenhouse_gases/${source_run:0:4}/${source_run:4:2}/${source_run:6:2}/${source_run:8:2}00Z"
-    rm -rf -- "$run_dir"
+    if [[ ! -f "$state_file" ]]; then
+      rm -rf -- "$run_dir"
+    fi
     echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_ADS] submit once and wait run=$source_run horizon=$MAX_FORECAST_HOUR"
     WEATHER_CAMS_GREENHOUSE_RUN="$source_run" \
     WEATHER_CDS_JOB_STATE_FILE="/app/data/.ads_jobs/${source_run}.json" \
@@ -193,6 +219,9 @@ PY
     WEATHER_CDS_JOB_TIMEOUT_HOURS="${WEATHER_CAMS_ADS_JOB_TIMEOUT_HOURS:-168}" \
       bash scripts/download_openmeteo_cams_greenhouse_data.sh
     validate_greenhouse_run "$source_run"
+    if is_truthy "$FORCE_REBUILD_CURRENT"; then
+      : > "$rebuild_complete"
+    fi
     rm -f -- "$state_file"
   done
 
@@ -219,7 +248,13 @@ PY
       'import json,sys; print(json.load(sys.stdin)["latest_complete_run"])' \
       <<<"$published_state")"
   fi
-  if [[ -n "$published_latest" && ( "$published_latest" == "$target_run" || "$published_latest" > "$target_run" ) ]]; then
+  discard_without_publish=false
+  if [[ -n "$published_latest" && "$published_latest" > "$target_run" ]]; then
+    discard_without_publish=true
+  elif [[ "$published_latest" == "$target_run" ]] && ! is_truthy "$FORCE_REBUILD_CURRENT"; then
+    discard_without_publish=true
+  fi
+  if is_truthy "$discard_without_publish"; then
     rm -rf -- "$work_dir"
     echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_ADS] completed persisted ADS request run=$target_run; current run=$published_latest is not older, discard private staging without downgrade"
     exit 0
