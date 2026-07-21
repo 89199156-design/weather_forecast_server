@@ -13,7 +13,8 @@ from pathlib import Path
 from typing import Any
 
 
-GROUPS = ("gfs", "cams")
+COMPARE_GROUPS = ("gfs", "cams")
+OPTIONAL_INVENTORY_GROUPS = ("cams_greenhouse",)
 RUN_IN_COVERAGE = re.compile(r"_(\d{10})(?:_|$)")
 RUN_IN_NATIVE_PATH = re.compile(r"/(\d{4})/(\d{2})/(\d{2})/(\d{2})00Z/")
 
@@ -114,13 +115,15 @@ def inspect_live_snapshot(process_pid: int, groups: dict[str, Any]) -> dict[str,
 
 def build_identity(data_root: Path, process_pid: int | None = None) -> dict[str, Any]:
     groups: dict[str, Any] = {}
-    for group in GROUPS:
+    for group in (*COMPARE_GROUPS, *OPTIONAL_INVENTORY_GROUPS):
         marker_candidates = (
             data_root / "groups" / group / "current" / "ready_for_processing.json",
             data_root / "groups" / group / "latest.json",
         )
         marker_path = next((path for path in marker_candidates if path.is_file()), None)
         if marker_path is None:
+            if group in OPTIONAL_INVENTORY_GROUPS:
+                continue
             searched = ", ".join(str(path) for path in marker_candidates)
             raise FileNotFoundError(f"no complete {group} marker found; searched: {searched}")
         marker_bytes = marker_path.read_bytes()
@@ -164,7 +167,7 @@ def compare_identities(shanghai: dict[str, Any], singapore: dict[str, Any]) -> d
                     "live_snapshot": live,
                 }
             )
-    for group in GROUPS:
+    for group in COMPARE_GROUPS:
         left = (shanghai.get("groups") or {}).get(group) or {}
         right = (singapore.get("groups") or {}).get(group) or {}
         left_run = left.get("latest_complete_run")

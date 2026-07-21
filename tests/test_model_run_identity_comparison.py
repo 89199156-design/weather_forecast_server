@@ -99,6 +99,40 @@ class ModelRunIdentityComparisonTests(unittest.TestCase):
             self.assertEqual(identity["groups"]["cams"]["latest_complete_run"], "2026071712")
             self.assertEqual(identity["groups"]["gfs"]["source_runs"], [])
 
+    def test_inventory_includes_independent_greenhouse_when_published(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write_marker(root, "gfs", "2026072018", native=True)
+            write_marker(root, "cams", "2026072012", native=True)
+            write_marker(root, "cams_greenhouse", "2026072000", native=True)
+
+            identity = build_identity(root)
+
+            self.assertEqual(
+                identity["groups"]["cams_greenhouse"]["latest_complete_run"],
+                "2026072000",
+            )
+
+    def test_comparison_uses_main_model_runs_not_optional_greenhouse_cycle(self):
+        left = {
+            "groups": {
+                "gfs": {"latest_complete_run": "2026072018"},
+                "cams": {"latest_complete_run": "2026072012"},
+            },
+            "live_snapshot": {"marker_matches_live_snapshot": True},
+        }
+        right = {
+            "groups": {
+                **left["groups"],
+                "cams_greenhouse": {"latest_complete_run": "2026072000"},
+            },
+            "live_snapshot": {"marker_matches_live_snapshot": True},
+        }
+
+        report = compare_identities(left, right)
+
+        self.assertTrue(report["passed"])
+
     def test_matching_latest_run_allows_different_internal_history_vectors(self):
         left = {
             "groups": {
