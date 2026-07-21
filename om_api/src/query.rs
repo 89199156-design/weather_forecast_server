@@ -4497,16 +4497,47 @@ fn read_cams_greenhouse_carbon_monoxide_for_mixer(
         .unwrap_or_else(|| Duration::hours(3));
     if time > last {
         if time < last + cadence {
-            return read_product_value_with_rounding(
+            // GenericReader expands the source range by Hermite's padding.
+            // Immediately after the final stored greenhouse frame, the
+            // unavailable C and D samples are therefore present as NaN and
+            // Interpolation.interpolateHermite replaces both with B.  Do not
+            // clamp these two hourly samples to B: the preceding A sample
+            // still changes the Hermite curve before it settles at B.
+            let b = read_native_value(
                 &product,
                 decoder,
-                "carbon_monoxide",
                 "carbon_monoxide",
                 last,
                 latitude,
                 longitude,
-                true,
-            );
+            )?;
+            if !b.is_finite() {
+                return Ok(f32::NAN);
+            }
+            let a_time = last - cadence;
+            let a = match read_native_value_if_present(
+                &product,
+                decoder,
+                "carbon_monoxide",
+                &native_times,
+                a_time,
+                latitude,
+                longitude,
+            )? {
+                Some(value) if value.is_finite() => value,
+                _ => b,
+            };
+            let fraction = (time - last).num_seconds() as f32 / cadence.num_seconds() as f32;
+            let c = b;
+            let d = b;
+            let coeff_a = -a / 2.0 + (3.0 * b) / 2.0 - (3.0 * c) / 2.0 + d / 2.0;
+            let coeff_b = a - (5.0 * b) / 2.0 + 2.0 * c - d / 2.0;
+            let coeff_c = -a / 2.0 + c / 2.0;
+            let h = coeff_a * fraction * fraction * fraction
+                + coeff_b * fraction * fraction
+                + coeff_c * fraction
+                + b;
+            return Ok(round_to_scalefactor(h, 1.0).max(0.0));
         }
         return Ok(f32::NAN);
     }
