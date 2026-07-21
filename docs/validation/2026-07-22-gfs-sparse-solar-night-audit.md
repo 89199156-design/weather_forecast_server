@@ -16,17 +16,17 @@ After f120, GFS solar variables contain missing hourly frames between stored
 three-hour frames. Open-Meteo fills them with
 `interpolateInplaceSolarBackwards`.
 
-At the evening boundary, the future D clearness factor is unavailable because
-its solar factor is below the minimum. The official code deliberately leaves
-`ktD` as NaN. Hermite arithmetic therefore remains NaN, and Swift's
-`max(0, NaN)` yields zero for the missing nighttime hour.
+At the evening boundary, the official code assigns `ktD = ktC` immediately
+when the future D solar average is below the minimum. This precedes the later
+B/A recovery of a missing C. A finite C is therefore copied to D, but a NaN C
+leaves D as NaN even if C is subsequently recovered. The clone instead copied
+the recovered daytime C to D too late, leaking radiation past sunset. Simply
+removing the copy also discarded the required finite pre-recovery C at a
+different evening edge.
 
-The clone incorrectly replaced NaN D with the preceding daytime C clearness
-factor. This produced positive shortwave/UV radiation after sunset, which then
-produced a nonzero sunshine duration.
-
-The repair removes the non-official D fallback. It does not inspect the output
-variable, point, timestamp, or expected value. Regression
-`sparse_solar_interpolation_keeps_official_nan_d_at_night` returned `3.5`
-before the repair and exactly `0` afterward. Both repositories' complete Rust
-test suites passed before deployment.
+The repair mirrors the official assignment point and ordering. It does not
+inspect the output variable, point, timestamp, or expected value. Paired
+regressions cover both sides of the boundary:
+`sparse_solar_interpolation_keeps_official_nan_d_at_night` and
+`sparse_solar_interpolation_copies_finite_pre_recovery_c_to_nighttime_d`.
+Both repositories' complete Rust test suites passed before deployment.
