@@ -241,6 +241,53 @@ def make_cams_greenhouse_staging(output_root: Path, run: str) -> Path:
 
 
 class NativeOmProducerTests(unittest.TestCase):
+    def test_pre_reload_retention_ignores_missing_stale_applied_coverage(self):
+        publisher = load_publisher_module()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "producer"
+            current_id = "current_coverage"
+            current_coverage = root / "coverages" / "gfs" / current_id
+            current_coverage.mkdir(parents=True)
+            (current_coverage / "coverage.json").write_text(
+                json.dumps(
+                    {
+                        "status": "complete",
+                        "group": "gfs",
+                        "coverage_id": current_id,
+                        "latest_complete_run": "2026072000",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            current_path = root / "groups/gfs/current/ready_for_processing.json"
+            current_path.parent.mkdir(parents=True)
+            current_path.write_text(
+                json.dumps(
+                    {
+                        "status": "complete",
+                        "runtime_format": "openmeteo-native-v1",
+                        "group": "gfs",
+                        "coverage_id": current_id,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            applied_path = root / "groups/gfs/applied/current.json"
+            applied_path.parent.mkdir(parents=True)
+            applied_path.write_text(
+                json.dumps(
+                    {
+                        "status": "applied",
+                        "coverage_id": "already_retired_coverage",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            protected = publisher.protected_coverage_directories(root, "gfs")
+
+            self.assertEqual(protected, {current_coverage.resolve()})
+
     def test_pre_reload_retention_keeps_exact_applied_coverage_over_newer_orphan(self):
         publisher = load_publisher_module()
         with tempfile.TemporaryDirectory() as directory:

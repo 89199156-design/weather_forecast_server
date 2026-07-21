@@ -464,20 +464,28 @@ def load_coverage_manifests(coverages_root: Path) -> list[tuple[Path, dict[str, 
 def protected_coverage_directories(output_root: Path, group: str) -> set[Path]:
     """Return exact native coverages that may still be open by the API."""
     protected: set[Path] = set()
-    identifiers: set[str] = set()
+    identifiers: dict[str, bool] = {}
     current_path = output_root / "groups" / group / "current" / "ready_for_processing.json"
     if current_path.is_file():
         current = json.loads(current_path.read_text(encoding="utf-8"))
         if current.get("runtime_format") == "openmeteo-native-v1":
-            identifiers.add(str(current.get("coverage_id") or ""))
+            identifiers[str(current.get("coverage_id") or "")] = True
     applied_path = output_root / "groups" / group / "applied" / "current.json"
     if applied_path.is_file():
         applied = json.loads(applied_path.read_text(encoding="utf-8"))
-        identifiers.add(str(applied.get("coverage_id") or ""))
+        coverage_id = str(applied.get("coverage_id") or "")
+        identifiers[coverage_id] = identifiers.get(coverage_id, False)
     root = output_root / "coverages" / group
-    for coverage_id in identifiers:
+    for coverage_id, required in identifiers.items():
         if not re.fullmatch(r"[A-Za-z0-9_-]{1,160}", coverage_id):
             raise ValueError(f"invalid protected coverage_id for {group}")
+        if not (root / coverage_id).exists() and not required:
+            # Applied markers are advisory crash-safety state. Older runtime
+            # generations may leave one behind after its immutable directory
+            # was already retired. It cannot protect a directory that no
+            # longer exists and must not block publication of a valid current
+            # coverage. The current ready marker remains strict below.
+            continue
         coverage = (root / coverage_id).resolve(strict=True)
         if coverage.parent != root.resolve(strict=True):
             raise ValueError("protected coverage resolves outside its group")
