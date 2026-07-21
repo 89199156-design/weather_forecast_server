@@ -98,10 +98,19 @@ def plan_update(producer_root: Path) -> str:
     target = parsed_main.replace(hour=0)
     target_run = target.strftime("%Y%m%d00")
 
-    try:
+    greenhouse_marker = (
+        producer_root
+        / "groups"
+        / "cams_greenhouse"
+        / "current"
+        / "ready_for_processing.json"
+    )
+    greenhouse = None
+    if greenhouse_marker.exists() or greenhouse_marker.is_symlink():
+        # A genuinely missing marker is the normal first-publication state.
+        # Once a marker exists, validation errors must stop the task instead of
+        # being misclassified as absence and hidden by a replacement publish.
         greenhouse = validate_greenhouse_contract(producer_root)
-    except (OSError, ValueError, json.JSONDecodeError):
-        greenhouse = None
     if greenhouse is not None:
         greenhouse_latest = str(greenhouse["latest_complete_run"])
         if greenhouse_latest == target_run:

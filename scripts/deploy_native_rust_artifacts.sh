@@ -220,7 +220,7 @@ rollback_signal() {
   exit "$rc"
 }
 
-for command_name in git python3 sha256sum install flock mktemp readlink "$SUDO_BIN" "$SYSTEMCTL_BIN" "$CURL_BIN"; do
+for command_name in bash git python3 sha256sum install flock mktemp readlink "$SUDO_BIN" "$SYSTEMCTL_BIN" "$CURL_BIN"; do
   require_command "$command_name"
 done
 
@@ -354,6 +354,8 @@ trap cleanup_release_temps EXIT
     atomic_link "${LINK_TARGETS[$index]}" "${LINK_PATHS[$index]}"
   done
 
+  WEATHER_OM_API_HEALTHCHECK_URL="$API_HEALTHCHECK_URL" \
+    bash "$SCRIPT_DIR/install_native_api_dem_root.sh"
   sudo_systemctl restart "$API_SERVICE"
   sudo_systemctl is-active --quiet "$API_SERVICE"
   "$CURL_BIN" --fail --silent --show-error \

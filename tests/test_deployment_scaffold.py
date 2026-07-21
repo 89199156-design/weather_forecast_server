@@ -1424,3 +1424,29 @@ def test_split_layer_builders_publish_only_their_product():
     assert "gfs013_surface" not in cams
     assert "date -u" in gfs
     assert "date -u" in cams
+
+
+def test_native_api_deployment_atomically_installs_the_stable_dem_root():
+    stable_root = "/opt/1panel/apps/weather_forecast_server/data/point"
+    unit = (ROOT / "deploy/systemd/weather-om-api.service").read_text(encoding="utf-8")
+    installer = (ROOT / "scripts/install_native_api_dem_root.sh").read_text(
+        encoding="utf-8"
+    )
+    deploy = (ROOT / "scripts/deploy_native_rust_artifacts.sh").read_text(
+        encoding="utf-8"
+    )
+    example = (ROOT / "config/singapore.example.env").read_text(encoding="utf-8")
+
+    assert f"Environment=OM_DEM_ROOT={stable_root}" in unit
+    assert f"ReadOnlyPaths={stable_root}/copernicus_dem90" in unit
+    assert f"WEATHER_OM_DEM_ROOT={stable_root}" in example
+    assert 'DEM_ROOT="${WEATHER_OM_DEM_ROOT:-${WEATHER_OPENMETEO_DATA_DIR:-' in installer
+    assert "missing required Copernicus DEM90 chunk" in installer
+    assert 'mv -Tf "$REMOTE_TEMP" "$DROPIN_PATH"' in installer
+    assert "systemd drop-in staging checksum mismatch" in installer
+    assert "restore_previous_config" in installer
+    assert 'cat "/proc/$pid/environ"' in installer
+    assert "running API OM_DEM_ROOT mismatch" in installer
+    assert "hourly=temperature_2m" in installer
+    assert "elevation=" not in installer
+    assert 'bash "$SCRIPT_DIR/install_native_api_dem_root.sh"' in deploy

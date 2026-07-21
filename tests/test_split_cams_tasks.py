@@ -242,8 +242,19 @@ def test_ads_plan_maps_ecpds_12z_to_same_day_00z(monkeypatch: pytest.MonkeyPatch
 
 
 def test_ads_plan_skips_when_same_day_00z_is_already_complete(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    producer = tmp_path / "producer"
+    marker = (
+        producer
+        / "groups"
+        / "cams_greenhouse"
+        / "current"
+        / "ready_for_processing.json"
+    )
+    marker.parent.mkdir(parents=True)
+    marker.write_text("{}", encoding="utf-8")
     monkeypatch.setattr(
         plan_cams_ads_update,
         "validate_cams_contract",
@@ -257,9 +268,40 @@ def test_ads_plan_skips_when_same_day_00z_is_already_complete(
         lambda _root: {"latest_complete_run": "2026072000"},
     )
 
-    result = plan_cams_ads_update.plan_update(Path("unused"))
+    result = plan_cams_ads_update.plan_update(producer)
 
     assert result == "SKIP ads_already_complete 2026072000"
+
+
+def test_ads_plan_fails_closed_for_an_invalid_existing_greenhouse_marker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    producer = tmp_path / "producer"
+    marker = (
+        producer
+        / "groups"
+        / "cams_greenhouse"
+        / "current"
+        / "ready_for_processing.json"
+    )
+    marker.parent.mkdir(parents=True)
+    marker.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(
+        plan_cams_ads_update,
+        "validate_cams_contract",
+        lambda _root: {
+            "source_runs": ["2026071912", "2026072000", "2026072012"]
+        },
+    )
+    monkeypatch.setattr(
+        plan_cams_ads_update,
+        "validate_greenhouse_contract",
+        lambda _root: (_ for _ in ()).throw(ValueError("corrupt ADS marker")),
+    )
+
+    with pytest.raises(ValueError, match="corrupt ADS marker"):
+        plan_cams_ads_update.plan_update(producer)
 
 
 @pytest.mark.parametrize(
@@ -355,6 +397,23 @@ def test_ads_validated_run_clears_resume_state_before_next_submission() -> None:
         1,
     )[1].split("continue", 1)[0]
     assert 'rm -f -- "$state_file"' in reuse
+
+
+def test_ads_first_publish_skips_only_a_missing_current_marker() -> None:
+    script = read_script("run_cams_ads_scheduled_cycle.sh")
+
+    assert (
+        'published_marker="$PRODUCER_ROOT/groups/cams_greenhouse/current/'
+        'ready_for_processing.json"'
+    ) in script
+    assert 'if [[ -e "$published_marker" || -L "$published_marker" ]]; then' in script
+    assert 'published_state="$(python3 scripts/validate_native_cams_greenhouse_coverage.py' in script
+    assert '<<<"$published_state"' in script
+    assert '2>/dev/null' not in script
+    assert '|| true' not in script
+    assert 'if state="$(python3 scripts/plan_cams_ads_update.py' in script
+    assert 'if (( plan_rc != 0 )); then' in script
+    assert 'exit "$plan_rc"' in script
 
 
 def publisher_args(root: Path, source_runs: str, run: str) -> SimpleNamespace:

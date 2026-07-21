@@ -81,7 +81,19 @@ trap on_task_exit EXIT
     exit 0
   fi
 
-  state="$(python3 scripts/plan_cams_ads_update.py --producer-root "$PRODUCER_ROOT")"
+  if state="$(python3 scripts/plan_cams_ads_update.py --producer-root "$PRODUCER_ROOT")"; then
+    plan_rc=0
+  else
+    plan_rc=$?
+  fi
+  if (( plan_rc != 0 )); then
+    if [[ "$state" == ERROR\ * ]]; then
+      echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_ADS] $state" >&2
+    else
+      echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_ADS] planner failed rc=$plan_rc output=$state" >&2
+    fi
+    exit "$plan_rc"
+  fi
   resume_pending_run=""
   if [[ "$state" == RESUME\ * ]]; then
     read -r ready_marker target_run source_runs resume_pending_run <<<"$state"
@@ -198,10 +210,15 @@ PY
     --domains cams_global_greenhouse_gases \
     --min-frames "$((MAX_FORECAST_HOUR / 3 + 1))"
 
-  published_latest="$(python3 scripts/validate_native_cams_greenhouse_coverage.py \
-    --producer-root "$PRODUCER_ROOT" 2>/dev/null \
-    | python3 -c 'import json,sys; print(json.load(sys.stdin)["latest_complete_run"])' \
-    || true)"
+  published_latest=""
+  published_marker="$PRODUCER_ROOT/groups/cams_greenhouse/current/ready_for_processing.json"
+  if [[ -e "$published_marker" || -L "$published_marker" ]]; then
+    published_state="$(python3 scripts/validate_native_cams_greenhouse_coverage.py \
+      --producer-root "$PRODUCER_ROOT")"
+    published_latest="$(python3 -c \
+      'import json,sys; print(json.load(sys.stdin)["latest_complete_run"])' \
+      <<<"$published_state")"
+  fi
   if [[ -n "$published_latest" && ( "$published_latest" == "$target_run" || "$published_latest" > "$target_run" ) ]]; then
     rm -rf -- "$work_dir"
     echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_ADS] completed persisted ADS request run=$target_run; current run=$published_latest is not older, discard private staging without downgrade"

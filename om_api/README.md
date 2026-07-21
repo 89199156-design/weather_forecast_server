@@ -26,6 +26,24 @@ bash scripts/build_native_rust_artifacts.sh
 bash scripts/deploy_native_rust_artifacts.sh
 ```
 
+The deployment installs an atomic systemd drop-in that maps the stable host
+point-data directory to `OM_DEM_ROOT`, restarts the API, verifies the effective
+environment through `/proc/<MainPID>/environ`, and calls the real forecast
+endpoint without an elevation override. The default is:
+
+```text
+/opt/1panel/apps/weather_forecast_server/data/point
+```
+
+Set `WEATHER_OM_DEM_ROOT` only when the host's persistent point-data root is at
+a different absolute path. The installer validates every configured DEM
+latitude chunk and rolls back the drop-in if service or endpoint verification
+fails. Existing deployments can apply only this contract with:
+
+```bash
+bash scripts/install_native_api_dem_root.sh
+```
+
 The deployment manifest records the exact repository commit, Rust version and
 binary SHA-256 values. API and WebP binaries from different commits are not a
 valid production deployment.

@@ -57,6 +57,7 @@ def prepare_repository(tmp_path: Path) -> tuple[Path, Path]:
     (app / "om_webp").mkdir()
     shutil.copy2(ROOT / "scripts/build_native_rust_artifacts.sh", app / "scripts")
     shutil.copy2(ROOT / "scripts/deploy_native_rust_artifacts.sh", app / "scripts")
+    shutil.copy2(ROOT / "scripts/install_native_api_dem_root.sh", app / "scripts")
     shutil.copy2(ROOT / "rust-toolchain.toml", app)
     (app / "om_api/Cargo.toml").write_text("[package]\nname='om-api'\nversion='0.1.0'\n", encoding="utf-8")
     (app / "om_webp/Cargo.toml").write_text("[package]\nname='om-webp'\nversion='0.1.0'\n", encoding="utf-8")
@@ -133,9 +134,22 @@ def prepare_fake_tools(tmp_path: Path) -> tuple[Path, Path]:
               old_pid="$(cat "$TEST_PID_FILE")"
               kill "$old_pid" 2>/dev/null || true
             fi
-            nohup "$WEATHER_OM_API_ROOT/bin/om-api" 300 >/dev/null 2>&1 \
-              9>&- 8>&- 7>&- 6>&- 5>&- &
+            dem_root=""
+            if [[ -f "${TEST_SYSTEMD_DROPIN_PATH:-}" ]]; then
+              dem_root="$(sed -n 's/^Environment="OM_DEM_ROOT=\(.*\)"$/\1/p' \
+                "$TEST_SYSTEMD_DROPIN_PATH")"
+            fi
+            if [[ -n "$dem_root" ]]; then
+              OM_DEM_ROOT="$dem_root" \
+                nohup "$WEATHER_OM_API_ROOT/bin/om-api" 300 >/dev/null 2>&1 \
+                  9>&- 8>&- 7>&- 6>&- 5>&- &
+            else
+              nohup "$WEATHER_OM_API_ROOT/bin/om-api" 300 >/dev/null 2>&1 \
+                9>&- 8>&- 7>&- 6>&- 5>&- &
+            fi
             echo "$!" > "$TEST_PID_FILE"
+            ;;
+          daemon-reload)
             ;;
           is-active)
             pid="$(cat "$TEST_PID_FILE")"
@@ -165,12 +179,18 @@ def prepare_fake_tools(tmp_path: Path) -> tuple[Path, Path]:
 
 
 def deployment_env(tmp_path: Path, origin: Path, fake_bin: Path, pid_file: Path) -> dict[str, str]:
+    dem_root = tmp_path / "runtime-data/point"
+    dem_static = dem_root / "copernicus_dem90/static"
+    dem_static.mkdir(parents=True)
+    (dem_static / "lat_0.om").write_bytes(b"test-dem")
+    dropin = tmp_path / "systemd/weather-om-api.service.d/20-dem-root.conf"
     env = os.environ.copy()
     env.update(
         {
             "PATH": f"{fake_bin}{os.pathsep}{env['PATH']}",
             "TEST_CARGO_PWD_LOG": str(tmp_path / "cargo-pwd.log"),
             "TEST_PID_FILE": str(pid_file),
+            "TEST_SYSTEMD_DROPIN_PATH": str(dropin),
             "WEATHER_RUST_EXPECTED_REMOTE_URL": str(origin),
             "WEATHER_RUST_TARGET_DIR": str(tmp_path / "target"),
             "WEATHER_RUST_BUILD_ROOT": str(tmp_path / "build"),
@@ -182,6 +202,11 @@ def deployment_env(tmp_path: Path, origin: Path, fake_bin: Path, pid_file: Path)
             "WEATHER_OPENMETEO_CAMS_ADS_SCHEDULE_LOCK_FILE": str(tmp_path / "cams-ads-schedule.lock"),
             "WEATHER_OM_API_ROOT": str(tmp_path / "api-root"),
             "WEATHER_OM_WEBP_ROOT": str(tmp_path / "webp-root"),
+            "WEATHER_OM_DEM_ROOT": str(dem_root),
+            "WEATHER_DEM_REQUIRED_LAT_MIN": "0",
+            "WEATHER_DEM_REQUIRED_LAT_MAX": "0",
+            "WEATHER_OM_API_DEM_DROPIN_PATH": str(dropin),
+            "WEATHER_OM_API_CONFIG_LOCK_FILE": str(tmp_path / "api-config.lock"),
             "WEATHER_SUDO_BIN": str(fake_bin / "sudo"),
             "WEATHER_SYSTEMCTL_BIN": str(fake_bin / "systemctl"),
             "WEATHER_CURL_BIN": str(fake_bin / "curl"),
@@ -298,6 +323,16 @@ def test_deploy_uses_one_immutable_release_and_verifies_running_api(tmp_path: Pa
         assert (api_root / "bin/om-raw-point").resolve() == api_release / "om-raw-point"
         for artifact in ARTIFACTS - {"om-api", "om-raw-point"}:
             assert (webp_root / "bin" / artifact).resolve() == webp_release / artifact
+        dropin = Path(env["WEATHER_OM_API_DEM_DROPIN_PATH"])
+        assert dropin.read_text(encoding="utf-8") == (
+            "[Service]\n"
+            f'Environment="OM_DEM_ROOT={env["WEATHER_OM_DEM_ROOT"]}"\n'
+            f'ReadOnlyPaths={env["WEATHER_OM_DEM_ROOT"]}/copernicus_dem90\n'
+        )
+        running_environment = Path(
+            f"/proc/{pid_file.read_text(encoding='utf-8').strip()}/environ"
+        ).read_bytes().split(b"\0")
+        assert f'OM_DEM_ROOT={env["WEATHER_OM_DEM_ROOT"]}'.encode() in running_environment
 
         original_stat = (api_release / "om-api").stat()
         repeated = run(
@@ -376,11 +411,45 @@ def test_deploy_rolls_back_every_link_when_health_check_fails(tmp_path: Path):
 
         assert completed.returncode != 0
         assert "restoring previous Rust executable links" in completed.stderr
+        assert not Path(env["WEATHER_OM_API_DEM_DROPIN_PATH"]).exists()
         for link, old_target in old_targets.items():
             assert link.is_symlink()
             assert os.readlink(link) == old_target
         running_executable = Path(f"/proc/{pid_file.read_text(encoding='utf-8').strip()}/exe").resolve()
         assert running_executable == Path(old_targets[Path(env["WEATHER_OM_API_ROOT"]) / "bin/om-api"])
+    finally:
+        stop_fake_service(pid_file)
+
+
+def test_deploy_restores_previous_dem_dropin_when_install_health_check_fails(
+    tmp_path: Path,
+):
+    app, origin = prepare_repository(tmp_path)
+    fake_bin, pid_file = prepare_fake_tools(tmp_path)
+    env = deployment_env(tmp_path, origin, fake_bin, pid_file)
+    old_targets = install_old_links(env)
+    dropin = Path(env["WEATHER_OM_API_DEM_DROPIN_PATH"])
+    dropin.parent.mkdir(parents=True)
+    previous = (
+        "[Service]\n"
+        'Environment="OM_DEM_ROOT=/srv/previous-point"\n'
+        "ReadOnlyPaths=/srv/previous-point/copernicus_dem90\n"
+    )
+    dropin.write_text(previous, encoding="utf-8")
+    env["TEST_CURL_FAIL"] = "1"
+    try:
+        completed = run(
+            ["bash", str(app / "scripts/deploy_native_rust_artifacts.sh")],
+            cwd=tmp_path,
+            env=env,
+            check=False,
+        )
+
+        assert completed.returncode != 0
+        assert "restoring the previous systemd configuration" in completed.stderr
+        assert dropin.read_text(encoding="utf-8") == previous
+        for link, old_target in old_targets.items():
+            assert os.readlink(link) == old_target
     finally:
         stop_fake_service(pid_file)
 
@@ -426,6 +495,7 @@ def test_scripts_are_valid_bash_and_toolchain_is_pinned():
             "-n",
             str(ROOT / "scripts/build_native_rust_artifacts.sh"),
             str(ROOT / "scripts/deploy_native_rust_artifacts.sh"),
+            str(ROOT / "scripts/install_native_api_dem_root.sh"),
         ],
         check=True,
     )
