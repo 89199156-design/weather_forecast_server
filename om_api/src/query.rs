@@ -4411,7 +4411,9 @@ fn read_cams_mixed_carbon_monoxide(
 ) -> Result<f32> {
     // This is the CamsMixer's integrateIfNaNSmooth(width: 3): use the
     // greenhouse-gas CO where present, fill a gap from CAMS Global, then blend
-    // the three preceding hours into that transition.
+    // the three preceding hours into that transition. Each source reader first
+    // quantizes its hourly Hermite result to the variable scale factor (1 for
+    // CO); only the cross-source blend remains fractional.
     let mut high = Vec::with_capacity(4);
     let mut low = Vec::with_capacity(4);
     for offset in 0..=3 {
@@ -4432,7 +4434,7 @@ fn read_cams_mixed_carbon_monoxide(
             sample_time,
             latitude,
             longitude,
-            false,
+            true,
         )?);
     }
 
@@ -4485,7 +4487,7 @@ fn read_cams_greenhouse_carbon_monoxide_for_mixer(
             time,
             latitude,
             longitude,
-            false,
+            true,
         );
     }
     let cadence = native_times
@@ -4503,7 +4505,7 @@ fn read_cams_greenhouse_carbon_monoxide_for_mixer(
                 last,
                 latitude,
                 longitude,
-                false,
+                true,
             );
         }
         return Ok(f32::NAN);
@@ -4516,7 +4518,7 @@ fn read_cams_greenhouse_carbon_monoxide_for_mixer(
         time,
         latitude,
         longitude,
-        false,
+        true,
     )
 }
 
