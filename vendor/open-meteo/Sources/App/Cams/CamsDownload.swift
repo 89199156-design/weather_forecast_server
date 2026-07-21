@@ -261,7 +261,7 @@ fileprivate extension Variable {
     }
 }
 
-private extension Array where Element == Float {
+extension Array where Element == Float {
     func sliceGrid(x0: Int, y0: Int, nx: Int, ny: Int, sourceNx: Int) -> [Float] {
         var output = [Float](repeating: .nan, count: nx * ny)
         for y in 0..<ny {

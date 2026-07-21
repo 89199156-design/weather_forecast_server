@@ -26,6 +26,9 @@ extension DownloadCamsCommand {
         let forecastHours = domain.forecastHours
         let logger = application.logger
         let curl = Curl(logger: logger, client: application.dedicatedHttpClient, deadLineHours: 24)
+        let regionalSlice = domain.regionalDownloadSlice
+        let sourceNx = regionalSlice?.fullNx ?? domain.grid.nx
+        let sourceNy = regionalSlice?.fullNy ?? domain.grid.ny
         let apiVariables = variables.compactMap { $0.getCamsGlobalGreenhouseGasesMeta()?.apiname }
         guard !apiVariables.isEmpty else {
             throw Abort(.badRequest, reason: "No requested variable is available in cams_global_greenhouse_gases")
@@ -42,7 +45,11 @@ extension DownloadCamsCommand {
             year: nil,
             month: nil,
             model_level: [137],
-            area: WeatherForecastServerSourceConfig.regionAreaNorthWestSouthEast
+            // Keep the ADS payload identical to the upstream Open-Meteo
+            // request. Asking ADS to crop the GRIB causes the service to
+            // repack values, which can move scale-factor-1 concentrations by
+            // one unit. Decode the full source grid and crop locally instead.
+            area: nil
         )
         return try await curl.withCdsApi(
             dataset: "cams-global-greenhouse-gas-forecasts",
@@ -62,15 +69,24 @@ extension DownloadCamsCommand {
                 }
 
                 logger.info("Converting variable \(variable) \(timestamp.format_YYYYMMddHH) \(message.get(attribute: "name")!)")
-                var grib2d = try message.to2D(
-                    nx: domain.grid.nx,
-                    ny: domain.grid.ny,
+                var data = try message.to2D(
+                    nx: sourceNx,
+                    ny: sourceNy,
                     shift180LongitudeAndFlipLatitudeIfRequired: true
-                )
-                if let scaling = variable.getCamsGlobalGreenhouseGasesMeta()?.scalefactor {
-                    grib2d.array.data.multiplyAdd(multiply: scaling, add: 0)
+                ).array.data
+                if let regionalSlice {
+                    data = data.sliceGrid(
+                        x0: regionalSlice.x0,
+                        y0: regionalSlice.y0,
+                        nx: regionalSlice.nx,
+                        ny: regionalSlice.ny,
+                        sourceNx: sourceNx
+                    )
                 }
-                try await writer.write(time: timestamp, member: 0, variable: variable, data: grib2d.array.data)
+                if let scaling = variable.getCamsGlobalGreenhouseGasesMeta()?.scalefactor {
+                    data.multiplyAdd(multiply: scaling, add: 0)
+                }
+                try await writer.write(time: timestamp, member: 0, variable: variable, data: data)
             }
             return try await writer.finalise(
                 application: application,

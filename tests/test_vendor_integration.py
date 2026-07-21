@@ -143,23 +143,26 @@ def test_vendored_openmeteo_only_has_required_region_patches():
     assert "WeatherForecastServerSourceConfig" in cams_domain
     assert 'dataset: "cams-global-greenhouse-gas-forecasts"' in cams_greenhouse
     assert "getCamsGlobalGreenhouseGasesMeta" in cams_greenhouse
-    assert "area: WeatherForecastServerSourceConfig.regionAreaNorthWestSouthEast" in cams_greenhouse
+    assert "area: nil" in cams_greenhouse
+    assert "domain.regionalDownloadSlice" in cams_greenhouse
+    assert "data.sliceGrid(" in cams_greenhouse
 
 
-def test_cams_greenhouse_ads_download_is_cropped_server_side_and_decoded_as_regional_grid():
+def test_cams_greenhouse_ads_download_keeps_upstream_full_grid_values_and_crops_locally():
     cams_download = read_vendor("Sources/App/Cams/CamsDownload.swift")
     cams_greenhouse = read_vendor("Sources/App/Cams/CamsGreenhouseGases.swift")
 
     assert "let area: [Double]?" in cams_download
-    assert "area: WeatherForecastServerSourceConfig.regionAreaNorthWestSouthEast" in cams_greenhouse
-    assert "nx: domain.grid.nx" in cams_greenhouse
-    assert "ny: domain.grid.ny" in cams_greenhouse
+    assert "area: nil" in cams_greenhouse
+    assert "let regionalSlice = domain.regionalDownloadSlice" in cams_greenhouse
+    assert "let sourceNx = regionalSlice?.fullNx" in cams_greenhouse
+    assert "let sourceNy = regionalSlice?.fullNy" in cams_greenhouse
+    assert "nx: sourceNx" in cams_greenhouse
+    assert "ny: sourceNy" in cams_greenhouse
     assert "shift180LongitudeAndFlipLatitudeIfRequired: true" in cams_greenhouse
-    assert "domain.regionalDownloadSlice" not in cams_greenhouse
-    assert "sourceNx" not in cams_greenhouse
-    assert "sourceNy" not in cams_greenhouse
-    assert ".shift180LongitudeAndFlipLatitude()" not in cams_greenhouse
-    assert "camsRegionalSlice" not in cams_greenhouse
+    assert "data = data.sliceGrid(" in cams_greenhouse
+    assert "sourceNx: sourceNx" in cams_greenhouse
+    assert "data.multiplyAdd(multiply: scaling, add: 0)" in cams_greenhouse
 
 
 def test_cds_ads_queue_state_is_fail_closed_and_post_is_never_retried():

@@ -4,6 +4,12 @@ import Testing
 // import Vapor
 
 @Suite struct DomainTests {
+    @Test func camsFullGridLocalCropKeepsSourceValuesAndRowOrder() {
+        let source = (0..<20).map(Float.init)
+        let cropped = source.sliceGrid(x0: 1, y0: 1, nx: 2, ny: 2, sourceNx: 5)
+        #expect(cropped == [6, 7, 11, 12])
+    }
+
     @Test func regularGridSlice() {
         let grid = RegularGrid(nx: 10, ny: 10, latMin: 10, lonMin: 10, dx: 0.1, dy: 0.1)
         let sub = RegularGridSlice(grid: grid, yRange: 1..<3, xRange: 4..<6)
