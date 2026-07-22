@@ -89,11 +89,14 @@ schedule validation. The public window begins at the oldest retained run
 (latest minus 24 hours), includes UTC+8 local-day midnight, and continues
 through latest +384h: 408 hours / 409 hourly frames.
 
-Run the producer-only cycles with:
+Producer-only stages are not standalone production entrypoints. They reject a
+direct shell launch unless the parent invocation has already been verified as
+the matching 1Panel task. Start or retry production from the corresponding
+1Panel task so its `job_records` identity is established before any cleanup:
 
-```bash
-bash scripts/run_gfs_om_production_cycle.sh YYYYMMDDHH
-bash scripts/run_cams_om_production_cycle.sh YYYYMMDDHH
+```text
+1Panel -> weather_gfs_probe_cycle
+1Panel -> weather_cams_ecpds_probe_cycle
 ```
 
 Build the patched Swift importer as a candidate image with:
@@ -377,11 +380,9 @@ first start, after a gap, or when legacy history overlaps through `f006`, it imp
 affected older `0...5h` runs from
 the five-run window.
 While a GFS production cycle is still running, later probe ticks skip instead of
-probing or starting another cycle:
-
-```bash
-bash scripts/run_gfs_probe_and_cycle.sh
-```
+probing or starting another cycle. Start or retry it only with **Execute** on
+the `weather_gfs_probe_cycle` task in 1Panel; the scheduled entrypoint rejects
+direct shell launches because they have no matching active 1Panel record.
 
 CAMS FTP/ECPDS uses a low-priority high-frequency probe and checks only the
 first/final `0,120h` files for each configured variable. The importer still
@@ -390,30 +391,31 @@ historical full runs and downloads only the newest full run; first start or a
 damaged history causes the missing runs in the three-run window to be
 downloaded. This task publishes only the main CAMS immutable namespace.
 
-```bash
-bash scripts/run_cams_ftp_scheduled_cycle.sh
-```
+Start or retry this chain only with **Execute** on the
+`weather_cams_ecpds_probe_cycle` task in 1Panel.
 
 The separate ADS task never asks ADS which run is latest. It reads the locally
 published ECPDS main marker and maps its UTC date to that date's ADS 00Z run. If
 the independent greenhouse marker is older, one ADS request is submitted and
 the same task process stays alive through remote acceptance, queueing, download,
 validation, and publication. While that low-resource wait is in progress, its
-task-local lock makes later ADS ticks no-ops; it does not block GFS or ECPDS.
+active record in the 1Panel database makes later ADS ticks no-ops; it does not
+block GFS or ECPDS.
 
-```bash
-bash scripts/run_cams_ads_scheduled_cycle.sh
-```
+Start or retry this chain only with **Execute** on the
+`weather_cams_ads_cycle` task in 1Panel.
 
 The production 1Panel scheduler runs each source task every twenty minutes, with
 offset minutes to avoid unnecessary simultaneous starts. GFS and ECPDS probes
 are read-only and exit immediately when no new complete run exists; ADS checks
 only the local ECPDS/greenhouse markers before deciding whether to submit. Each
-of the three tasks has its own self-exclusion lock to prevent duplicate work by
-that same task;
-there is no shared or global cross-task lock, so GFS, CAMS ECPDS, and CAMS ADS
-may run concurrently. It contains these three enabled Shell schedules in
-Singapore time (UTC+8):
+task first binds its current 1Panel log path to its own active `job_records`
+row. An older active row for that same task makes the new invocation exit before
+cleanup; rows belonging to the other two tasks are ignored. There is no task
+file lock and no shared cross-task exclusion, so GFS, CAMS ECPDS, and CAMS ADS
+may run concurrently. It contains these three Shell schedules in Singapore
+time (UTC+8); reinstalling preserves each existing task's operator-controlled
+enable/disable state:
 
 ```cron
 0  * * * *  ... run_gfs_probe_and_cycle.sh
@@ -430,16 +432,22 @@ Singapore time (UTC+8):
 1Panel v1 stores multiple schedules for one job as comma-separated complete
 cron expressions. The installer therefore expands each model-cycle hour into
 a full five-field expression instead of using a comma inside the hour field.
+It preserves an existing task's higher log-retention setting and applies a
+configurable safe floor (100 by default, never below 73). This is required
+because 1Panel's 24-hour Shell timeout and 20-minute cadence can otherwise
+delete the still-active record that provides same-task exclusion.
 
 When code is deployed from an immutable release checkout, install with
 `WEATHER_FORECAST_APP_DIR=/home/ubuntu/weather_releases/main`; the generated
 jobs export that code root while keeping the private environment and OM data
 under `/opt/1panel/apps/weather_forecast_server`.
 
-The installer uses 1Panel as the single scheduler. It deletes every prior
-weather/Open-Meteo panel row, creates exactly these three enabled rows, deletes
-`/etc/cron.d/weather-openmeteo` without keeping a backup, and restarts only the
-control panel so it registers the replacement rows. Download, OM conversion,
+The installer uses 1Panel as the single scheduler. It updates these three rows
+in place, creates a missing row, deletes only obsolete weather/Open-Meteo panel
+rows, deletes `/etc/cron.d/weather-openmeteo` without keeping a backup, and
+restarts only the control panel after a second all-task idle check so it
+registers the committed rows. Existing task enable/disable states are not
+changed; a missing task is created disabled. Download, OM conversion,
 WebP generation, and the single API reload remain one event-driven process
 chain; no job polls local completion state and no weather data service is
 restarted by the scheduler installer. The chain raises only the Rust WebP

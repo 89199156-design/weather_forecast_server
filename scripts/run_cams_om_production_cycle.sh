@@ -2,6 +2,10 @@
 set -euo pipefail
 
 APP_DIR="${WEATHER_FORECAST_APP_DIR:-/opt/1panel/apps/weather_forecast_server}"
+if [[ "${WEATHER_1PANEL_VERIFIED_TASK:-}" != "weather_cams_ecpds_probe_cycle" ]]; then
+  printf '%s\n' "拒绝执行：CAMS OM 生产阶段必须来自已验证的 1Panel 流水线" >&2
+  exit 2
+fi
 source "$APP_DIR/scripts/openmeteo_runtime_common.sh"
 load_weather_env
 RUN="${1:-${WEATHER_CAMS_RUN:-}}"
@@ -10,7 +14,6 @@ if [[ -z "$RUN" ]]; then
   exit 2
 fi
 LOG_DIR="${WEATHER_OPENMETEO_BUILD_LOG_DIR:-/opt/1panel/apps/weather/logs}"
-LOCK_FILE="${WEATHER_OPENMETEO_CAMS_FTP_LOCK_FILE:-/tmp/weather_openmeteo_cams_ftp_cycle.lock}"
 PRODUCER_ROOT="${WEATHER_OM_PRODUCER_ROOT:-$APP_DIR/data/om_producer}"
 KEEP_COVERAGES="${WEATHER_OM_CAMS_KEEP_COVERAGES:-1}"
 SOURCE_RUN_COUNT="${WEATHER_CAMS_REQUIRED_SOURCE_RUN_COUNT:-3}"
@@ -31,11 +34,6 @@ export WEATHER_REGION_TOP_LAT="$CAMS_STORAGE_TOP_LAT"
 mkdir -p "$LOG_DIR" "$PRODUCER_ROOT/staging"
 
 {
-  flock -n 9 || {
-    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_OM] previous job still running, skip."
-    exit 0
-  }
-
   export WEATHER_OPENMETEO_TASK_SCOPE=cams-ecpds
   if ! is_truthy "${WEATHER_TASK_CLEANUP_DONE:-false}"; then
     echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_OM] stage=cleanup previous abnormal task residue"
@@ -221,4 +219,4 @@ PY
   echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_OM] stage=cleanup retention applied and temporary source data removed"
   trap - EXIT
   echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_OM] completed source=ecpds run=$RUN sources=$SOURCE_RUNS"
-} 9>"$LOCK_FILE" 2>&1 | tee -a "$LOG_DIR/openmeteo_cams_om_cycle.log"
+} 2>&1 | tee -a "$LOG_DIR/openmeteo_cams_om_cycle.log"

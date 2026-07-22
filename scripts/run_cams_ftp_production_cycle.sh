@@ -8,8 +8,11 @@ if [[ -z "$RUN" ]]; then
 fi
 
 APP_DIR="${WEATHER_FORECAST_APP_DIR:-/opt/1panel/apps/weather_forecast_server}"
+if [[ "${WEATHER_1PANEL_VERIFIED_TASK:-}" != "weather_cams_ecpds_probe_cycle" ]]; then
+  printf '%s\n' "拒绝执行：CAMS ECPDS 生产阶段必须来自已验证的 1Panel 流水线" >&2
+  exit 2
+fi
 LOG_DIR="${WEATHER_OPENMETEO_BUILD_LOG_DIR:-/opt/1panel/apps/weather/logs}"
-LOCK_FILE="${WEATHER_OPENMETEO_CAMS_FTP_LOCK_FILE:-/tmp/weather_openmeteo_cams_ftp_cycle.lock}"
 
 run_to_utc_layer_start() {
   python3 - "$1" <<'PY'
@@ -24,11 +27,6 @@ PY
 mkdir -p "$LOG_DIR"
 
 {
-  flock -n 9 || {
-    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_FTP] previous job still running, skip."
-    exit 0
-  }
-
   cd "$APP_DIR"
   if [[ "${WEATHER_GIT_PULL:-false}" == "true" ]]; then
     git pull --ff-only
@@ -60,4 +58,4 @@ mkdir -p "$LOG_DIR"
   echo "$layer_end [OPENMETEO_CAMS_FTP] build CAMS layer products end=$layer_end"
 
   echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_FTP] completed run=$RUN"
-} 9>"$LOCK_FILE" >> "$LOG_DIR/openmeteo_cams_ftp_cycle.log" 2>&1
+} >> "$LOG_DIR/openmeteo_cams_ftp_cycle.log" 2>&1

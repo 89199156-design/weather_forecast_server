@@ -1058,7 +1058,7 @@ def test_combined_production_cycle_is_removed_in_favor_of_split_source_cycles():
         assert "restart local Open-Meteo API" not in script
         assert "download runtime data run=$RUN start=" in script
         assert "download runtime data run=$RUN end=" in script
-        assert "flock -n" in script
+        assert "flock -n" not in script
 
 
 def test_gfs_probe_cycle_uses_official_indices_before_gfs_only_production():
@@ -1086,10 +1086,10 @@ def test_gfs_probe_cycle_uses_official_indices_before_gfs_only_production():
     assert 'start += GFS_UPPER_LEVEL_BATCH_SIZE' not in download
     assert "datetime.now(UTC)" in probe
     assert "scripts/probe_gfs_official_run.py" in cycle
-    assert "CYCLE_LOCK_FILE" in cycle
-    assert "GFS production cycle already running, skip probe." in cycle
-    assert "WEATHER_OPENMETEO_GFS_PROBE_LOCK_FILE" in cycle
-    assert "WEATHER_OPENMETEO_GFS_LOCK_FILE" in cycle
+    assert "CYCLE_LOCK_FILE" not in cycle
+    assert "flock" not in cycle
+    assert "stage=startup cleanup" in cycle
+    assert "stage=cleanup after task" in cycle
     assert "GLOBAL_LOCK_FILE" not in cycle
     assert "WEATHER_OPENMETEO_GLOBAL_LOCK_FILE" not in cycle
     assert "another Open-Meteo production cycle is running, skip probe." not in cycle
@@ -1141,6 +1141,10 @@ def test_gfs_probe_cycle_starts_latest_ready_run_after_newer_not_ready(tmp_path)
         + "\n",
         encoding="utf-8",
     )
+    (scripts_dir / "check_1panel_v1_task_state.py").write_text(
+        "print('run|test 1Panel invocation')\n",
+        encoding="utf-8",
+    )
     (scripts_dir / "openmeteo_runtime_common.sh").write_text(
         "load_weather_env() { :; }\n"
         "openmeteo_task_container_state() { printf 'absent\\n'; }\n"
@@ -1180,6 +1184,7 @@ def test_gfs_probe_cycle_starts_latest_ready_run_after_newer_not_ready(tmp_path)
     env.update(
         {
             "WEATHER_FORECAST_APP_DIR": str(app_dir),
+            "WEATHER_1PANEL_VERIFIED_TASK": "weather_gfs_probe_cycle",
             "WEATHER_OPENMETEO_BUILD_LOG_DIR": str(log_dir),
             "WEATHER_OPENMETEO_GFS_PROBE_LOCK_FILE": str(tmp_path / "probe.lock"),
             "WEATHER_OPENMETEO_GFS_LOCK_FILE": str(tmp_path / "cycle.lock"),
@@ -1241,10 +1246,27 @@ def test_openmeteo_cron_installer_creates_three_independent_1panel_tasks():
     assert 'RUNTIME_ROOT="${WEATHER_FORECAST_RUNTIME_ROOT:-/opt/1panel/apps/weather_forecast_server}"' in script
     assert 'ENV_FILE="${WEATHER_OPENMETEO_ENV_FILE:-$RUNTIME_ROOT/config/singapore.private.env}"' in script
     assert 'PRODUCER_ROOT="${WEATHER_OM_PRODUCER_ROOT:-$RUNTIME_ROOT/data/om_producer}"' in script
-    assert "--preserve-env=PANEL_DB,APP_DIR,ENV_FILE,PRODUCER_ROOT" in script
-    assert "WEATHER_FORECAST_APP_DIR={app_dir}" in script
-    assert "WEATHER_OPENMETEO_ENV_FILE={env_file}" in script
-    assert "WEATHER_OM_PRODUCER_ROOT={producer_root}" in script
+    assert "--preserve-env=PANEL_DB,APP_DIR,ENV_FILE,PRODUCER_ROOT,TASK_RETAIN_COPIES" in script
+    assert 'f"export WEATHER_FORECAST_APP_DIR={shlex.quote(app_dir)}"' in script
+    assert "--current-log-path" in script
+    assert "WEATHER_1PANEL_VERIFIED_TASK" in script
+    assert 'TASK_RETAIN_COPIES="${WEATHER_1PANEL_TASK_RETAIN_COPIES:-100}"' in script
+    assert "retain_copies = 7" not in script
+    assert "RECOMMENDED_RETAIN_COPIES" in script
+    assert "MINIMUM_RETAIN_COPIES" in script
+    assert "WHEN retain_copies < ? THEN ? ELSE retain_copies END" in script
+    assert "--require-all-idle" in script
+    first_window_call = script.index(
+        "  require_safe_panel_restart_window\nfi\n\nexport PANEL_DB"
+    )
+    database_mutation = script.index('"${PYTHON_RUNNER[@]}"')
+    assert first_window_call < database_mutation
+    assert script.count("require_safe_panel_restart_window") == 3
+    assert "status = 'Enable'" not in script
+    assert "?, 'Disable')" in script
+    assert "preserving existing enable/disable states" in script
+    assert 'f"export WEATHER_OPENMETEO_ENV_FILE={shlex.quote(env_file)}"' in script
+    assert 'f"export WEATHER_OM_PRODUCER_ROOT={shlex.quote(producer_root)}"' in script
     assert "scripts/run_gfs_probe_and_cycle.sh" in script
     assert "scripts/run_cams_ftp_scheduled_cycle.sh" in script
     assert "scripts/run_cams_ads_scheduled_cycle.sh" in script
@@ -1255,6 +1277,11 @@ def test_openmeteo_cron_installer_creates_three_independent_1panel_tasks():
     assert 'systemctl restart "$PANEL_SERVICE"' in script
     assert 'systemctl restart cron.service' not in script
     assert "CST" not in script
+
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "bash scripts/run_gfs_probe_and_cycle.sh" not in readme
+    assert "bash scripts/run_cams_ftp_scheduled_cycle.sh" not in readme
+    assert "bash scripts/run_cams_ads_scheduled_cycle.sh" not in readme
 
 
 def test_gfs_production_publishes_only_after_bound_domains_and_layers_succeed():
@@ -1292,9 +1319,9 @@ def test_cams_ftp_scheduled_cycle_probes_remote_batches_like_gfs():
     assert "WEATHER_CAMS_SOURCE" not in scheduled
     assert "ftp|ecpds|ftp_ecpds)" not in scheduled
     assert "ads|cds|ads_cds)" not in scheduled
-    assert "CAMS FTP/ECPDS production cycle already running, skip probe." in scheduled
-    assert "WEATHER_OPENMETEO_CAMS_FTP_SCHEDULE_LOCK_FILE" in scheduled
-    assert "WEATHER_OPENMETEO_CAMS_FTP_LOCK_FILE" in scheduled
+    assert "flock" not in scheduled
+    assert "stage=startup cleanup" in scheduled
+    assert "stage=cleanup after task" in scheduled
     assert "GLOBAL_LOCK_FILE" not in scheduled
     assert "WEATHER_OPENMETEO_GLOBAL_LOCK_FILE" not in scheduled
     assert "another Open-Meteo production cycle is running, skip probe." not in scheduled
@@ -1337,7 +1364,9 @@ def test_cams_ads_has_an_independent_scheduler_and_publication_namespace():
     assert (ROOT / "scripts" / "download_openmeteo_cams_greenhouse_data.sh").exists()
 
     ads = ads_path.read_text(encoding="utf-8")
-    assert "WEATHER_OPENMETEO_CAMS_ADS_SCHEDULE_LOCK_FILE" in ads
+    assert "flock" not in ads
+    assert "stage=startup cleanup" in ads
+    assert "stage=cleanup after task" in ads
     assert "WEATHER_OPENMETEO_CAMS_FTP_LOCK_FILE" not in ads
     assert "WEATHER_OPENMETEO_GFS_LOCK_FILE" not in ads
     assert "GLOBAL_LOCK_FILE" not in ads
@@ -1375,22 +1404,21 @@ def test_cams_ecpds_production_keeps_three_complete_runs_without_downloading_ads
     assert 'restore_cams_latest_metadata "$RUN"' in production
 
 
-def test_openmeteo_tasks_use_only_scope_specific_self_locks():
-    scripts = {
-        ROOT / "scripts" / "run_gfs_om_production_cycle.sh": "WEATHER_OPENMETEO_GFS_LOCK_FILE",
-        ROOT / "scripts" / "run_gfs_production_cycle.sh": "WEATHER_OPENMETEO_GFS_LOCK_FILE",
-        ROOT / "scripts" / "run_cams_om_production_cycle.sh": "WEATHER_OPENMETEO_CAMS_FTP_LOCK_FILE",
-        ROOT / "scripts" / "run_cams_ftp_production_cycle.sh": "WEATHER_OPENMETEO_CAMS_FTP_LOCK_FILE",
-        ROOT / "scripts" / "run_cams_ads_scheduled_cycle.sh": "WEATHER_OPENMETEO_CAMS_ADS_SCHEDULE_LOCK_FILE",
-    }
+def test_openmeteo_tasks_do_not_use_file_locks():
+    scripts = (
+        ROOT / "scripts" / "run_gfs_probe_and_cycle.sh",
+        ROOT / "scripts" / "run_gfs_om_production_cycle.sh",
+        ROOT / "scripts" / "run_gfs_production_cycle.sh",
+        ROOT / "scripts" / "run_cams_ftp_scheduled_cycle.sh",
+        ROOT / "scripts" / "run_cams_om_production_cycle.sh",
+        ROOT / "scripts" / "run_cams_ftp_production_cycle.sh",
+        ROOT / "scripts" / "run_cams_ads_scheduled_cycle.sh",
+    )
 
-    for path, expected_self_lock in scripts.items():
+    for path in scripts:
         script = path.read_text(encoding="utf-8")
-        assert expected_self_lock in script, path.name
-        assert "flock -n" in script, path.name
-        assert "GLOBAL_LOCK_FILE" not in script, path.name
-        assert "WEATHER_OPENMETEO_GLOBAL_LOCK_FILE" not in script, path.name
-        assert "/tmp/weather_openmeteo_production.lock" not in script, path.name
+        assert "flock" not in script, path.name
+        assert "LOCK_FILE" not in script, path.name
 
     pipeline = (ROOT / "scripts" / "run_native_model_pipeline.sh").read_text(encoding="utf-8")
     assert "flock" not in pipeline

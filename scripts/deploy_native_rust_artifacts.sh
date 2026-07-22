@@ -8,12 +8,8 @@ WEBP_ROOT="${WEATHER_OM_WEBP_ROOT:-/opt/1panel/apps/weather_om_webp}"
 API_SERVICE="${WEATHER_OM_API_SERVICE:-weather-om-api.service}"
 API_HEALTHCHECK_URL="${WEATHER_OM_API_HEALTHCHECK_URL:-http://127.0.0.1:8088/v1/forecast?latitude=31.2304&longitude=121.4737&hourly=temperature_2m&forecast_hours=1&timezone=GMT}"
 BUILD_ROOT="${WEATHER_RUST_BUILD_ROOT:-$APP_ROOT/.build/native-rust-artifacts}"
-DEPLOY_LOCK_GROUP="${WEATHER_OM_DEPLOY_LOCK_GROUP:-$(id -gn)}"
-GFS_SCHEDULE_LOCK="${WEATHER_OPENMETEO_GFS_PROBE_LOCK_FILE:-/tmp/weather_openmeteo_gfs_probe.lock}"
-GFS_CYCLE_LOCK="${WEATHER_OPENMETEO_GFS_LOCK_FILE:-/tmp/weather_openmeteo_gfs_cycle.lock}"
-CAMS_ECPDS_SCHEDULE_LOCK="${WEATHER_OPENMETEO_CAMS_FTP_SCHEDULE_LOCK_FILE:-/tmp/weather_openmeteo_cams_ftp_schedule.lock}"
-CAMS_ECPDS_CYCLE_LOCK="${WEATHER_OPENMETEO_CAMS_FTP_LOCK_FILE:-/tmp/weather_openmeteo_cams_ftp_cycle.lock}"
-CAMS_ADS_SCHEDULE_LOCK="${WEATHER_OPENMETEO_CAMS_ADS_SCHEDULE_LOCK_FILE:-/tmp/weather_openmeteo_cams_ads_schedule.lock}"
+DEPLOY_LOCK="${WEATHER_RUST_DEPLOY_LOCK_FILE:-$APP_ROOT/.build/weather_native_rust_deploy.lock}"
+PANEL_DB="${WEATHER_1PANEL_DB:-/opt/1panel/db/1Panel.db}"
 SOURCE_REMOTE="${WEATHER_RUST_SOURCE_REMOTE:-origin}"
 SOURCE_BRANCH="${WEATHER_RUST_SOURCE_BRANCH:-main}"
 EXPECTED_REMOTE_URL="${WEATHER_RUST_EXPECTED_REMOTE_URL:-https://github.com/89199156-design/weather_forecast_server.git}"
@@ -40,34 +36,56 @@ require_command() {
   fi
 }
 
-prepare_deployment_gate_lock() {
-  local lock_file="$1"
-  local lock_dir
-  lock_dir="$(dirname "$lock_file")"
-  mkdir -p "$lock_dir"
-  if [[ -L "$lock_file" ]]; then
-    echo "refusing symlink task lock: $lock_file" >&2
-    return 1
-  fi
-  "$SUDO_BIN" -n touch "$lock_file"
-  if [[ ! -f "$lock_file" || -L "$lock_file" ]]; then
-    echo "task lock is not a regular file: $lock_file" >&2
-    return 1
-  fi
-  "$SUDO_BIN" -n chgrp "$DEPLOY_LOCK_GROUP" "$lock_file"
-  "$SUDO_BIN" -n chmod 0660 "$lock_file"
+require_production_tasks_idle() {
+  "$SUDO_BIN" -n python3 "$SCRIPT_DIR/check_1panel_v1_task_state.py" \
+    --database "$PANEL_DB" \
+    --require-production-idle
 }
 
-prepare_deployment_gate_locks() {
-  local lock_file
-  for lock_file in \
-    "$GFS_SCHEDULE_LOCK" \
-    "$GFS_CYCLE_LOCK" \
-    "$CAMS_ECPDS_SCHEDULE_LOCK" \
-    "$CAMS_ECPDS_CYCLE_LOCK" \
-    "$CAMS_ADS_SCHEDULE_LOCK"; do
-    prepare_deployment_gate_lock "$lock_file"
-  done
+prepare_deploy_lock() {
+  if [[ "$DEPLOY_LOCK" != /* ]]; then
+    echo "deployment lock path must be absolute: $DEPLOY_LOCK" >&2
+    return 2
+  fi
+  local lock_parent resolved_parent owner_uid mode_text mode_value
+  lock_parent="$(dirname "$DEPLOY_LOCK")"
+  if [[ ! -e "$lock_parent" && "$lock_parent" == "$APP_ROOT/.build" ]]; then
+    if [[ -L "$lock_parent" ]]; then
+      echo "refusing symlink deployment lock directory: $lock_parent" >&2
+      return 2
+    fi
+    install -d -m 0700 "$lock_parent"
+  fi
+  if [[ ! -d "$lock_parent" || -L "$lock_parent" ]]; then
+    echo "deployment lock parent must be a real directory: $lock_parent" >&2
+    return 2
+  fi
+  resolved_parent="$(readlink -f "$lock_parent")"
+  if [[ "$resolved_parent" != "$lock_parent" ]]; then
+    echo "deployment lock parent contains a symlink: $lock_parent" >&2
+    return 2
+  fi
+  owner_uid="$(stat -c '%u' "$lock_parent")"
+  mode_text="$(stat -c '%a' "$lock_parent")"
+  mode_value=$((8#$mode_text))
+  if [[ "$owner_uid" != "$(id -u)" || $((mode_value & 8#022)) -ne 0 ]]; then
+    echo "deployment lock parent must be owned by the deploy user and not group/world writable: $lock_parent" >&2
+    return 2
+  fi
+  if [[ -L "$DEPLOY_LOCK" || ( -e "$DEPLOY_LOCK" && ! -f "$DEPLOY_LOCK" ) ]]; then
+    echo "deployment lock must be a regular non-symlink file: $DEPLOY_LOCK" >&2
+    return 2
+  fi
+  if [[ ! -e "$DEPLOY_LOCK" ]]; then
+    if ! (umask 077; set -o noclobber; : >"$DEPLOY_LOCK") 2>/dev/null; then
+      echo "failed to create deployment lock safely: $DEPLOY_LOCK" >&2
+      return 2
+    fi
+  fi
+  if [[ -L "$DEPLOY_LOCK" || ! -f "$DEPLOY_LOCK" || ! -O "$DEPLOY_LOCK" ]]; then
+    echo "deployment lock ownership/type validation failed: $DEPLOY_LOCK" >&2
+    return 2
+  fi
 }
 
 sudo_systemctl() {
@@ -225,6 +243,13 @@ for command_name in bash git python3 sha256sum install flock mktemp readlink "$S
 done
 
 cd "$APP_ROOT"
+prepare_deploy_lock
+exec 9<>"$DEPLOY_LOCK"
+flock -n 9 || {
+  echo "another native Rust deployment is active" >&2
+  exit 1
+}
+require_production_tasks_idle
 bash "$SCRIPT_DIR/build_native_rust_artifacts.sh" "$BUILD_ROOT"
 
 status="$(git status --porcelain --untracked-files=all)"
@@ -299,31 +324,10 @@ manifest_sha256="$(sha256sum "$BUILD_ROOT/build.json" | awk '{print $1}')"
 release_id="${revision}-${manifest_sha256:0:16}"
 api_release="$API_ROOT/releases/$release_id"
 webp_release="$WEBP_ROOT/releases/$release_id"
-prepare_deployment_gate_locks
+require_production_tasks_idle
 trap cleanup_release_temps EXIT
 
 {
-  flock -n 9 || {
-    echo "GFS schedule task is active; refusing concurrent Rust deployment" >&2
-    exit 1
-  }
-  flock -n 8 || {
-    echo "GFS production cycle is active; refusing concurrent Rust deployment" >&2
-    exit 1
-  }
-  flock -n 7 || {
-    echo "CAMS ECPDS schedule task is active; refusing concurrent Rust deployment" >&2
-    exit 1
-  }
-  flock -n 6 || {
-    echo "CAMS ECPDS production cycle is active; refusing concurrent Rust deployment" >&2
-    exit 1
-  }
-  flock -n 5 || {
-    echo "CAMS ADS task is active; refusing concurrent Rust deployment" >&2
-    exit 1
-  }
-
   prepare_release "$API_ROOT" "$api_release" "${API_ARTIFACTS[@]}"
   prepare_release "$WEBP_ROOT" "$webp_release" "${WEBP_ARTIFACTS[@]}"
 
@@ -384,11 +388,7 @@ trap cleanup_release_temps EXIT
 
   rollback_required=false
   trap - ERR HUP INT TERM
-} 9>"$GFS_SCHEDULE_LOCK" \
-  8>"$GFS_CYCLE_LOCK" \
-  7>"$CAMS_ECPDS_SCHEDULE_LOCK" \
-  6>"$CAMS_ECPDS_CYCLE_LOCK" \
-  5>"$CAMS_ADS_SCHEDULE_LOCK"
+}
 
 echo "revision=$revision"
 echo "release_id=$release_id"

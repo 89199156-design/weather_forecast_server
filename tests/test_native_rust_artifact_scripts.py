@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import shutil
 import signal
+import sqlite3
 import subprocess
 import textwrap
 
@@ -57,6 +58,7 @@ def prepare_repository(tmp_path: Path) -> tuple[Path, Path]:
     (app / "om_webp").mkdir()
     shutil.copy2(ROOT / "scripts/build_native_rust_artifacts.sh", app / "scripts")
     shutil.copy2(ROOT / "scripts/deploy_native_rust_artifacts.sh", app / "scripts")
+    shutil.copy2(ROOT / "scripts/check_1panel_v1_task_state.py", app / "scripts")
     shutil.copy2(ROOT / "scripts/install_native_api_dem_root.sh", app / "scripts")
     shutil.copy2(ROOT / "rust-toolchain.toml", app)
     (app / "om_api/Cargo.toml").write_text("[package]\nname='om-api'\nversion='0.1.0'\n", encoding="utf-8")
@@ -184,6 +186,30 @@ def deployment_env(tmp_path: Path, origin: Path, fake_bin: Path, pid_file: Path)
     dem_static.mkdir(parents=True)
     (dem_static / "lat_0.om").write_bytes(b"test-dem")
     dropin = tmp_path / "systemd/weather-om-api.service.d/20-dem-root.conf"
+    panel_db = tmp_path / "1Panel.db"
+    with sqlite3.connect(panel_db) as connection:
+        connection.execute(
+            "create table cronjobs ("
+            "id integer primary key, name text, status text, retain_copies integer)"
+        )
+        connection.execute(
+            "create table job_records (id integer primary key, cronjob_id integer, "
+            "status text, start_time text, records text)"
+        )
+        for task_id, task_name in enumerate(
+            (
+                "weather_gfs_probe_cycle",
+                "weather_cams_ecpds_probe_cycle",
+                "weather_cams_ads_cycle",
+            ),
+            start=1,
+        ):
+            connection.execute(
+                "insert into cronjobs (id, name, status, retain_copies) "
+                "values (?, ?, 'Enable', 100)",
+                (task_id, task_name),
+            )
+        connection.commit()
     env = os.environ.copy()
     env.update(
         {
@@ -195,11 +221,8 @@ def deployment_env(tmp_path: Path, origin: Path, fake_bin: Path, pid_file: Path)
             "WEATHER_RUST_TARGET_DIR": str(tmp_path / "target"),
             "WEATHER_RUST_BUILD_ROOT": str(tmp_path / "build"),
             "WEATHER_RUST_BUILD_LOCK_FILE": str(tmp_path / "build.lock"),
-            "WEATHER_OPENMETEO_GFS_PROBE_LOCK_FILE": str(tmp_path / "gfs-schedule.lock"),
-            "WEATHER_OPENMETEO_GFS_LOCK_FILE": str(tmp_path / "gfs-cycle.lock"),
-            "WEATHER_OPENMETEO_CAMS_FTP_SCHEDULE_LOCK_FILE": str(tmp_path / "cams-ecpds-schedule.lock"),
-            "WEATHER_OPENMETEO_CAMS_FTP_LOCK_FILE": str(tmp_path / "cams-ecpds-cycle.lock"),
-            "WEATHER_OPENMETEO_CAMS_ADS_SCHEDULE_LOCK_FILE": str(tmp_path / "cams-ads-schedule.lock"),
+            "WEATHER_RUST_DEPLOY_LOCK_FILE": str(tmp_path / "deploy.lock"),
+            "WEATHER_1PANEL_DB": str(panel_db),
             "WEATHER_OM_API_ROOT": str(tmp_path / "api-root"),
             "WEATHER_OM_WEBP_ROOT": str(tmp_path / "webp-root"),
             "WEATHER_OM_DEM_ROOT": str(dem_root),
@@ -362,37 +385,16 @@ def test_deploy_uses_one_immutable_release_and_verifies_running_api(tmp_path: Pa
         stop_fake_service(pid_file)
 
 
-def test_deploy_repairs_read_only_task_locks(tmp_path: Path):
-    app, origin = prepare_repository(tmp_path)
-    fake_bin, pid_file = prepare_fake_tools(tmp_path)
-    env = deployment_env(tmp_path, origin, fake_bin, pid_file)
-    install_old_links(env)
-    lock_paths = [
-        Path(env[name])
-        for name in (
-            "WEATHER_OPENMETEO_GFS_PROBE_LOCK_FILE",
-            "WEATHER_OPENMETEO_GFS_LOCK_FILE",
-            "WEATHER_OPENMETEO_CAMS_FTP_SCHEDULE_LOCK_FILE",
-            "WEATHER_OPENMETEO_CAMS_FTP_LOCK_FILE",
-            "WEATHER_OPENMETEO_CAMS_ADS_SCHEDULE_LOCK_FILE",
-        )
-    ]
-    for lock_path in lock_paths:
-        lock_path.touch()
-        lock_path.chmod(0o400)
-    try:
-        completed = run(
-            ["bash", str(app / "scripts/deploy_native_rust_artifacts.sh")],
-            cwd=tmp_path,
-            env=env,
-            check=False,
-        )
-
-        assert completed.returncode == 0, completed.stderr
-        for lock_path in lock_paths:
-            assert lock_path.stat().st_mode & 0o060 == 0o060
-    finally:
-        stop_fake_service(pid_file)
+def test_deploy_has_no_weather_task_file_lock_gate():
+    script = (ROOT / "scripts/deploy_native_rust_artifacts.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "WEATHER_OPENMETEO_GFS_PROBE_LOCK_FILE" not in script
+    assert "WEATHER_OPENMETEO_GFS_LOCK_FILE" not in script
+    assert "WEATHER_OPENMETEO_CAMS_FTP_SCHEDULE_LOCK_FILE" not in script
+    assert "WEATHER_OPENMETEO_CAMS_FTP_LOCK_FILE" not in script
+    assert "WEATHER_OPENMETEO_CAMS_ADS_SCHEDULE_LOCK_FILE" not in script
+    assert "--require-production-idle" in script
 
 
 def test_deploy_rolls_back_every_link_when_health_check_fails(tmp_path: Path):
@@ -455,34 +457,39 @@ def test_deploy_restores_previous_dem_dropin_when_install_health_check_fails(
 
 
 @pytest.mark.parametrize(
-    "lock_env",
+    "task_id,task_name",
     (
-        "WEATHER_OPENMETEO_GFS_PROBE_LOCK_FILE",
-        "WEATHER_OPENMETEO_GFS_LOCK_FILE",
-        "WEATHER_OPENMETEO_CAMS_FTP_SCHEDULE_LOCK_FILE",
-        "WEATHER_OPENMETEO_CAMS_FTP_LOCK_FILE",
-        "WEATHER_OPENMETEO_CAMS_ADS_SCHEDULE_LOCK_FILE",
+        (1, "weather_gfs_probe_cycle"),
+        (2, "weather_cams_ecpds_probe_cycle"),
+        (3, "weather_cams_ads_cycle"),
     ),
 )
-def test_deploy_refuses_to_overlap_any_production_task(tmp_path: Path, lock_env: str):
-    import fcntl
-
+def test_deploy_refuses_to_overlap_any_production_task(
+    tmp_path: Path, task_id: int, task_name: str
+):
     app, origin = prepare_repository(tmp_path)
     fake_bin, pid_file = prepare_fake_tools(tmp_path)
     env = deployment_env(tmp_path, origin, fake_bin, pid_file)
     old_targets = install_old_links(env)
-    lock_path = Path(env[lock_env])
-    with lock_path.open("w", encoding="utf-8") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        completed = run(
-            ["bash", str(app / "scripts/deploy_native_rust_artifacts.sh")],
-            cwd=tmp_path,
-            env=env,
-            check=False,
+    log_path = tmp_path / f"{task_name}.log"
+    log_path.touch()
+    with sqlite3.connect(env["WEATHER_1PANEL_DB"]) as connection:
+        connection.execute(
+            "insert into job_records "
+            "(id, cronjob_id, status, start_time, records) "
+            "values (?, ?, 'Waiting', '2026-07-23 00:00:00', ?)",
+            (100 + task_id, task_id, str(log_path)),
         )
+        connection.commit()
+    completed = run(
+        ["bash", str(app / "scripts/deploy_native_rust_artifacts.sh")],
+        cwd=tmp_path,
+        env=env,
+        check=False,
+    )
 
     assert completed.returncode != 0
-    assert "is active; refusing concurrent Rust deployment" in completed.stderr
+    assert task_name in completed.stderr
     for link, old_target in old_targets.items():
         assert os.readlink(link) == old_target
     assert not pid_file.exists()

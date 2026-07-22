@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import re
+import shutil
+import subprocess
 from types import SimpleNamespace
 import sys
 
@@ -37,45 +40,27 @@ def lock_environment(script: str) -> dict[str, str]:
     )
 
 
-def test_three_scheduled_tasks_use_only_disjoint_self_locks() -> None:
+def test_three_scheduled_tasks_use_panel_self_state_without_file_locks() -> None:
     tasks = {
-        "gfs": (
-            read_script("run_gfs_probe_and_cycle.sh"),
-            {
-                "WEATHER_OPENMETEO_GFS_PROBE_LOCK_FILE": "/tmp/weather_openmeteo_gfs_probe.lock",
-                "WEATHER_OPENMETEO_GFS_LOCK_FILE": "/tmp/weather_openmeteo_gfs_cycle.lock",
-            },
-        ),
-        "ecpds": (
-            read_script("run_cams_ftp_scheduled_cycle.sh"),
-            {
-                "WEATHER_OPENMETEO_CAMS_FTP_SCHEDULE_LOCK_FILE": "/tmp/weather_openmeteo_cams_ftp_schedule.lock",
-                "WEATHER_OPENMETEO_CAMS_FTP_LOCK_FILE": "/tmp/weather_openmeteo_cams_ftp_cycle.lock",
-            },
-        ),
-        "ads": (
-            read_script("run_cams_ads_scheduled_cycle.sh"),
-            {
-                "WEATHER_OPENMETEO_CAMS_ADS_SCHEDULE_LOCK_FILE": "/tmp/weather_openmeteo_cams_ads_schedule.lock",
-            },
-        ),
+        "gfs": read_script("run_gfs_probe_and_cycle.sh"),
+        "ecpds": read_script("run_cams_ftp_scheduled_cycle.sh"),
+        "ads": read_script("run_cams_ads_scheduled_cycle.sh"),
     }
 
-    all_variables: set[str] = set()
-    all_paths: set[str] = set()
-    for task, (script, expected) in tasks.items():
-        assert lock_environment(script) == expected, task
-        assert "flock -n" in script, task
+    for task, script in tasks.items():
+        assert lock_environment(script) == {}, task
+        assert "flock" not in script, task
         assert "GLOBAL_LOCK" not in script, task
         assert "WEATHER_OPENMETEO_GLOBAL_LOCK_FILE" not in script, task
         assert "/tmp/weather_openmeteo_production.lock" not in script, task
         assert "openmeteo_task_container_state" in script, task
         assert "detached" in script, task
         assert "reconcile_native_current_pointer.py" in script, task
-        assert all_variables.isdisjoint(expected), task
-        assert all_paths.isdisjoint(expected.values()), task
-        all_variables.update(expected)
-        all_paths.update(expected.values())
+        assert "stage=startup cleanup" in script, task
+        assert "stage=cleanup after task" in script, task
+        assert "check_1panel_v1_task_state.py" in script, task
+        assert "--current-log-path" in script, task
+        assert "preserve container and" in script, task
 
     installer = read_script("install_openmeteo_cron.sh")
     assert installer.count('"weather_gfs_probe_cycle",') == 1
@@ -84,12 +69,135 @@ def test_three_scheduled_tasks_use_only_disjoint_self_locks() -> None:
     assert "scripts/run_gfs_probe_and_cycle.sh" in installer
     assert "scripts/run_cams_ftp_scheduled_cycle.sh" in installer
     assert "scripts/run_cams_ads_scheduled_cycle.sh" in installer
-    assert "run_native_model_pipeline.sh gfs \"$run\" apply-published" in tasks["gfs"][0]
-    assert "run_native_model_pipeline.sh cams \"$run\" apply-published" in tasks["ecpds"][0]
+    assert "check_1panel_v1_task_state.py" in installer
+    assert "--current-task" in installer
+    assert "retain_copies = 7" not in installer
+    assert "TASK_RETAIN_COPIES" in installer
+    assert "--require-all-idle" in installer
+    assert "run_native_model_pipeline.sh gfs \"$run\" apply-published" in tasks["gfs"]
+    assert "run_native_model_pipeline.sh cams \"$run\" apply-published" in tasks["ecpds"]
 
     runtime = read_script("openmeteo_runtime_common.sh")
     assert '"No such container:"' in runtime
     assert "Cannot safely inspect task container" in runtime
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected_rc", "expects_remove"),
+    (
+        ("inspect-error", 3, False),
+        ("label-mismatch", 2, False),
+        ("running", 4, False),
+        ("stopped-rm-fail", 3, True),
+        ("stopped-success", 0, True),
+        ("absent", 0, False),
+        ("invalid-running", 2, False),
+    ),
+)
+def test_task_container_cleanup_is_fail_closed(
+    tmp_path: Path, mode: str, expected_rc: int, expects_remove: bool
+) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    calls = tmp_path / "docker.calls"
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        """#!/usr/bin/env bash
+set -u
+printf '%s\n' "$*" >> "$WEATHER_TEST_DOCKER_CALLS"
+if [[ "$1" == "container" && "$2" == "inspect" ]]; then
+  case "$WEATHER_TEST_DOCKER_MODE" in
+    inspect-error) printf '%s\n' 'daemon unavailable' >&2; exit 1 ;;
+    label-mismatch) printf '%s\n' 'other|false|aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' ;;
+    running) printf '%s\n' 'gfs|true|aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' ;;
+    stopped-*) printf '%s\n' 'gfs|false|aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' ;;
+    absent) printf '%s\n' 'Error: No such container: weather-openmeteo-gfs' >&2; exit 1 ;;
+    invalid-running) printf '%s\n' 'gfs|unknown|aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' ;;
+  esac
+elif [[ "$1" == "rm" ]]; then
+  [[ "$WEATHER_TEST_DOCKER_MODE" != "stopped-rm-fail" ]]
+fi
+""",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+    env = os.environ.copy()
+    env.update(
+        {
+            "PATH": f"{fake_bin}{os.pathsep}{env.get('PATH', '')}",
+            "WEATHER_TEST_DOCKER_CALLS": str(calls),
+            "WEATHER_TEST_DOCKER_MODE": mode,
+        }
+    )
+    command = (
+        f"source {SCRIPTS / 'openmeteo_runtime_common.sh'}; "
+        "set +e; cleanup_openmeteo_task_container gfs; rc=$?; "
+        "printf 'rc=%s\\n' \"$rc\"; exit 0"
+    )
+    completed = subprocess.run(
+        ["bash", "-c", command],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert f"rc={expected_rc}" in completed.stdout
+    call_lines = calls.read_text(encoding="utf-8").splitlines()
+    removed = any(line.startswith("rm ") for line in call_lines)
+    assert removed is expects_remove
+
+
+@pytest.mark.parametrize(
+    "entrypoint",
+    (
+        "run_gfs_probe_and_cycle.sh",
+        "run_cams_ftp_scheduled_cycle.sh",
+        "run_cams_ads_scheduled_cycle.sh",
+    ),
+)
+def test_unknown_container_state_never_reaches_staging_cleanup(
+    tmp_path: Path, entrypoint: str
+) -> None:
+    app_dir = tmp_path / "app"
+    scripts_dir = app_dir / "scripts"
+    scripts_dir.mkdir(parents=True)
+    log_dir = tmp_path / "logs"
+    producer_root = tmp_path / "producer"
+    marker = tmp_path / "destructive-cleanup-called"
+    (scripts_dir / "check_1panel_v1_task_state.py").write_text(
+        "print('run|test invocation')\n", encoding="utf-8"
+    )
+    (scripts_dir / "openmeteo_runtime_common.sh").write_text(
+        "load_weather_env() { :; }\n"
+        "openmeteo_task_container_state() { return 3; }\n"
+        f"cleanup_openmeteo_task_container() {{ touch {marker}; }}\n",
+        encoding="utf-8",
+    )
+    (scripts_dir / "cleanup_native_task_staging.py").write_text(
+        f"from pathlib import Path\nPath({str(marker)!r}).touch()\n",
+        encoding="utf-8",
+    )
+    shutil.copy2(SCRIPTS / "task_progress_reporter.py", scripts_dir)
+    env = os.environ.copy()
+    env.update(
+        {
+            "WEATHER_FORECAST_APP_DIR": str(app_dir),
+            "WEATHER_OPENMETEO_BUILD_LOG_DIR": str(log_dir),
+            "WEATHER_OM_PRODUCER_ROOT": str(producer_root),
+            "WEATHER_GIT_PULL": "false",
+        }
+    )
+    completed = subprocess.run(
+        ["bash", str(SCRIPTS / entrypoint)],
+        cwd=app_dir,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode != 0
+    assert not marker.exists(), completed.stdout + completed.stderr
 
 
 def test_startup_cleanup_removes_only_exact_task_owned_staging(tmp_path: Path) -> None:

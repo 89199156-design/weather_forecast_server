@@ -2,6 +2,10 @@
 set -euo pipefail
 
 APP_DIR="${WEATHER_FORECAST_APP_DIR:-/opt/1panel/apps/weather_forecast_server}"
+if [[ "${WEATHER_1PANEL_VERIFIED_TASK:-}" != "weather_gfs_probe_cycle" ]]; then
+  printf '%s\n' "拒绝执行：GFS OM 生产阶段必须来自已验证的 1Panel 流水线" >&2
+  exit 2
+fi
 source "$APP_DIR/scripts/openmeteo_runtime_common.sh"
 load_weather_env
 RUN="${1:-${WEATHER_GFS_RUN:-}}"
@@ -10,7 +14,6 @@ if [[ -z "$RUN" ]]; then
   exit 2
 fi
 LOG_DIR="${WEATHER_OPENMETEO_BUILD_LOG_DIR:-/opt/1panel/apps/weather/logs}"
-LOCK_FILE="${WEATHER_OPENMETEO_GFS_LOCK_FILE:-/tmp/weather_openmeteo_gfs_cycle.lock}"
 PRODUCER_ROOT="${WEATHER_OM_PRODUCER_ROOT:-$APP_DIR/data/om_producer}"
 RESUME_STAGING="${WEATHER_OM_GFS_RESUME_STAGING:-}"
 FORCE_REUSED_DOWNLOAD="${WEATHER_OM_GFS_FORCE_REUSED_DOWNLOAD:-false}"
@@ -64,11 +67,6 @@ fi
 mkdir -p "$LOG_DIR" "$PRODUCER_ROOT/staging"
 
 {
-  flock -n 9 || {
-    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_GFS_OM] previous job still running, skip."
-    exit 0
-  }
-
   export WEATHER_OPENMETEO_TASK_SCOPE=gfs
   if ! is_truthy "${WEATHER_TASK_CLEANUP_DONE:-false}"; then
     echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_GFS_OM] stage=cleanup previous abnormal task residue"
@@ -333,4 +331,4 @@ PY
   echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_GFS_OM] stage=cleanup retention applied and temporary source data removed"
   trap - EXIT
   echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_GFS_OM] completed run=$RUN sources=$SOURCE_RUNS"
-} 9>"$LOCK_FILE" 2>&1 | tee -a "$LOG_DIR/openmeteo_gfs_om_cycle.log"
+} 2>&1 | tee -a "$LOG_DIR/openmeteo_gfs_om_cycle.log"

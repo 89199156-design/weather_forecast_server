@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Remove only stale staging directories owned by one self-locked task."""
+"""Remove stale staging owned by one database-gated production task."""
 
 from __future__ import annotations
 

@@ -2,6 +2,15 @@
 set -euo pipefail
 
 APP_DIR="${WEATHER_FORECAST_APP_DIR:-/opt/1panel/apps/weather_forecast_server}"
+case "${1:-}" in
+  gfs) EXPECTED_PANEL_TASK="weather_gfs_probe_cycle" ;;
+  cams) EXPECTED_PANEL_TASK="weather_cams_ecpds_probe_cycle" ;;
+  *) EXPECTED_PANEL_TASK="" ;;
+esac
+if [[ -n "$EXPECTED_PANEL_TASK" && "${WEATHER_1PANEL_VERIFIED_TASK:-}" != "$EXPECTED_PANEL_TASK" ]]; then
+  printf '%s\n' "拒绝执行：原生模型生产流水线缺少对应的 1Panel 任务验证" >&2
+  exit 2
+fi
 source "$APP_DIR/scripts/openmeteo_runtime_common.sh"
 load_weather_env
 

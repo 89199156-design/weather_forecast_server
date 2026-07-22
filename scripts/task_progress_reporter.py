@@ -16,6 +16,8 @@ from pathlib import Path
 
 
 RETURN_CODE_PREFIX = "\x1eWEATHER_TASK_RC="
+SKIP_REASON_PREFIX = "\x1eWEATHER_TASK_SKIP="
+TARGET_RUN_PREFIX = "\x1eWEATHER_TASK_TARGET_RUN="
 RUN_PATTERN = re.compile(r"(?<!\d)(20\d{8})(?!\d)")
 
 
@@ -70,7 +72,7 @@ def structured_payload(line: str) -> dict[str, object]:
     return value if isinstance(value, dict) else {}
 
 
-def infer_state(line: str, *, default_stage: str) -> tuple[str, str | None, bool]:
+def infer_state(line: str, *, default_stage: str) -> tuple[str, str | None]:
     lowered = line.lower()
     payload = structured_payload(line)
     product = str(payload.get("product") or "").lower()
@@ -81,7 +83,11 @@ def infer_state(line: str, *, default_stage: str) -> tuple[str, str | None, bool
         (label for marker, label in PRODUCT_NAMES.items() if marker in combined),
         None,
     )
-    if "cleanup" in combined or "清理" in combined:
+    if "startup cleanup" in combined:
+        stage_text = "启动前清理"
+    elif "cleanup after task" in combined:
+        stage_text = "任务后清理"
+    elif "cleanup" in combined or "清理" in combined:
         stage_text = "清理异常残留"
     elif "probe" in combined or "ready " in combined or "official run" in combined:
         stage_text = "检查最新批次"
@@ -111,11 +117,7 @@ def infer_state(line: str, *, default_stage: str) -> tuple[str, str | None, bool
         stage_text = default_stage
 
     run_match = RUN_PATTERN.search(line)
-    skipped = any(
-        marker in lowered
-        for marker in (" skip", "skipped", "already running", "not_ready", "not ready")
-    )
-    return stage_text, run_match.group(1) if run_match else None, skipped
+    return stage_text, run_match.group(1) if run_match else None
 
 
 def report_progress(
@@ -133,8 +135,11 @@ def report_progress(
     target_run = "-"
     forecast_hour: int | None = None
     max_forecast_hour: int | None = None
-    skipped = False
+    skipped_reason: str | None = None
+    metadata_error: str | None = None
     return_code: int | None = None
+    frame_events = 0
+    retry_events = 0
     last_size = directory_bytes(watch_roots)
     last_report_at = time.monotonic()
     print(f"{utc_text()}｜开始｜任务：{task}｜阶段：{stage}", flush=True)
@@ -157,10 +162,9 @@ def report_progress(
     threading.Thread(target=read_input, name="task-progress-input", daemon=True).start()
 
     def emit_progress(now: float) -> None:
-        nonlocal last_size, last_report_at
+        nonlocal frame_events, last_size, last_report_at, retry_events
         current_size = directory_bytes(watch_roots)
-        elapsed = max(now - last_report_at, 0.001)
-        growth = max(current_size - last_size, 0)
+        growth = current_size - last_size
         frame_text = ""
         if forecast_hour is not None:
             frame_text = f"｜当前时效：f{forecast_hour:03d}"
@@ -169,10 +173,13 @@ def report_progress(
         print(
             f"{utc_text()}｜进度｜任务：{task}｜阶段：{stage}"
             f"｜目标批次：{target_run}｜当前批次：{run}{frame_text}"
-            f"｜近一分钟增长：{growth / 1024 / 1024:.1f} MiB"
-            f"｜速度：{growth / elapsed / 1024 / 1024:.2f} MiB/s",
+            f"｜本周期时效请求日志：{frame_events}｜下载重试告警：{retry_events}"
+            f"｜staging 文件表观大小变化：{growth / 1024 / 1024:+.1f} MiB"
+            "（含硬链接/生成文件，非网速、非实际磁盘增量）",
             flush=True,
         )
+        frame_events = 0
+        retry_events = 0
         last_size = current_size
         last_report_at = now
 
@@ -198,13 +205,21 @@ def report_progress(
                 except ValueError:
                     return_code = 1
                 continue
+            if line.startswith(TARGET_RUN_PREFIX):
+                candidate = line[len(TARGET_RUN_PREFIX) :].strip()
+                if not RUN_PATTERN.fullmatch(candidate):
+                    metadata_error = f"无效目标批次：{candidate!r}"
+                elif target_run not in ("-", candidate):
+                    metadata_error = f"目标批次冲突：{target_run} 与 {candidate}"
+                else:
+                    target_run = candidate
+                continue
+            if line.startswith(SKIP_REASON_PREFIX):
+                skipped_reason = line[len(SKIP_REASON_PREFIX) :].strip() or "没有待处理批次"
+                continue
             raw_log.write(line)
             raw_log.flush()
-            inferred_stage, inferred_run, line_skipped = infer_state(
-                line, default_stage=stage
-            )
-            if inferred_run and target_run == "-":
-                target_run = inferred_run
+            inferred_stage, inferred_run = infer_state(line, default_stage=stage)
             if inferred_run and inferred_run != run:
                 forecast_hour = None
                 max_forecast_hour = None
@@ -221,7 +236,9 @@ def report_progress(
             forecast_hour_match = FORECAST_HOUR_PATTERN.search(line)
             if forecast_hour_match:
                 forecast_hour = int(forecast_hour_match.group(1))
-            skipped = skipped or line_skipped
+                frame_events += 1
+            if "download failed, retry" in line.lower():
+                retry_events += 1
 
             now = time.monotonic()
             if now - last_report_at < interval_seconds:
@@ -230,18 +247,26 @@ def report_progress(
 
     if return_code is None:
         return_code = 1
+    if target_run != "-" and skipped_reason is not None:
+        metadata_error = metadata_error or "目标批次与跳过原因同时出现"
+    if return_code == 0 and target_run == "-" and skipped_reason is None:
+        metadata_error = metadata_error or "成功记录缺少目标批次或跳过原因"
+    if metadata_error and return_code == 0:
+        return_code = 1
     if return_code != 0:
+        metadata_text = f"｜日志元数据错误：{metadata_error}" if metadata_error else ""
         print(
-            f"{utc_text()}｜失败｜任务：{task}｜阶段：{stage}｜批次：{run}"
-            f"｜退出码：{return_code}｜详细日志：{log_file}",
+            f"{utc_text()}｜失败｜任务：{task}｜阶段：{stage}"
+            f"｜目标批次：{target_run}｜当前观察批次：{run}"
+            f"｜退出码：{return_code}{metadata_text}｜详细日志：{log_file}",
             flush=True,
         )
-    elif skipped:
-        print(f"{utc_text()}｜跳过｜任务：{task}｜原因：已有任务运行或没有新批次", flush=True)
+    elif skipped_reason is not None:
+        print(f"{utc_text()}｜跳过｜任务：{task}｜原因：{skipped_reason}", flush=True)
     else:
         print(
             f"{utc_text()}｜完成｜任务：{task}｜目标批次：{target_run}"
-            f"｜最后处理批次：{run}",
+            f"｜最后处理批次：{target_run}",
             flush=True,
         )
     return return_code

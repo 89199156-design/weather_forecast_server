@@ -176,19 +176,40 @@ cleanup_openmeteo_task_container() {
     return 2
   fi
   local container_name="weather-openmeteo-$task_scope"
-  local state
-  state="$(openmeteo_task_container_state "$task_scope")"
-  if [[ "$state" == "absent" ]]; then
-    printf '{"stage":"cleanup","removed_container":null}\n'
-  elif [[ "$state" == "running" ]]; then
-    printf '{"stage":"cleanup","preserved_running_container":"%s"}\n' "$container_name"
+  local details state container_id
+  if details="$(openmeteo_task_container_details "$task_scope")"; then
+    :
   else
-    docker rm "$container_name" >/dev/null
-    printf '{"stage":"cleanup","removed_container":"%s"}\n' "$container_name"
+    local inspect_rc=$?
+    printf '%s\n' "Cannot safely clean task container $container_name because inspection failed." >&2
+    return "$inspect_rc"
   fi
+  IFS='|' read -r state container_id <<<"$details"
+  case "$state" in
+    absent)
+      printf '{"stage":"cleanup","removed_container":null}\n'
+      ;;
+    running)
+      printf '{"stage":"cleanup","preserved_running_container":"%s"}\n' "$container_name"
+      return 4
+      ;;
+    stopped)
+      # Remove the exact inspected container ID. If a different same-name
+      # container appears concurrently, it must not be touched.
+      if ! docker rm "$container_id" >/dev/null; then
+        printf '%s\n' "Failed to remove verified stopped task container $container_name id=$container_id" >&2
+        return 3
+      fi
+      printf '{"stage":"cleanup","removed_container":"%s"}\n' "$container_name"
+      ;;
+    *)
+      printf '%s\n' "Refusing unknown task container state: $container_name state=$state" >&2
+      return 3
+      ;;
+  esac
 }
 
-openmeteo_task_container_state() {
+openmeteo_task_container_details() {
   local task_scope="${1:?task scope is required}"
   if [[ ! "$task_scope" =~ ^[a-z][a-z0-9_-]{0,31}$ ]]; then
     printf '%s\n' "Invalid Open-Meteo task scope=$task_scope" >&2
@@ -197,27 +218,43 @@ openmeteo_task_container_state() {
   local container_name="weather-openmeteo-$task_scope"
   local inspect_result
   if ! inspect_result="$(docker container inspect \
-    --format '{{ index .Config.Labels "weather.forecast.task" }}|{{.State.Running}}' \
+    --format '{{ index .Config.Labels "weather.forecast.task" }}|{{.State.Running}}|{{.Id}}' \
     "$container_name" 2>&1)"; then
     if [[ "$inspect_result" == *"No such container:"* || "$inspect_result" == *"No such object:"* ]]; then
-      printf '%s\n' "absent"
+      printf '%s\n' "absent|"
       return
     fi
     printf '%s\n' "Cannot safely inspect task container $container_name: $inspect_result" >&2
     return 3
   fi
   local label="${inspect_result%%|*}"
-  local running="${inspect_result#*|}"
+  local remainder="${inspect_result#*|}"
+  local running="${remainder%%|*}"
+  local container_id="${remainder#*|}"
   if [[ "$label" != "$task_scope" ]]; then
     printf '%s\n' \
       "Refusing container with unexpected task label: $container_name label=$label" >&2
     return 2
   fi
-  if [[ "$running" == "true" ]]; then
-    printf '%s\n' "running"
-  else
-    printf '%s\n' "stopped"
+  if [[ ! "$container_id" =~ ^[0-9a-f]{12,64}$ ]]; then
+    printf '%s\n' "Refusing task container with invalid ID: $container_name id=$container_id" >&2
+    return 2
   fi
+  case "$running" in
+    true) printf '%s|%s\n' "running" "$container_id" ;;
+    false) printf '%s|%s\n' "stopped" "$container_id" ;;
+    *)
+      printf '%s\n' "Refusing task container with invalid running state: $container_name state=$running" >&2
+      return 2
+      ;;
+  esac
+}
+
+openmeteo_task_container_state() {
+  local task_scope="${1:?task scope is required}"
+  local details
+  details="$(openmeteo_task_container_details "$task_scope")" || return $?
+  printf '%s\n' "${details%%|*}"
 }
 
 append_run_arg() {

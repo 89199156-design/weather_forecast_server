@@ -2,12 +2,30 @@
 set -euo pipefail
 
 APP_DIR="${WEATHER_FORECAST_APP_DIR:-/opt/1panel/apps/weather_forecast_server}"
+TASK_NAME="weather_cams_ads_cycle"
+PANEL_DB="/opt/1panel/db/1Panel.db"
+CURRENT_LOG_PATH="$(readlink -f "/proc/$$/fd/1")"
+TASK_STATE="$(/usr/bin/python3 "$APP_DIR/scripts/check_1panel_v1_task_state.py" \
+  --database "$PANEL_DB" \
+  --current-task "$TASK_NAME" \
+  --current-log-path "$CURRENT_LOG_PATH")"
+case "$TASK_STATE" in
+  run\|*) ;;
+  skip\|*) printf '%s\n' "跳过｜任务：$TASK_NAME｜原因：${TASK_STATE#skip|}"; exit 0 ;;
+  *) printf '%s\n' "失败｜任务：$TASK_NAME｜原因：未知任务状态 $TASK_STATE" >&2; exit 2 ;;
+esac
+export WEATHER_1PANEL_VERIFIED_TASK="$TASK_NAME"
 source "$APP_DIR/scripts/openmeteo_runtime_common.sh"
 load_weather_env
+if [[ "${WEATHER_1PANEL_VERIFIED_TASK:-}" != "$TASK_NAME" ]]; then
+  printf '%s\n' "拒绝执行：CAMS ADS 生产入口的 1Panel 身份在加载配置时被改变" >&2
+  exit 2
+fi
+readonly WEATHER_1PANEL_VERIFIED_TASK
 
 LOG_DIR="${WEATHER_OPENMETEO_BUILD_LOG_DIR:-/opt/1panel/apps/weather/logs}"
-LOCK_FILE="${WEATHER_OPENMETEO_CAMS_ADS_SCHEDULE_LOCK_FILE:-/tmp/weather_openmeteo_cams_ads_schedule.lock}"
 PRODUCER_ROOT="${WEATHER_OM_PRODUCER_ROOT:-$APP_DIR/data/om_producer}"
+TASK_SCOPE="cams-ads"
 MAX_FORECAST_HOUR="${WEATHER_CAMS_GREENHOUSE_MAX_FORECAST_HOUR:-120}"
 KEEP_COVERAGES="${WEATHER_OM_CAMS_GREENHOUSE_KEEP_COVERAGES:-1}"
 COVERAGE_REVISION="${WEATHER_CAMS_GREENHOUSE_COVERAGE_REVISION:-independent-v1}"
@@ -27,31 +45,50 @@ mkdir -p "$LOG_DIR" "$PRODUCER_ROOT/ads_staging" "$PRODUCER_ROOT/staging"
 (
 publish_dir=""
 on_task_exit() {
-  task_rc=$?
-  if [[ -n "${publish_dir:-}" && "$publish_dir" == "$PRODUCER_ROOT/staging/"* ]]; then
-    rm -rf -- "$publish_dir"
-  fi
+  main_rc=$?
+  cleanup_rc=0
   trap - EXIT
-  printf "\036WEATHER_TASK_RC=%s\n" "$task_rc"
-  exit "$task_rc"
+  set +e
+  echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_ADS] stage=cleanup after task rc=$main_rc"
+  if container_state="$(openmeteo_task_container_state "$TASK_SCOPE")"; then
+    if [[ "$container_state" == "running" ]]; then
+      echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_ADS] preserve running task container and all resumable ADS staging during final cleanup"
+    elif cleanup_openmeteo_task_container "$TASK_SCOPE"; then
+      if [[ -n "${publish_dir:-}" && "$publish_dir" == "$PRODUCER_ROOT/staging/"* ]]; then
+        rm -rf -- "$publish_dir" || cleanup_rc=$?
+      fi
+      python3 "$APP_DIR/scripts/cleanup_native_task_staging.py" \
+        --producer-root "$PRODUCER_ROOT" \
+        --scope cams_ads_publish || cleanup_rc=$?
+    else
+      cleanup_rc=$?
+      echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_ADS] preserve all ADS staging because container cleanup failed rc=$cleanup_rc" >&2
+    fi
+  else
+    cleanup_rc=$?
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_ADS] preserve container and all ADS staging because state inspection failed rc=$cleanup_rc" >&2
+  fi
+  final_rc=$main_rc
+  if (( cleanup_rc != 0 )); then
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_ADS] final cleanup failed rc=$cleanup_rc" >&2
+    if (( final_rc == 0 )); then
+      final_rc=$cleanup_rc
+    fi
+  fi
+  printf "\036WEATHER_TASK_RC=%s\n" "$final_rc"
+  exit "$final_rc"
 }
 trap on_task_exit EXIT
 {
-  # This is the only ADS lock. GFS and ECPDS use different lock files and
-  # different immutable publication namespaces, so all three may run at once.
-  flock -n 9 || {
-    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_ADS] ADS request already queued, running, downloading, or publishing; skip duplicate trigger."
-    exit 0
-  }
-
-  export WEATHER_OPENMETEO_TASK_SCOPE=cams-ads
-  echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_ADS] stage=cleanup previous abnormal task residue"
-  container_state="$(openmeteo_task_container_state "$WEATHER_OPENMETEO_TASK_SCOPE")"
+  export WEATHER_OPENMETEO_TASK_SCOPE="$TASK_SCOPE"
+  echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_ADS] stage=startup cleanup previous abnormal task residue"
+  container_state="$(openmeteo_task_container_state "$TASK_SCOPE")"
   if [[ "$container_state" == "running" ]]; then
     echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_ADS] detached ADS request is still queued/running; keep it and skip duplicate submission"
+    printf "\036WEATHER_TASK_SKIP=%s\n" "检测到本任务遗留的 ADS 请求仍在运行"
     exit 0
   fi
-  cleanup_openmeteo_task_container "$WEATHER_OPENMETEO_TASK_SCOPE"
+  cleanup_openmeteo_task_container "$TASK_SCOPE"
   python3 "$APP_DIR/scripts/cleanup_native_task_staging.py" \
     --producer-root "$PRODUCER_ROOT" \
     --scope cams_ads_publish
@@ -70,6 +107,7 @@ trap on_task_exit EXIT
     --group cams_greenhouse)"
   if [[ "$applied_state" == PENDING\ * ]]; then
     read -r pending_marker pending_run pending_coverage <<<"$applied_state"
+    printf "\036WEATHER_TASK_TARGET_RUN=%s\n" "$pending_run"
     echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_ADS] retry API apply only run=$pending_run coverage=$pending_coverage"
     bash scripts/reload_native_api_snapshot.sh cams_greenhouse "$pending_coverage"
     resumed_dir="$PRODUCER_ROOT/ads_staging/cams_ads_$pending_run"
@@ -121,9 +159,11 @@ trap on_task_exit EXIT
       --producer-root "$PRODUCER_ROOT" \
       --scope cams_ads
     echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_ADS] $state"
+    printf "\036WEATHER_TASK_SKIP=%s\n" "没有需要提交或恢复的 CAMS ADS 批次"
     exit 0
   fi
 
+  printf "\036WEATHER_TASK_TARGET_RUN=%s\n" "$target_run"
   work_dir="$PRODUCER_ROOT/ads_staging/cams_ads_$target_run"
   python3 scripts/cleanup_native_task_staging.py \
     --producer-root "$PRODUCER_ROOT" \
@@ -300,9 +340,9 @@ PY
   rm -rf -- "$work_dir"
   echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_ADS] stage=cleanup retention applied and temporary ADS data removed"
   echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_CAMS_ADS] completed run=$target_run sources=$source_runs"
-} 9>"$LOCK_FILE"
+}
 ) 2>&1 | python3 "$APP_DIR/scripts/task_progress_reporter.py" \
   --task "CAMS ADS 温室气体更新" \
-  --default-stage "清理异常残留" \
+  --default-stage "启动前清理" \
   --watch-root "$PRODUCER_ROOT/ads_staging" \
   --log-file "$LOG_DIR/openmeteo_cams_ads_schedule.log"

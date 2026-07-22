@@ -15,15 +15,16 @@ for rollback.
 - No fixed free-disk threshold is used.
 - No local process/directory completion polling is installed.
 - GFS, CAMS ECPDS, and CAMS ADS are three independent 1Panel tasks. Each task
-  has only its own non-blocking self-lock; there is no cross-task or global
-  mutual exclusion.
+  first identifies its current `job_records` row by the 1Panel log path and
+  checks only older active rows for that same task. There is no task file lock
+  and no cross-task or global mutual exclusion.
 - GFS and ECPDS scheduled checks probe only small remote sentinel files. ADS
   does not probe a remote latest run: it reads the local ECPDS and greenhouse
   markers. No check scans OM data, calls the client API, or rebuilds an API
   index.
-- After acquiring its self-lock, each task removes only stale containers and
-  staging directories bearing that task's scope. It must not clean another
-  task's active or resumable data.
+- Only after its own database gate allows execution does a task remove stale
+  containers and staging directories bearing that task's scope. It must not
+  clean another task's active or resumable data.
 - A source run already present in its complete group marker is a no-op. The
   same GFS/CAMS run must not be regenerated merely because another
   high-frequency tick occurred.
@@ -72,8 +73,9 @@ There is no separate high-frequency watcher.
 
 ## 2a. Batch trigger contract
 
-1Panel is the only scheduler and contains exactly three enabled Shell tasks in
-Singapore local time (UTC+8):
+1Panel is the only scheduler and contains exactly three Shell task definitions
+in Singapore local time (UTC+8). Reinstallation preserves each existing
+operator-controlled enable/disable state; a missing task is created disabled:
 
 | 1Panel task | Complete 1Panel schedule expressions | Entrypoint |
 | --- | --- | --- |
@@ -87,9 +89,9 @@ starting Swift, WebP, or an API reload when no newer complete run is available.
 The ADS task reads only the locally published ECPDS main date and the independent
 greenhouse marker before deciding whether work is required.
 
-Each task's own locked foreground process owns its selected batch chain. The
-locks prevent a task from duplicating itself but do not prevent the other two
-tasks from running:
+Each task's database-verified foreground process owns its selected batch chain.
+An older active row prevents only the same task from duplicating itself and
+does not prevent the other two tasks from running:
 
 ```text
 GFS/ECPDS ready -> download/import/validate OM -> atomic OM publish
@@ -103,9 +105,16 @@ a local ECPDS `YYYYMMDD00` or `YYYYMMDD12` run to the same date's
 `YYYYMMDD00` greenhouse target. It never polls ADS for a latest run. When it
 submits a missing target, that same low-resource foreground process remains
 running through ADS acceptance, queueing, download, validation, atomic
-publication, and API reload. Later ADS ticks fail its self-lock and cannot
-submit a duplicate; GFS and ECPDS remain free to run. A failed stage stops only
+publication, and API reload. Later ADS ticks see the older ADS active row and
+exit before cleanup or submission; GFS and ECPDS remain free to run. A failed stage stops only
 its task chain and leaves the previous immutable snapshots serving clients.
+
+Do not invoke the three scheduled entrypoint scripts directly. Use **Execute**
+on the matching 1Panel task so the current log path can be bound to its exact
+active database record before startup cleanup. The installer keeps any higher
+existing log-retention value and enforces a configurable minimum of 73 records
+(default 100), covering all 20-minute triggers during 1Panel's 24-hour Shell
+timeout.
 
 ## 2b. GFS regional-download contract
 

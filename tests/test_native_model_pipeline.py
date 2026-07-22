@@ -148,6 +148,7 @@ with open(os.environ["WEATHER_TEST_EVENT_LOG"], "a", encoding="utf-8") as output
             env.update(
                 {
                     "WEATHER_FORECAST_APP_DIR": str(app),
+                    "WEATHER_1PANEL_VERIFIED_TASK": "weather_gfs_probe_cycle",
                     "WEATHER_OM_PRODUCER_ROOT": str(producer),
                     "WEATHER_OM_WEBP_BIN": str(webp),
                     "WEATHER_OM_WEBP_DATA_ROOT": str(root / "webp"),
