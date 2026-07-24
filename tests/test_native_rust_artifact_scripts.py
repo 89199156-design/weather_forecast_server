@@ -201,6 +201,7 @@ def deployment_env(tmp_path: Path, origin: Path, fake_bin: Path, pid_file: Path)
                 "weather_gfs_probe_cycle",
                 "weather_cams_ecpds_probe_cycle",
                 "weather_cams_ads_cycle",
+                "weather_ecmwf_probe_cycle",
             ),
             start=1,
         ):
@@ -462,6 +463,7 @@ def test_deploy_restores_previous_dem_dropin_when_install_health_check_fails(
         (1, "weather_gfs_probe_cycle"),
         (2, "weather_cams_ecpds_probe_cycle"),
         (3, "weather_cams_ads_cycle"),
+        (4, "weather_ecmwf_probe_cycle"),
     ),
 )
 def test_deploy_refuses_to_overlap_any_production_task(
