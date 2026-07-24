@@ -297,6 +297,25 @@ def test_ecmwf_pipeline_uses_panel_state_without_batch_lock() -> None:
     assert "VALUES (CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?, 'shell', ?, ?, ?, 'Disable')" in installer
 
 
+def test_ecmwf_api_mounts_model_and_dem_below_writable_data_tmpfs() -> None:
+    installer = (SCRIPTS / "install_ecmwf_api_service.sh").read_text(
+        encoding="utf-8"
+    )
+
+    data_tmpfs = "--tmpfs /app/data:rw,noexec,nosuid,size=1m"
+    model_mount = (
+        "--volume $ECMWF_ROOT/current/ecmwf_ifs025:"
+        "/app/data/ecmwf_ifs025:ro"
+    )
+    dem_mount = "--volume $DEM_ROOT:/app/data/copernicus_dem90:ro"
+    assert data_tmpfs in installer
+    assert model_mount in installer
+    assert dem_mount in installer
+    assert "$ECMWF_ROOT/current:/app/data:ro" not in installer
+    assert installer.index(data_tmpfs) < installer.index(model_mount)
+    assert installer.index(model_mount) < installer.index(dem_mount)
+
+
 def test_ecmwf_image_is_isolated_and_records_exact_provenance() -> None:
     dockerfile = (
         ROOT / "docker" / "openmeteo-ecmwf.Dockerfile"

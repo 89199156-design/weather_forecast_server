@@ -53,7 +53,7 @@ Restart=always
 RestartSec=5
 TimeoutStopSec=45
 ExecStartPre=/usr/bin/python3 $APP_DIR/scripts/verify_ecmwf_runtime.py --root $ECMWF_ROOT --image $IMAGE_REF --patch $PATCH_PATH --source-revision $SOURCE_REVISION
-ExecStart=/usr/bin/docker run --rm --name weather-openmeteo-ecmwf-api --label weather.forecast.component=ecmwf-api --cpus=1.25 --cpu-shares=512 --memory=1536m --memory-swap=2048m --pids-limit=256 --security-opt=no-new-privileges:true --cap-drop=ALL --read-only --tmpfs /tmp:rw,noexec,nosuid,size=128m --env-file $INSTALL_ROOT/runtime.env --volume $ECMWF_ROOT/current:/app/data:ro --volume $DEM_ROOT:/app/data/copernicus_dem90:ro --publish 127.0.0.1:$PORT:8080 $IMAGE_REF serve --env production --hostname 0.0.0.0 --port 8080
+ExecStart=/usr/bin/docker run --rm --name weather-openmeteo-ecmwf-api --label weather.forecast.component=ecmwf-api --cpus=1.25 --cpu-shares=512 --memory=1536m --memory-swap=2048m --pids-limit=256 --security-opt=no-new-privileges:true --cap-drop=ALL --read-only --tmpfs /tmp:rw,noexec,nosuid,size=128m --tmpfs /app/data:rw,noexec,nosuid,size=1m --env-file $INSTALL_ROOT/runtime.env --volume $ECMWF_ROOT/current/ecmwf_ifs025:/app/data/ecmwf_ifs025:ro --volume $DEM_ROOT:/app/data/copernicus_dem90:ro --publish 127.0.0.1:$PORT:8080 $IMAGE_REF serve --env production --hostname 0.0.0.0 --port 8080
 ExecStop=-/usr/bin/docker stop --time 30 weather-openmeteo-ecmwf-api
 
 [Install]
