@@ -7,7 +7,9 @@ RUN ENABLE_PARQUET=TRUE swift package resolve
 
 COPY vendor/open-meteo-ecmwf/ /build/open-meteo/
 COPY vendor/patches/open-meteo-ecmwf-regional.patch /build/open-meteo-regional.patch
-RUN git apply --check /build/open-meteo-regional.patch \
+RUN test ! -d .git \
+    && rm -f -- .git \
+    && git apply --check /build/open-meteo-regional.patch \
     && git apply /build/open-meteo-regional.patch
 RUN ENABLE_PARQUET=TRUE swift package resolve
 RUN ENABLE_PARQUET=TRUE MARCH_SKYLAKE=TRUE swift build -c release

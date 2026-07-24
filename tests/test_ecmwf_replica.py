@@ -299,6 +299,8 @@ def test_ecmwf_image_is_isolated_and_records_exact_provenance() -> None:
     assert "sha256:e0ef0354d44c4a9330eabe68be5b29cf303ca654444db4ae76f2b601ec161e6f" in dockerfile
     assert "sha256:7e6ee634cc774abdcf1875dc632229d51368a2b32e4714fed880c41bd7155aff" in dockerfile
     assert "git apply --check /build/open-meteo-regional.patch" in dockerfile
+    assert "test ! -d .git" in dockerfile
+    assert "rm -f -- .git" in dockerfile
     assert "io.weather-forecast.component=ecmwf-native-engine" in dockerfile
     assert "io.weather-forecast.openmeteo-upstream-commit" in dockerfile
     assert "io.weather-forecast.ecmwf-patch-sha256" in dockerfile
