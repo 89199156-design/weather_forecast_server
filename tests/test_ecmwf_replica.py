@@ -21,6 +21,7 @@ import build_webp
 import ensure_ecmwf_static_asset as static_asset
 import probe_ecmwf_open_data_run as probe
 import publish_ecmwf_release as publisher
+import repair_ecmwf_static_release as static_repair
 
 
 def test_pinned_ecmwf_contract_is_complete_and_deterministic() -> None:
@@ -268,6 +269,61 @@ def test_release_validation_rejects_transient_duplicate_data(tmp_path: Path) -> 
 
     with pytest.raises(ValueError, match="transient or duplicate"):
         publisher.validate_release(staging, "2026072300")
+
+
+def test_static_repair_publishes_revisioned_hardlinked_release(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "ecmwf"
+    source = create_complete_staging(root, "2026072300")
+    source_revision = "b" * 40
+
+    def portable_symlink(target: Path, link: Path) -> None:
+        link.parent.mkdir(parents=True, exist_ok=True)
+        link.unlink(missing_ok=True)
+        link.symlink_to(target, target_is_directory=True)
+
+    monkeypatch.setattr(publisher, "atomic_symlink", portable_symlink)
+    publisher.publish(
+        root=root,
+        staging=source,
+        run="2026072300",
+        image="weather-forecast-ecmwf:ifs025-old",
+        patch_sha256="a" * 64,
+        source_revision=source_revision,
+    )
+    regional_hsurf = tmp_path / "HSURF.om"
+    regional_hsurf.write_bytes(b"official-regional-elevation")
+    monkeypatch.setattr(static_repair, "atomic_symlink", portable_symlink)
+
+    repaired = static_repair.repair(
+        root=root,
+        run="2026072300",
+        regional_hsurf=regional_hsurf,
+        image="weather-forecast-ecmwf:ifs025-new",
+        patch_sha256="c" * 64,
+        source_revision="d" * 40,
+    )
+
+    repaired_root = root / "releases" / f"ecmwf_ifs025_2026072300_{'d' * 12}"
+    original_root = root / "releases" / f"ecmwf_ifs025_2026072300_{'b' * 12}"
+    assert repaired["repair"]["source_release_id"].endswith("b" * 12)
+    assert repaired["static_assets"]["surface_height"]["source_sha256"] == (
+        static_asset.ASSET_SHA256
+    )
+    assert (
+        repaired_root / ecmwf_contract.MODEL / "static" / "HSURF.om"
+    ).read_bytes() == b"official-regional-elevation"
+    assert (
+        original_root / ecmwf_contract.MODEL / "static" / "HSURF.om"
+    ).read_bytes() == b"elevation"
+    original_variable = (
+        original_root / ecmwf_contract.MODEL / "temperature_2m" / "chunk.om"
+    )
+    repaired_variable = (
+        repaired_root / ecmwf_contract.MODEL / "temperature_2m" / "chunk.om"
+    )
+    assert original_variable.stat().st_ino == repaired_variable.stat().st_ino
 
 
 def test_regional_patch_applies_to_exact_locked_upstream() -> None:
