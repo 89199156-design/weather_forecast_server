@@ -14,7 +14,6 @@ fi
 WEBP_ROOT="${WEATHER_OM_WEBP_DATA_ROOT:-/opt/1panel/apps/weather_om_webp/data}"
 PUBLIC_DATA_DIR="${WEATHER_OPENMETEO_PUBLIC_DATA_DIR:-$APP_DIR/data/public}"
 API_URL="${WEATHER_OPENMETEO_ECMWF_API_URL:-http://127.0.0.1:18081/v1/ecmwf}"
-API_HOST="${WEATHER_OPENMETEO_ECMWF_API_HOST:-api.open-meteo.com}"
 MODEL="${WEATHER_OPENMETEO_ECMWF_LAYER_MODEL:-ecmwf_ifs025}"
 FRAME_COUNT="${WEATHER_OPENMETEO_ECMWF_LAYER_FRAME_COUNT:-121}"
 CHUNK_SIZE="${WEATHER_OPENMETEO_ECMWF_LAYER_CHUNK_SIZE:-250}"
@@ -77,7 +76,6 @@ if [[ -e "$STAGING_ROOT" ]]; then
 fi
 
 curl --fail --silent --show-error \
-  --header "Host: $API_HOST" \
   "$API_URL?latitude=31.23&longitude=121.47&hourly=temperature_2m&models=$MODEL&start_hour=$RUN_HOUR&end_hour=$RUN_HOUR" \
   >/dev/null
 
@@ -93,7 +91,6 @@ trap cleanup EXIT
 python3 "$APP_DIR/scripts/build_webp.py" \
   --scope ecmwf \
   --api-base-url "$API_URL" \
-  --api-host-header "$API_HOST" \
   --output-dir "$STAGING_ROOT/ecmwf_ifs025" \
   --model "$MODEL" \
   --start-hour "$RUN_HOUR" \

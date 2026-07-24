@@ -412,6 +412,8 @@ def test_ecmwf_webp_publisher_has_no_test_batch_lock() -> None:
     assert "start_hour=$RUN_HOUR&end_hour=$RUN_HOUR" in script
     assert 'run=$RUN_HOUR' not in script
     assert '--run "$RUN_HOUR"' not in script
+    assert "--api-host-header" not in script
+    assert 'header "Host:' not in script
     assert '"layer_count": 16' in script
 
 
