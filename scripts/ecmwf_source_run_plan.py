@@ -14,11 +14,18 @@ def main() -> int:
     parser.add_argument("--format", choices=("json", "lines"), default="json")
     args = parser.parse_args()
     plan = source_run_plan(args.run, args.lookback_hours)
+    boundary_context_run = plan[-2][0]
     payload = [
         {
             "run": run,
             "max_forecast_hour": horizon,
-            "role": "target" if run == args.run else "rolling-fallback",
+            "role": (
+                "target"
+                if run == args.run
+                else "boundary-context"
+                if run == boundary_context_run
+                else "rolling-fallback"
+            ),
         }
         for run, horizon in plan
     ]

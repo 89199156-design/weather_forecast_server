@@ -20,7 +20,25 @@ CHUNK_SIZE="${WEATHER_OPENMETEO_ECMWF_LAYER_CHUNK_SIZE:-250}"
 TIMEOUT="${WEATHER_OPENMETEO_ECMWF_LAYER_TIMEOUT:-180}"
 REQUEST_RETRIES="${WEATHER_OPENMETEO_ECMWF_LAYER_REQUEST_RETRIES:-2}"
 REQUEST_RETRY_DELAY="${WEATHER_OPENMETEO_ECMWF_LAYER_REQUEST_RETRY_DELAY:-2}"
-RELEASE_ID="ecmwf_ifs025_$RUN"
+DATA_RELEASE_MARKER="$APP_DIR/data/ecmwf/groups/ecmwf/current/ready_for_processing.json"
+RELEASE_ID="$(
+  python3 - "$DATA_RELEASE_MARKER" "$RUN" <<'PY'
+import json
+import re
+import sys
+
+payload = json.load(open(sys.argv[1], encoding="utf-8"))
+release_id = payload.get("coverage_id")
+if (
+    payload.get("status") != "complete"
+    or payload.get("latest_complete_run") != sys.argv[2]
+    or not isinstance(release_id, str)
+    or not re.fullmatch(r"ecmwf_ifs025_[0-9]{10}_[a-f0-9]{12}", release_id)
+):
+    raise SystemExit("ECMWF WebP source release identity is incomplete")
+print(release_id)
+PY
+)"
 RELEASE_ROOT="$WEBP_ROOT/releases/$RELEASE_ID"
 STAGING_ROOT="$WEBP_ROOT/staging/${RELEASE_ID}_$$"
 PRODUCT_DIR="$RELEASE_ROOT/ecmwf_ifs025"

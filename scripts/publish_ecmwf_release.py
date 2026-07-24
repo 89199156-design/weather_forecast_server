@@ -117,7 +117,7 @@ def publish(
     if progress.get("target_run") != run or progress.get("completed_runs") != expected_runs:
         raise ValueError("ECMWF production progress is not complete and ordered")
 
-    coverage_id = f"ecmwf_ifs025_{run}"
+    coverage_id = f"ecmwf_ifs025_{run}_{source_revision[:12]}"
     coverage_root = root / "releases" / coverage_id
     if coverage_root.exists():
         raise ValueError(f"ECMWF immutable release already exists: {coverage_id}")

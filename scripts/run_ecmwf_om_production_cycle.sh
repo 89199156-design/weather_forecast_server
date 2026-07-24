@@ -90,13 +90,16 @@ PY
 
 release_is_complete() {
   [[ -f "$CURRENT_MARKER" ]] || return 1
-  python3 - "$CURRENT_MARKER" "$RUN" <<'PY'
+  python3 - "$CURRENT_MARKER" "$RUN" "$SOURCE_REVISION" <<'PY'
 import json
 import sys
 payload = json.load(open(sys.argv[1], encoding="utf-8"))
+expected_coverage_id = f"ecmwf_ifs025_{sys.argv[2]}_{sys.argv[3][:12]}"
 raise SystemExit(
     0 if payload.get("status") == "complete"
     and payload.get("latest_complete_run") == sys.argv[2]
+    and payload.get("source_revision") == sys.argv[3]
+    and payload.get("coverage_id") == expected_coverage_id
     and payload.get("latest_max_forecast_hour") == 360
     and not payload.get("missing_required_variables")
     and not payload.get("missing_optional_variables")
@@ -132,7 +135,7 @@ PY
       fi
       require_free_bytes "$MINIMUM_RUNTIME_FREE_BYTES" "$source_run"
       variables="$FALLBACK_VARIABLES"
-      if [[ "$role" == "target" ]]; then
+      if [[ "$role" == "target" || "$role" == "boundary-context" ]]; then
         variables="$RAW_VARIABLES"
       fi
       printf '%s\n' \

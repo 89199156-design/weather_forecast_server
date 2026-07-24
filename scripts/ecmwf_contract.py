@@ -142,6 +142,12 @@ def source_run_plan(target_run: str, lookback_hours: int = 72) -> tuple[tuple[st
     while cursor < target:
         runs.append((cursor.strftime("%Y%m%d%H"), natural_max_forecast_hour(cursor)))
         cursor += timedelta(hours=6)
+    # The rolling database keeps the immediately preceding 18Z cycle through
+    # valid time 00Z.  All variables need its 21Z frame as the left Hermite
+    # support point for target hours 00Z..03Z; f006 also supplies accumulated
+    # and six-hour extreme fields at the target boundary.
+    previous_run, _previous_horizon = runs[-1]
+    runs[-1] = (previous_run, 6)
     runs.append((target_run, 360))
     return tuple(runs)
 

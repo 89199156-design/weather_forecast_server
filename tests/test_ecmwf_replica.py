@@ -41,9 +41,35 @@ def test_ecmwf_source_plan_seeds_predecessors_oldest_to_newest() -> None:
     assert len(plan) == 13
     assert plan[0] == ("2026072000", 360)
     assert plan[1] == ("2026072006", 144)
-    assert plan[-2] == ("2026072218", 144)
+    assert plan[-2] == ("2026072218", 6)
     assert plan[-1] == ("2026072300", 360)
     assert [run for run, _ in plan] == sorted(run for run, _ in plan)
+
+
+def test_ecmwf_source_plan_labels_full_boundary_context() -> None:
+    payload = json.loads(
+        subprocess.check_output(
+            [
+                sys.executable,
+                str(SCRIPTS / "ecmwf_source_run_plan.py"),
+                "--run",
+                "2026072300",
+            ],
+            text=True,
+        )
+    )
+
+    assert payload[-2] == {
+        "run": "2026072218",
+        "max_forecast_hour": 6,
+        "role": "boundary-context",
+    }
+    assert payload[-1] == {
+        "run": "2026072300",
+        "max_forecast_hour": 360,
+        "role": "target",
+    }
+    assert {item["role"] for item in payload[:-2]} == {"rolling-fallback"}
 
 
 @pytest.mark.parametrize("run", ("2026072301", "2026-07-23", "bad"))
@@ -191,7 +217,7 @@ def test_release_publisher_requires_full_inventory_and_publishes_atomically(
         source_revision="b" * 40,
     )
 
-    release = root / "releases" / "ecmwf_ifs025_2026072300"
+    release = root / "releases" / f"ecmwf_ifs025_2026072300_{'b' * 12}"
     assert not staging.exists()
     assert release.is_dir()
     assert marker["status"] == "complete"
@@ -292,6 +318,10 @@ def test_ecmwf_pipeline_uses_panel_state_without_batch_lock() -> None:
         assert "LOCK_FILE" not in source
         assert "/tmp/weather_openmeteo_production.lock" not in source
         assert "WEATHER_1PANEL_VERIFIED_TASK" in source
+    assert 'python3 - "$CURRENT_MARKER" "$RUN" "$SOURCE_REVISION"' in cycle
+    assert 'payload.get("source_revision") == sys.argv[3]' in cycle
+    assert 'payload.get("coverage_id") == expected_coverage_id' in cycle
+    assert '"$role" == "target" || "$role" == "boundary-context"' in cycle
     assert installer.count('"weather_ecmwf_probe_cycle",') == 1
     assert "scripts/run_ecmwf_probe_and_cycle.sh" in installer
     assert "VALUES (CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?, 'shell', ?, ?, ?, 'Disable')" in installer
@@ -414,6 +444,9 @@ def test_ecmwf_webp_publisher_has_no_test_batch_lock() -> None:
     assert '--run "$RUN_HOUR"' not in script
     assert "--api-host-header" not in script
     assert 'header "Host:' not in script
+    assert 'DATA_RELEASE_MARKER="$APP_DIR/data/ecmwf/groups/ecmwf/current/ready_for_processing.json"' in script
+    assert "latest_complete_run" in script
+    assert "ecmwf_ifs025_[0-9]{10}_[a-f0-9]{12}" in script
     assert '"layer_count": 16' in script
 
 
