@@ -78,7 +78,7 @@ fi
 
 curl --fail --silent --show-error \
   --header "Host: $API_HOST" \
-  "$API_URL?latitude=31.23&longitude=121.47&hourly=temperature_2m&models=$MODEL&run=$RUN_HOUR&forecast_hours=1" \
+  "$API_URL?latitude=31.23&longitude=121.47&hourly=temperature_2m&models=$MODEL&start_hour=$RUN_HOUR&end_hour=$RUN_HOUR" \
   >/dev/null
 
 mkdir -p "$STAGING_ROOT/ecmwf_ifs025" "$WEBP_ROOT/releases" \
@@ -96,7 +96,6 @@ python3 "$APP_DIR/scripts/build_webp.py" \
   --api-host-header "$API_HOST" \
   --output-dir "$STAGING_ROOT/ecmwf_ifs025" \
   --model "$MODEL" \
-  --run "$RUN_HOUR" \
   --start-hour "$RUN_HOUR" \
   --end-hour "$END_HOUR" \
   --chunk-size "$CHUNK_SIZE" \

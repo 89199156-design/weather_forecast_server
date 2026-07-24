@@ -409,6 +409,9 @@ def test_ecmwf_webp_publisher_has_no_test_batch_lock() -> None:
     assert "/tmp/" not in script
     assert "--scope ecmwf" in script
     assert 'FRAME_COUNT="${WEATHER_OPENMETEO_ECMWF_LAYER_FRAME_COUNT:-121}"' in script
+    assert "start_hour=$RUN_HOUR&end_hour=$RUN_HOUR" in script
+    assert 'run=$RUN_HOUR' not in script
+    assert '--run "$RUN_HOUR"' not in script
     assert '"layer_count": 16' in script
 
 
