@@ -314,6 +314,14 @@ def test_ecmwf_api_mounts_model_and_dem_below_writable_data_tmpfs() -> None:
     assert "$ECMWF_ROOT/current:/app/data:ro" not in installer
     assert installer.index(data_tmpfs) < installer.index(model_mount)
     assert installer.index(model_mount) < installer.index(dem_mount)
+    assert 'RELEASE_MARKER="$ECMWF_ROOT/groups/ecmwf/current/ready_for_processing.json"' in installer
+    assert 'printf \'%s\\n\' "$SOURCE_REVISION" >"$INSTALL_ROOT/source-revision"' in installer
+    assert (
+        'printf \'%s\\n\' "$DATA_SOURCE_REVISION" '
+        '>"$INSTALL_ROOT/data-source-revision"'
+    ) in installer
+    assert "--source-revision $DATA_SOURCE_REVISION" in installer
+    assert "--source-revision $SOURCE_REVISION" not in installer
 
 
 def test_ecmwf_image_is_isolated_and_records_exact_provenance() -> None:
