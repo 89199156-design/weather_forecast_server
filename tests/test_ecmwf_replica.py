@@ -256,6 +256,13 @@ def test_regional_patch_applies_to_exact_locked_upstream() -> None:
         check=False,
     )
     assert completed.returncode == 0, completed.stderr
+    numstat = subprocess.check_output(
+        ["git", "-C", str(upstream), "apply", "--numstat", str(patch)],
+        text=True,
+    )
+    assert (
+        "252\t0\tSources/App/Ecmwf/EcmwfRegionalGrid.swift" in numstat
+    )
     source = patch.read_text(encoding="utf-8")
     assert "WEATHER_ECMWF_REGIONAL_GRID" in source
     assert "cropToRuntimeGrid" in source

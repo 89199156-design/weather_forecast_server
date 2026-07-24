@@ -86,7 +86,7 @@ new file mode 100644
 index 00000000..4607bfef
 --- /dev/null
 +++ b/Sources/App/Ecmwf/EcmwfRegionalGrid.swift
-@@ -0,0 +1,248 @@
+@@ -0,0 +1,252 @@
 +import Foundation
 +import OmFileFormat
 +
