@@ -1209,7 +1209,7 @@ def test_gfs_probe_cycle_starts_latest_ready_run_after_newer_not_ready(tmp_path)
     assert "最后处理批次：2026070600" in completed.stdout
 
 
-def test_openmeteo_cron_installer_creates_three_independent_1panel_tasks():
+def test_openmeteo_cron_installer_creates_four_independent_1panel_tasks():
     script = (ROOT / "scripts" / "install_openmeteo_cron.sh").read_text(encoding="utf-8")
 
     assert "PANEL_DB=" in script
@@ -1224,13 +1224,15 @@ def test_openmeteo_cron_installer_creates_three_independent_1panel_tasks():
     gfs_spec = "0 * * * *,20 * * * *,40 * * * *"
     cams_ecpds_spec = "5 * * * *,25 * * * *,45 * * * *"
     cams_ads_spec = "10 * * * *,30 * * * *,50 * * * *"
+    ecmwf_spec = "10 16 * * *,10 17 * * *,10 18 * * *"
     assert gfs_spec in script
     assert cams_ecpds_spec in script
     assert cams_ads_spec in script
+    assert ecmwf_spec in script
     assert "0,20,40 * * * *" not in script
     assert "5,25,45 * * * *" not in script
     assert "10,30,50 * * * *" not in script
-    for spec in (gfs_spec, cams_ecpds_spec, cams_ads_spec):
+    for spec in (gfs_spec, cams_ecpds_spec, cams_ads_spec, ecmwf_spec):
         assert all(len(expression.split()) == 5 for expression in spec.split(","))
     assert "INSERT INTO cronjobs" in script
     task_names = re.findall(r'^\s{12}"(weather_[a-z0-9_]+)",\s*$', script, re.MULTILINE)
@@ -1238,6 +1240,7 @@ def test_openmeteo_cron_installer_creates_three_independent_1panel_tasks():
         "weather_gfs_probe_cycle",
         "weather_cams_ecpds_probe_cycle",
         "weather_cams_ads_cycle",
+        "weather_ecmwf_probe_cycle",
     ]
     assert "weather_cams_ftp_probe_cycle" not in script
     assert '"17 * * * *"' not in script
@@ -1246,7 +1249,7 @@ def test_openmeteo_cron_installer_creates_three_independent_1panel_tasks():
     assert 'RUNTIME_ROOT="${WEATHER_FORECAST_RUNTIME_ROOT:-/opt/1panel/apps/weather_forecast_server}"' in script
     assert 'ENV_FILE="${WEATHER_OPENMETEO_ENV_FILE:-$RUNTIME_ROOT/config/singapore.private.env}"' in script
     assert 'PRODUCER_ROOT="${WEATHER_OM_PRODUCER_ROOT:-$RUNTIME_ROOT/data/om_producer}"' in script
-    assert "--preserve-env=PANEL_DB,APP_DIR,ENV_FILE,PRODUCER_ROOT,TASK_RETAIN_COPIES" in script
+    assert "--preserve-env=PANEL_DB,APP_DIR,ENV_FILE,PRODUCER_ROOT,ECMWF_ROOT,TASK_RETAIN_COPIES" in script
     assert 'f"export WEATHER_FORECAST_APP_DIR={shlex.quote(app_dir)}"' in script
     assert "--current-log-path" in script
     assert "WEATHER_1PANEL_VERIFIED_TASK" in script
@@ -1267,9 +1270,11 @@ def test_openmeteo_cron_installer_creates_three_independent_1panel_tasks():
     assert "preserving existing enable/disable states" in script
     assert 'f"export WEATHER_OPENMETEO_ENV_FILE={shlex.quote(env_file)}"' in script
     assert 'f"export WEATHER_OM_PRODUCER_ROOT={shlex.quote(producer_root)}"' in script
+    assert 'f"export WEATHER_ECMWF_ROOT={shlex.quote(ecmwf_root)}"' in script
     assert "scripts/run_gfs_probe_and_cycle.sh" in script
     assert "scripts/run_cams_ftp_scheduled_cycle.sh" in script
     assert "scripts/run_cams_ads_scheduled_cycle.sh" in script
+    assert "scripts/run_ecmwf_probe_and_cycle.sh" in script
     assert "0 10,22 * * *" not in script
     assert 'rm -f -- "$SYSTEM_CRON_FILE"' in script
     assert "CRON_TZ=UTC" not in script
@@ -1413,6 +1418,9 @@ def test_openmeteo_tasks_do_not_use_file_locks():
         ROOT / "scripts" / "run_cams_om_production_cycle.sh",
         ROOT / "scripts" / "run_cams_ftp_production_cycle.sh",
         ROOT / "scripts" / "run_cams_ads_scheduled_cycle.sh",
+        ROOT / "scripts" / "run_ecmwf_probe_and_cycle.sh",
+        ROOT / "scripts" / "run_ecmwf_om_production_cycle.sh",
+        ROOT / "scripts" / "build_openmeteo_ecmwf_layers.sh",
     )
 
     for path in scripts:

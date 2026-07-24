@@ -1,0 +1,341 @@
+diff --git a/Sources/App/Ecmwf/DownloadEcmwfCommand.swift b/Sources/App/Ecmwf/DownloadEcmwfCommand.swift
+index 02af0fba..49828c66 100644
+--- a/Sources/App/Ecmwf/DownloadEcmwfCommand.swift
++++ b/Sources/App/Ecmwf/DownloadEcmwfCommand.swift
+@@ -48,6 +48,9 @@ struct DownloadEcmwfCommand: AsyncCommand {
+         
+         @Flag(name: "skip-timeseries")
+         var skipTimeseries: Bool
++
++        @Flag(name: "skip-full-run")
++        var skipFullRun: Bool
+     }
+ 
+     var help: String {
+@@ -89,7 +92,7 @@ struct DownloadEcmwfCommand: AsyncCommand {
+         if !isWave {
+             try await downloadEcmwfElevation(application: context.application, domain: domain, base: base, run: run)
+         }
+-        let generateFullRun = domain.countEnsembleMember == 1
++        let generateFullRun = domain.countEnsembleMember == 1 && !signature.skipFullRun
+         let handles = isWave ? try await downloadEcmwfWave(application: context.application, domain: domain, base: base, run: run, variables: waveVariables, concurrent: nConcurrent, maxForecastHour: signature.maxForecastHour, uploadS3Bucket: signature.uploadS3Bucket, downloadFullGribFile: signature.downloadFullGribFile) : try await downloadEcmwf(application: context.application, domain: domain, base: base, run: run, variables: variables, concurrent: nConcurrent, maxForecastHour: signature.maxForecastHour, uploadS3Bucket: signature.uploadS3Bucket, downloadFullGribFile: signature.downloadFullGribFile)
+         try await GenericVariableHandle.convert(application: context.application, domain: domain, createNetcdf: signature.createNetcdf, run: run, handles: handles, concurrent: nConcurrent, writeUpdateJson: true, uploadS3Bucket: signature.uploadS3Bucket, uploadS3OnlyProbabilities: signature.uploadS3OnlyProbabilities, generateFullRun: generateFullRun, generateTimeSeries: !signature.skipTimeseries)
+     }
+@@ -104,7 +107,7 @@ struct DownloadEcmwfCommand: AsyncCommand {
+         let curl = Curl(logger: logger, client: application.dedicatedHttpClient)
+ 
+         var generateElevationFileData: (lsm: [Float]?, surfacePressure: [Float]?, sealevelPressure: [Float]?, temperature_2m: [Float]?) = (nil, nil, nil, nil)
+-        var grib2d = GribArray2D(nx: domain.grid.nx, ny: domain.grid.ny)
++        var grib2d = GribArray2D(nx: domain.sourceGrid.nx, ny: domain.sourceGrid.ny)
+ 
+         logger.info("Downloading height and elevation data")
+         let url = domain.getUrl(base: base, run: run, hour: 0)[0]
+@@ -118,6 +121,7 @@ struct DownloadEcmwfCommand: AsyncCommand {
+             let shortName = message.get(attribute: "shortName")!
+             try grib2d.load(message: message)
+             grib2d.array.flipLatitude()
++            grib2d.array = domain.cropToRuntimeGrid(grib2d.array)
+ 
+             switch shortName {
+             case "lsm":
+@@ -250,7 +254,7 @@ struct DownloadEcmwfCommand: AsyncCommand {
+                     }
+                     
+                     // logger.info("Processing \(variable)")
+-                    var grib2d = GribArray2D(nx: domain.grid.nx, ny: domain.grid.ny)
++                    var grib2d = GribArray2D(nx: domain.sourceGrid.nx, ny: domain.sourceGrid.ny)
+                     try grib2d.load(message: message)
+                     if (domain == .aifs025_single || domain == .aifs025_ensemble) && run >= Timestamp(2026, 5, 12, 6, 0) && run < Timestamp(2026,5,13,6) {
+                         // AIFSv2 shifts data by 180° longitude
+@@ -258,6 +262,7 @@ struct DownloadEcmwfCommand: AsyncCommand {
+                     } else {
+                         grib2d.array.flipLatitude()
+                     }
++                    grib2d.array = domain.cropToRuntimeGrid(grib2d.array)
+                     
+                     // try message.debugGrid(grid: domain.grid, flipLatidude: false, shift180Longitude: false)
+                     // fatalError()
+diff --git a/Sources/App/Ecmwf/EcmwfDomain.swift b/Sources/App/Ecmwf/EcmwfDomain.swift
+index cac52e19..af3aeb9f 100644
+--- a/Sources/App/Ecmwf/EcmwfDomain.swift
++++ b/Sources/App/Ecmwf/EcmwfDomain.swift
+@@ -123,12 +123,16 @@ enum EcmwfDomain: String, GenericDomain {
+     }
+ 
+     var grid: any Gridable {
+-        switch self {
+-        case .ifs04, .ifs04_ensemble:
+-            return RegularGrid(nx: 900, ny: 451, latMin: -90, lonMin: -180, dx: 360 / 900, dy: 180 / 450)
+-        case .ifs025, .ifs025_ensemble, .aifs025, .wam025, .wam025_ensemble, .aifs025_single, .aifs025_ensemble, .ifs025_ensemble_mean, .wam025_ensemble_mean, .aifs025_ensemble_mean:
+-            return RegularGrid(nx: 1440, ny: 721, latMin: -90, lonMin: -180, dx: 360 / 1440, dy: 180 / (721 - 1))
++        guard let slice = regionalSlice else {
++            return sourceGrid
+         }
++        return EcmwfRegionalRegularGrid(
++            base: sourceGrid,
++            x0: slice.x0,
++            y0: slice.y0,
++            nx: slice.nx,
++            ny: slice.ny
++        )
+     }
+ 
+     var countEnsembleMember: Int {
+diff --git a/Sources/App/Ecmwf/EcmwfRegionalGrid.swift b/Sources/App/Ecmwf/EcmwfRegionalGrid.swift
+new file mode 100644
+index 00000000..4607bfef
+--- /dev/null
++++ b/Sources/App/Ecmwf/EcmwfRegionalGrid.swift
+@@ -0,0 +1,248 @@
++import Foundation
++import OmFileFormat
++
++/// Product-source boundary for the Singapore regional ECMWF replica.
++///
++/// The default remains the unmodified upstream global grid. Production enables
++/// the regional grid explicitly and downloads the same indexed ECMWF GRIB
++/// messages, then crops decoded values on their native 0.25 degree lattice
++/// before any Open-Meteo conversion, interpolation, or compression occurs.
++enum EcmwfRegionalSourceConfig {
++    static func string(_ key: String, fallback: String) -> String {
++        guard let raw = ProcessInfo.processInfo.environment[key]?
++            .trimmingCharacters(in: .whitespacesAndNewlines),
++            !raw.isEmpty
++        else {
++            return fallback
++        }
++        return raw
++    }
++
++    static func double(_ key: String, fallback: Double) -> Double {
++        Double(string(key, fallback: String(fallback))) ?? fallback
++    }
++
++    static var enabled: Bool {
++        ["1", "true", "yes", "on"].contains(
++            string("WEATHER_ECMWF_REGIONAL_GRID", fallback: "false").lowercased()
++        )
++    }
++
++    static var bounds: (
++        leftLon: Double,
++        rightLon: Double,
++        bottomLat: Double,
++        topLat: Double
++    ) {
++        (
++            leftLon: double("WEATHER_ECMWF_STORAGE_LEFT_LON", fallback: 68.0),
++            rightLon: double("WEATHER_ECMWF_STORAGE_RIGHT_LON", fallback: 142.0),
++            bottomLat: double("WEATHER_ECMWF_STORAGE_BOTTOM_LAT", fallback: -2.0),
++            topLat: double("WEATHER_ECMWF_STORAGE_TOP_LAT", fallback: 60.0)
++        )
++    }
++
++    static func regularGridSlice(
++        base: RegularGrid,
++        bounds: (
++            leftLon: Double,
++            rightLon: Double,
++            bottomLat: Double,
++            topLat: Double
++        )
++    ) -> (x0: Int, y0: Int, nx: Int, ny: Int) {
++        guard bounds.leftLon <= bounds.rightLon,
++            bounds.bottomLat <= bounds.topLat
++        else {
++            fatalError("Configured ECMWF storage bounds are not ordered")
++        }
++        let epsilon = 1e-9
++        let x0 = max(
++            0,
++            Int(
++                ceil(
++                    (bounds.leftLon - Double(base.lonMin)) /
++                        Double(base.dx) - epsilon
++                )
++            )
++        )
++        let x1 = min(
++            base.nx - 1,
++            Int(
++                floor(
++                    (bounds.rightLon - Double(base.lonMin)) /
++                        Double(base.dx) + epsilon
++                )
++            )
++        )
++        let y0 = max(
++            0,
++            Int(
++                ceil(
++                    (bounds.bottomLat - Double(base.latMin)) /
++                        Double(base.dy) - epsilon
++                )
++            )
++        )
++        let y1 = min(
++            base.ny - 1,
++            Int(
++                floor(
++                    (bounds.topLat - Double(base.latMin)) /
++                        Double(base.dy) + epsilon
++                )
++            )
++        )
++        guard x0 <= x1, y0 <= y1 else {
++            fatalError("Configured ECMWF storage bounds do not overlap the source grid")
++        }
++        return (x0: x0, y0: y0, nx: x1 - x0 + 1, ny: y1 - y0 + 1)
++    }
++}
++
++struct EcmwfRegionalRegularGrid: Gridable {
++    let base: RegularGrid
++    let x0: Int
++    let y0: Int
++    let nx: Int
++    let ny: Int
++
++    var searchRadius: Int {
++        base.searchRadius
++    }
++
++    var crsWkt2: String {
++        let sw = getCoordinates(gridpoint: 0)
++        let ne = getCoordinates(gridpoint: nx * ny - 1)
++        return """
++            GEOGCRS["WGS 84",
++                DATUM["World Geodetic System 1984",
++                    ELLIPSOID["WGS 84",6378137,298.257223563]],
++                CS[ellipsoidal,2],
++                    AXIS["latitude",north],
++                    AXIS["longitude",east],
++                    ANGLEUNIT["degree",0.0174532925199433]
++                USAGE[
++                    SCOPE["grid"],
++                    BBOX[\(sw.latitude),\(sw.longitude),\(ne.latitude),\(ne.longitude)]]]
++            """
++    }
++
++    func findPoint(lat: Float, lon: Float) -> Int? {
++        guard let (x, y) = base.findPointXy(lat: lat, lon: lon),
++            x >= x0,
++            y >= y0,
++            x < x0 + nx,
++            y < y0 + ny
++        else {
++            return nil
++        }
++        return (y - y0) * nx + (x - x0)
++    }
++
++    func findPointInterpolated(lat: Float, lon: Float) -> GridPoint2DFraction? {
++        guard let point = base.findPointInterpolated(lat: lat, lon: lon) else {
++            return nil
++        }
++        let x = point.gridpoint % base.nx
++        let y = point.gridpoint / base.nx
++        guard x >= x0,
++            y >= y0,
++            x < x0 + nx,
++            y < y0 + ny
++        else {
++            return nil
++        }
++        return GridPoint2DFraction(
++            gridpoint: (y - y0) * nx + (x - x0),
++            xFraction: point.xFraction,
++            yFraction: point.yFraction
++        )
++    }
++
++    func findBox(boundingBox: BoundingBoxWGS84) -> [Int]? {
++        guard let slice = base.findBox(boundingBox: boundingBox) else {
++            return nil
++        }
++        let yRange = max(slice.yRange.lowerBound, y0)..<min(
++            slice.yRange.upperBound,
++            y0 + ny
++        )
++        let xRange = max(slice.xRange.lowerBound, x0)..<min(
++            slice.xRange.upperBound,
++            x0 + nx
++        )
++        guard !xRange.isEmpty, !yRange.isEmpty else {
++            return []
++        }
++        var gridpoints = [Int]()
++        gridpoints.reserveCapacity(xRange.count * yRange.count)
++        for y in yRange {
++            for x in xRange {
++                gridpoints.append((y - y0) * nx + (x - x0))
++            }
++        }
++        return gridpoints
++    }
++
++    func estimatedNumberOfGridCells(
++        boundingBox: BoundingBoxWGS84
++    ) -> Int? {
++        findBox(boundingBox: boundingBox)?.count
++    }
++
++    func getCoordinates(gridpoint: Int) -> (latitude: Float, longitude: Float) {
++        let y = gridpoint / nx
++        let x = gridpoint - y * nx
++        return base.getCoordinates(gridpoint: (y + y0) * base.nx + x + x0)
++    }
++}
++
++extension EcmwfDomain {
++    var sourceGrid: RegularGrid {
++        switch self {
++        case .ifs04, .ifs04_ensemble:
++            return RegularGrid(
++                nx: 900,
++                ny: 451,
++                latMin: -90,
++                lonMin: -180,
++                dx: 360 / 900,
++                dy: 180 / 450
++            )
++        case .ifs025, .ifs025_ensemble, .aifs025, .wam025, .wam025_ensemble,
++            .aifs025_single, .aifs025_ensemble, .ifs025_ensemble_mean,
++            .wam025_ensemble_mean, .aifs025_ensemble_mean:
++            return RegularGrid(
++                nx: 1440,
++                ny: 721,
++                latMin: -90,
++                lonMin: -180,
++                dx: 360 / 1440,
++                dy: 180 / (721 - 1)
++            )
++        }
++    }
++
++    var regionalSlice: (x0: Int, y0: Int, nx: Int, ny: Int)? {
++        guard self == .ifs025, EcmwfRegionalSourceConfig.enabled else {
++            return nil
++        }
++        return EcmwfRegionalSourceConfig.regularGridSlice(
++            base: sourceGrid,
++            bounds: EcmwfRegionalSourceConfig.bounds
++        )
++    }
++
++    func cropToRuntimeGrid(_ source: Array2D) -> Array2D {
++        guard let slice = regionalSlice else {
++            return source
++        }
++        guard source.nx == sourceGrid.nx, source.ny == sourceGrid.ny else {
++            fatalError("ECMWF decoded source grid does not match its native lattice")
++        }
++        var output = [Float]()
++        output.reserveCapacity(slice.nx * slice.ny)
++        for y in 0..<slice.ny {
++            let start = (slice.y0 + y) * source.nx + slice.x0
++            output.append(contentsOf: source.data[start..<(start + slice.nx)])
++        }
++        return Array2D(data: output, nx: slice.nx, ny: slice.ny)
++    }
++}

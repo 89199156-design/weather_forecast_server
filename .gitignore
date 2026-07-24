@@ -10,6 +10,7 @@
 /tmp/
 /cache/
 /downloads/
+/.ecmwf-build-context/
 /secrets/
 /config/*.private.env
 /vendor/open-meteo/.git/

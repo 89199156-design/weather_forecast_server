@@ -103,3 +103,29 @@ Every future change under `vendor/open-meteo` must be either a recorded
 upstream commit or one of the explicitly allowed product-source boundaries
 above. Reader and API semantics must never be silently mixed or compensated in
 the Rust adapter.
+
+## Isolated ECMWF IFS 0.25° Engine
+
+- Submodule: `vendor/open-meteo-ecmwf`
+- Upstream: `https://github.com/open-meteo/open-meteo`
+- Commit: `b743cbc9a7fab3f8f7dda85968fb770eee48b9ec`
+- Patch: `vendor/patches/open-meteo-ecmwf-regional.patch`
+- Image: `docker/openmeteo-ecmwf.Dockerfile`
+
+This second, isolated engine is used only for the Singapore ECMWF deterministic
+IFS 0.25° product. The commit is the same official source behavior proven by
+the frozen Shanghai 2026-07-23 strict comparison. It is intentionally separate
+from the older GFS/CAMS engine so ECMWF work cannot change their already
+validated source semantics.
+
+The project patch changes only the product-source/storage boundary:
+
+- preserve the global ECMWF 0.25° lattice for GRIB decoding;
+- crop decoded fields to a configured native-grid rectangle before conversion;
+- expose the cropped grid with the original global coordinates;
+- allow the redundant Single Runs `data_run` copy to be omitted while retaining
+  the ordinary fast time-series database used by `/v1/ecmwf`.
+
+No reader, interpolation, derived-variable, daily aggregation, weather-code,
+or JSON precision formula is replaced. The build records the upstream commit,
+patch SHA-256, and combined source identity as immutable image labels.

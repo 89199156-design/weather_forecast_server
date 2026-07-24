@@ -1,0 +1,3 @@
+[submodule "vendor/open-meteo-ecmwf"]
+	path = vendor/open-meteo-ecmwf
+	url = https://github.com/open-meteo/open-meteo.git

@@ -22,6 +22,10 @@ DEFAULT_CAMS_API_BASE_URL = os.environ.get(
     "WEATHER_OPENMETEO_CAMS_API_URL",
     "http://127.0.0.1:18080/v1/air-quality",
 )
+DEFAULT_ECMWF_API_BASE_URL = os.environ.get(
+    "WEATHER_OPENMETEO_ECMWF_API_URL",
+    "http://127.0.0.1:18081/v1/ecmwf",
+)
 DEFAULT_API_BASE_URL = os.environ.get("WEATHER_OPENMETEO_API_URL", DEFAULT_GFS_API_BASE_URL)
 DEFAULT_GFS_OUTPUT_DIR = os.environ.get(
     "WEATHER_OPENMETEO_LAYER_DIR",
@@ -31,13 +35,24 @@ DEFAULT_CAMS_OUTPUT_DIR = os.environ.get(
     "WEATHER_OPENMETEO_CAMS_LAYER_DIR",
     "./data/webp/cams_global",
 )
+DEFAULT_ECMWF_OUTPUT_DIR = os.environ.get(
+    "WEATHER_OPENMETEO_ECMWF_LAYER_DIR",
+    "./data/webp/ecmwf_ifs025",
+)
 DEFAULT_OUTPUT_DIR = DEFAULT_GFS_OUTPUT_DIR
 DEFAULT_LAYER_MODEL = os.environ.get("WEATHER_OPENMETEO_LAYER_MODEL", "gfs_global")
 DEFAULT_CAMS_DOMAIN = os.environ.get("WEATHER_OPENMETEO_CAMS_LAYER_DOMAIN", "cams_global")
+DEFAULT_ECMWF_MODEL = os.environ.get(
+    "WEATHER_OPENMETEO_ECMWF_LAYER_MODEL",
+    "ecmwf_ifs025",
+)
 GFS_LAYER_API_OPTIONS: dict[str, str] = {
     "wind_speed_unit": "ms",
 }
 CAMS_LAYER_API_OPTIONS: dict[str, str] = {}
+ECMWF_LAYER_API_OPTIONS: dict[str, str] = {
+    "wind_speed_unit": "ms",
+}
 LAYER_API_OPTIONS = GFS_LAYER_API_OPTIONS
 
 
@@ -200,12 +215,22 @@ CAMS_LAYER_DEFINITIONS: tuple[LayerDefinition, ...] = (
     LayerDefinition("dust", "dust", ("dust",), "dust", "ug/m3", 1.0, (0.0, 65535.0)),
 )
 
+# ECMWF Open Data does not expose GFS visibility or UV fields. All remaining
+# surface layers keep the identical encoding contract used by the GFS product.
+ECMWF_LAYER_DEFINITIONS: tuple[LayerDefinition, ...] = tuple(
+    layer
+    for layer in DEFAULT_LAYER_DEFINITIONS
+    if layer.name not in {"vis", "uv_index"}
+)
+
 
 def layer_definitions_for_scope(scope: str) -> tuple[LayerDefinition, ...]:
     if scope == "gfs":
         return DEFAULT_LAYER_DEFINITIONS
     if scope == "cams":
         return CAMS_LAYER_DEFINITIONS
+    if scope == "ecmwf":
+        return ECMWF_LAYER_DEFINITIONS
     raise ValueError(f"unknown layer scope: {scope}")
 
 
@@ -245,12 +270,18 @@ CAMS_LAYER_RESOLUTIONS: dict[str, str] = {
     "dust": "44km",
 }
 
+ECMWF_LAYER_RESOLUTIONS: dict[str, str] = {
+    layer.name: "25km" for layer in ECMWF_LAYER_DEFINITIONS
+}
+
 
 def layer_resolution_for_layer(scope: str, layer_name: str) -> str:
     if scope == "gfs":
         return GFS_LAYER_RESOLUTIONS[layer_name]
     if scope == "cams":
         return CAMS_LAYER_RESOLUTIONS[layer_name]
+    if scope == "ecmwf":
+        return ECMWF_LAYER_RESOLUTIONS[layer_name]
     raise ValueError(f"unknown layer scope: {scope}")
 
 
@@ -276,6 +307,19 @@ def layer_catalog_payload() -> dict[str, Any]:
                     for layer in CAMS_LAYER_DEFINITIONS
                 },
             },
+            "ecmwf": {
+                "source": "ecmwf",
+                "manifest": manifest_filename_for_scope("ecmwf"),
+                "file_pattern": "{timestamp}_{batch}.webp",
+                "layers": {
+                    layer.name: layer.manifest(
+                        source_resolution=layer_resolution_for_layer(
+                            "ecmwf", layer.name
+                        )
+                    )
+                    for layer in ECMWF_LAYER_DEFINITIONS
+                },
+            },
         },
     }
 
@@ -289,6 +333,8 @@ def layer_api_options_for_scope(scope: str) -> dict[str, str]:
         return dict(GFS_LAYER_API_OPTIONS)
     if scope == "cams":
         return dict(CAMS_LAYER_API_OPTIONS)
+    if scope == "ecmwf":
+        return dict(ECMWF_LAYER_API_OPTIONS)
     raise ValueError(f"unknown layer scope: {scope}")
 
 
@@ -297,6 +343,8 @@ def default_api_base_url_for_scope(scope: str) -> str:
         return DEFAULT_GFS_API_BASE_URL
     if scope == "cams":
         return DEFAULT_CAMS_API_BASE_URL
+    if scope == "ecmwf":
+        return DEFAULT_ECMWF_API_BASE_URL
     raise ValueError(f"unknown layer scope: {scope}")
 
 
@@ -305,6 +353,8 @@ def default_output_dir_for_scope(scope: str) -> str:
         return DEFAULT_GFS_OUTPUT_DIR
     if scope == "cams":
         return DEFAULT_CAMS_OUTPUT_DIR
+    if scope == "ecmwf":
+        return DEFAULT_ECMWF_OUTPUT_DIR
     raise ValueError(f"unknown layer scope: {scope}")
 
 
@@ -313,6 +363,8 @@ def manifest_filename_for_scope(scope: str) -> str:
         return "gfs013_surface_data.json"
     if scope == "cams":
         return "cams_global_data.json"
+    if scope == "ecmwf":
+        return "ecmwf_ifs025_data.json"
     raise ValueError(f"unknown layer scope: {scope}")
 
 
@@ -388,6 +440,78 @@ def compute_gfs013_region_grid(
         longitude_values=longitude_values,
         row_order="north_to_south",
     )
+
+
+def compute_ecmwf025_region_grid(
+    *,
+    left_lon: float,
+    right_lon: float,
+    bottom_lat: float,
+    top_lat: float,
+) -> RegionGrid:
+    full_nx = 1440
+    full_ny = 721
+    lon_min = -180.0
+    lat_min = -90.0
+    dx = 0.25
+    dy = 0.25
+    epsilon = 1e-9
+    x0 = max(0, int(math.ceil((left_lon - lon_min) / dx - epsilon)))
+    x1 = min(full_nx - 1, int(math.floor((right_lon - lon_min) / dx + epsilon)))
+    y0 = max(0, int(math.ceil((bottom_lat - lat_min) / dy - epsilon)))
+    y1 = min(full_ny - 1, int(math.floor((top_lat - lat_min) / dy + epsilon)))
+    if x0 > x1 or y0 > y1:
+        raise ValueError(
+            "configured region does not overlap ECMWF IFS025 source grid"
+        )
+
+    width = x1 - x0 + 1
+    height = y1 - y0 + 1
+    region_lon_min = lon_min + float(x0) * dx
+    region_lat_min = lat_min + float(y0) * dy
+    region_lat_max = lat_min + float(y1) * dy
+    longitude_values = [
+        round(region_lon_min + float(x) * dx, 6) for x in range(width)
+    ]
+    latitude_values = [
+        round(region_lat_max - float(y) * dy, 6) for y in range(height)
+    ]
+    return RegionGrid(
+        width=width,
+        height=height,
+        lat_min=round(region_lat_min, 6),
+        lon_min=round(region_lon_min, 6),
+        dx=dx,
+        dy=dy,
+        latitude_values=latitude_values,
+        longitude_values=longitude_values,
+        row_order="north_to_south",
+    )
+
+
+def compute_region_grid_for_scope(
+    scope: str,
+    *,
+    left_lon: float,
+    right_lon: float,
+    bottom_lat: float,
+    top_lat: float,
+) -> RegionGrid:
+    if scope == "ecmwf":
+        return compute_ecmwf025_region_grid(
+            left_lon=left_lon,
+            right_lon=right_lon,
+            bottom_lat=bottom_lat,
+            top_lat=top_lat,
+        )
+    if scope in {"gfs", "cams"}:
+        return compute_gfs013_region_grid(
+            left_lon=left_lon,
+            right_lon=right_lon,
+            bottom_lat=bottom_lat,
+            top_lat=top_lat,
+        )
+    raise ValueError(f"unknown layer scope: {scope}")
 
 
 def round_half_away_from_zero(values: np.ndarray) -> np.ndarray:
@@ -526,6 +650,8 @@ def build_layer_api_params(
         params["models"] = model or DEFAULT_LAYER_MODEL
     elif scope == "cams":
         params["domains"] = domain or DEFAULT_CAMS_DOMAIN
+    elif scope == "ecmwf":
+        params["models"] = model or DEFAULT_ECMWF_MODEL
     else:
         raise ValueError(f"unknown layer scope: {scope}")
     params.update(dict(layer_api_options_for_scope(scope) if api_options is None else api_options))
@@ -549,6 +675,8 @@ def build_export_request_payload(
         selected_model = model or DEFAULT_LAYER_MODEL
     elif scope == "cams":
         selected_model = domain or DEFAULT_CAMS_DOMAIN
+    elif scope == "ecmwf":
+        selected_model = model or DEFAULT_ECMWF_MODEL
     else:
         raise ValueError(f"unknown layer scope: {scope}")
     return {
@@ -820,7 +948,7 @@ def build_layers(
     chunk_size: int,
     timeout_seconds: float,
     scope: str = "gfs",
-    model: str = DEFAULT_LAYER_MODEL,
+    model: str | None = DEFAULT_LAYER_MODEL,
     domain: str | None = None,
     api_host_header: str | None = None,
     run: str | None = None,
@@ -828,7 +956,8 @@ def build_layers(
     request_retry_delay: float = 2.0,
     request_pause: float = 0.0,
 ) -> dict[str, Any]:
-    grid = compute_gfs013_region_grid(
+    grid = compute_region_grid_for_scope(
+        scope,
         left_lon=left_lon,
         right_lon=right_lon,
         bottom_lat=bottom_lat,
@@ -969,11 +1098,11 @@ def build_layers(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build regional WebP weather layers from the local Open-Meteo API.")
-    parser.add_argument("--scope", choices=["gfs", "cams"], default="gfs")
+    parser.add_argument("--scope", choices=["gfs", "cams", "ecmwf"], default="gfs")
     parser.add_argument("--api-base-url", default=None)
     parser.add_argument("--api-host-header")
     parser.add_argument("--output-dir", default=None)
-    parser.add_argument("--model", default=DEFAULT_LAYER_MODEL)
+    parser.add_argument("--model", default=None)
     parser.add_argument("--domain", default=DEFAULT_CAMS_DOMAIN)
     parser.add_argument("--run", help="Pinned run for single-runs API mode, e.g. 2026-06-26T06:00.")
     parser.add_argument("--start-hour", required=True, help="UTC start hour, for example 2026-06-25T07:00")
@@ -995,11 +1124,18 @@ def main() -> None:
     args = parse_args()
     api_base_url = args.api_base_url or default_api_base_url_for_scope(args.scope)
     output_dir = Path(args.output_dir or default_output_dir_for_scope(args.scope))
+    model = args.model
+    if model is None:
+        model = (
+            DEFAULT_ECMWF_MODEL
+            if args.scope == "ecmwf"
+            else DEFAULT_LAYER_MODEL
+        )
     manifest = build_layers(
         api_base_url=api_base_url,
         output_dir=output_dir,
         scope=args.scope,
-        model=args.model,
+        model=model,
         domain=args.domain if args.scope == "cams" else None,
         start_hour=args.start_hour,
         end_hour=args.end_hour,

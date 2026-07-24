@@ -17,6 +17,7 @@ PRODUCTION_TASKS = (
     "weather_gfs_probe_cycle",
     "weather_cams_ecpds_probe_cycle",
     "weather_cams_ads_cycle",
+    "weather_ecmwf_probe_cycle",
 )
 # 1Panel v1 allows one Shell task to run for 24 hours and removes old records
 # after every completed invocation without excluding a still-active record.
@@ -115,7 +116,7 @@ def decision(
 
 
 def production_tasks_idle(database: Path) -> tuple[bool, str]:
-    """Return whether all three production weather tasks have no active record."""
+    """Return whether all production weather tasks have no active record."""
 
     with closing(_connect_read_only(database)) as connection:
         task_ids: list[int] = []
@@ -139,7 +140,7 @@ def production_tasks_idle(database: Path) -> tuple[bool, str]:
             f"{row[1]}#{row[0]}@{row[2]}({row[3]})" for row in active
         )
         return False, details
-    return True, "三个生产天气任务均为空闲"
+    return True, "四个生产天气任务均为空闲"
 
 
 def all_panel_tasks_idle(database: Path) -> tuple[bool, str]:

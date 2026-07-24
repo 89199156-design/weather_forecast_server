@@ -142,8 +142,9 @@ GFS has a 6-hour source cadence and CAMS ECPDS has a 12-hour source cadence.
 Their lightweight availability probes may run frequently, but after either
 task selects a complete source run there is no cron/timer that repeatedly asks
 whether its local download, Swift import, WebP process, or API refresh has
-finished. Each task owns only its own duplicate-prevention lock and executes
-its batch as a return-code-driven chain:
+finished. Duplicate invocation control comes from the task's own active 1Panel
+`job_records` identity; there is no persistent batch lock file. Each task
+executes its batch as a return-code-driven chain:
 
 ```text
 remote run ready -> download/import/validate OM -> atomic OM publish
@@ -190,6 +191,41 @@ compensates for a producer value error.
 Rust WebP remains a fixed 121-frame product for both GFS and CAMS: one file per
 hour from the latest run at 0h through 120h. The longer 408h GFS and 144h CAMS
 retained windows belong to OM/API and do not increase WebP file counts.
+
+## ECMWF IFS 0.25° Replica
+
+ECMWF is isolated from the already validated GFS/CAMS engine. Its image uses
+the exact Open-Meteo commit and container digests recorded in
+[`vendor/UPSTREAM_LOCKS.md`](vendor/UPSTREAM_LOCKS.md), then applies only the
+auditable regional storage patch. The native source is ECMWF Open Data; this
+pipeline does not download Open-Meteo's prepared `.om` bucket.
+
+The production sequence is:
+
+```text
+ECMWF f360 index complete
+  -> seed 72 hours of predecessor cycles for upstream hour-0 fallback
+  -> import the target 00Z run through f360
+  -> atomically publish the regional Open-Meteo time-series database
+  -> start/reload the isolated official Swift /v1/ecmwf service
+  -> render and atomically publish 121 hourly WebP frames
+```
+
+Storage is the native 0.25° lattice cropped to `68..142E, -2..60N`; the public
+product is limited to `70..140E, 0..58N`. The two-degree halo preserves normal
+Open-Meteo spatial interpolation and land/elevation selection at the requested
+boundary. The API retains the complete 361-hour forecast and 15 daily frames.
+WebP uses the public 0.25° grid (`281x233`) and the same surface encodings as
+GFS, excluding visibility and UV because ECMWF Open Data does not provide
+equivalent native inputs.
+
+The 1Panel row is `weather_ecmwf_probe_cycle`. A newly installed row is
+disabled, existing enable/disable state is preserved, and incomplete probes do
+not start a download. Manual production is rejected unless the current
+invocation is proven by its 1Panel log record. Validation captures one frozen
+official 500-point oracle for a new common run, compares Singapore one point at
+a time over all hourly and daily values with stop-on-first-difference, then
+replays the identical oracle against Shanghai.
 
 After a coverage is generated, validate it without replacing the production
 API:

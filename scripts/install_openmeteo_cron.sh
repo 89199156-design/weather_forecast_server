@@ -5,6 +5,7 @@ APP_DIR="${WEATHER_FORECAST_APP_DIR:-/opt/1panel/apps/weather_forecast_server}"
 RUNTIME_ROOT="${WEATHER_FORECAST_RUNTIME_ROOT:-/opt/1panel/apps/weather_forecast_server}"
 ENV_FILE="${WEATHER_OPENMETEO_ENV_FILE:-$RUNTIME_ROOT/config/singapore.private.env}"
 PRODUCER_ROOT="${WEATHER_OM_PRODUCER_ROOT:-$RUNTIME_ROOT/data/om_producer}"
+ECMWF_ROOT="${WEATHER_ECMWF_ROOT:-$RUNTIME_ROOT/data/ecmwf}"
 TASK_RETAIN_COPIES="${WEATHER_1PANEL_TASK_RETAIN_COPIES:-100}"
 PANEL_DB="${WEATHER_1PANEL_DB:-/opt/1panel/db/1Panel.db}"
 PANEL_SERVICE="${WEATHER_1PANEL_SERVICE:-1panel.service}"
@@ -47,11 +48,11 @@ if command -v systemctl >/dev/null 2>&1 \
   require_safe_panel_restart_window
 fi
 
-export PANEL_DB APP_DIR ENV_FILE PRODUCER_ROOT TASK_RETAIN_COPIES
+export PANEL_DB APP_DIR ENV_FILE PRODUCER_ROOT ECMWF_ROOT TASK_RETAIN_COPIES
 
 PYTHON_RUNNER=(python3)
 if [[ "$(id -u)" -ne 0 ]]; then
-  PYTHON_RUNNER=(sudo --preserve-env=PANEL_DB,APP_DIR,ENV_FILE,PRODUCER_ROOT,TASK_RETAIN_COPIES python3)
+  PYTHON_RUNNER=(sudo --preserve-env=PANEL_DB,APP_DIR,ENV_FILE,PRODUCER_ROOT,ECMWF_ROOT,TASK_RETAIN_COPIES python3)
 fi
 
 "${PYTHON_RUNNER[@]}" <<'PY'
@@ -70,6 +71,7 @@ panel_db = os.environ["PANEL_DB"]
 app_dir = os.environ["APP_DIR"]
 env_file = os.environ["ENV_FILE"]
 producer_root = os.environ["PRODUCER_ROOT"]
+ecmwf_root = os.environ["ECMWF_ROOT"]
 retain_copies = int(os.environ["TASK_RETAIN_COPIES"])
 if retain_copies < MINIMUM_RETAIN_COPIES:
     raise SystemExit(
@@ -108,6 +110,7 @@ def guarded_script(task_name: str, entrypoint: str) -> str:
             f"export WEATHER_FORECAST_APP_DIR={shlex.quote(app_dir)}",
             f"export WEATHER_OPENMETEO_ENV_FILE={shlex.quote(env_file)}",
             f"export WEATHER_OM_PRODUCER_ROOT={shlex.quote(producer_root)}",
+            f"export WEATHER_ECMWF_ROOT={shlex.quote(ecmwf_root)}",
             f"exec {command}",
             "",
         )
@@ -139,6 +142,14 @@ tasks = (
             # active record covers the POST, queue, download and publication.
             "10 * * * *,30 * * * *,50 * * * *",
             "scripts/run_cams_ads_scheduled_cycle.sh",
+        ),
+        (
+            "weather_ecmwf_probe_cycle",
+            # The free IFS 00Z f360 index normally completes during the
+            # Singapore afternoon. Three bounded probes are cheap; incomplete
+            # probes never enter the downloader.
+            "10 16 * * *,10 17 * * *,10 18 * * *",
+            "scripts/run_ecmwf_probe_and_cycle.sh",
         ),
     )
 
@@ -219,7 +230,7 @@ with sqlite3.connect(panel_db) as conn:
 PY
 
 # 1Panel is the sole scheduler. Remove the exact legacy host cron after the
-# three 1Panel rows are committed; it is deliberately not retained. Existing
+# four 1Panel rows are committed; it is deliberately not retained. Existing
 # enable/disable states are preserved, and a missing task is created disabled.
 if [[ -f "$SYSTEM_CRON_FILE" ]]; then
   "${SUDO[@]}" rm -f -- "$SYSTEM_CRON_FILE"
@@ -238,4 +249,4 @@ if [[ "$PANEL_WAS_ACTIVE" == true ]] \
     --require-all-idle
   "${SUDO[@]}" systemctl restart "$PANEL_SERVICE"
 fi
-printf '%s\n' "Installed 1Panel Open-Meteo cronjobs while preserving existing enable/disable states: weather_gfs_probe_cycle, weather_cams_ecpds_probe_cycle, weather_cams_ads_cycle"
+printf '%s\n' "Installed 1Panel Open-Meteo cronjobs while preserving existing enable/disable states: weather_gfs_probe_cycle, weather_cams_ecpds_probe_cycle, weather_cams_ads_cycle, weather_ecmwf_probe_cycle"

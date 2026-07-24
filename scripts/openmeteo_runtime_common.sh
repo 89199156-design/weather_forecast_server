@@ -140,7 +140,7 @@ openmeteo_set_runtime_defaults() {
 write_sanitized_env_file() {
   SANITIZED_ENV_FILE="$(mktemp)"
   env | sort | awk -F= '
-    ($1 ~ /^WEATHER_/ || $1 == "HTTP_CACHE" || $1 == "DATA_RUN_DIRECTORY" || $1 == "CACHE_FILE" || $1 == "CACHE_SIZE" || $1 == "BLOCK_SIZE" || $1 == "CACHE_META_FILE" || $1 == "CACHE_META_SIZE") && $2 != "" { print }
+    ($1 ~ /^WEATHER_/ || $1 == "HTTP_CACHE" || $1 == "DATA_DIRECTORY" || $1 == "DATA_RUN_DIRECTORY" || $1 == "CACHE_FILE" || $1 == "CACHE_SIZE" || $1 == "BLOCK_SIZE" || $1 == "CACHE_META_FILE" || $1 == "CACHE_META_SIZE") && $2 != "" { print }
   ' > "$SANITIZED_ENV_FILE"
 }
 
