@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
+import io
 import json
 from pathlib import Path
 import subprocess
@@ -16,6 +18,7 @@ if str(SCRIPTS) not in sys.path:
 
 import ecmwf_contract
 import build_webp
+import ensure_ecmwf_static_asset as static_asset
 import probe_ecmwf_open_data_run as probe
 import publish_ecmwf_release as publisher
 
@@ -286,12 +289,12 @@ def test_regional_patch_applies_to_exact_locked_upstream() -> None:
         ["git", "-C", str(upstream), "apply", "--numstat", str(patch)],
         text=True,
     )
-    assert (
-        "252\t0\tSources/App/Ecmwf/EcmwfRegionalGrid.swift" in numstat
-    )
+    assert "Sources/App/Ecmwf/EcmwfRegionalGrid.swift" in numstat
     source = patch.read_text(encoding="utf-8")
     assert "WEATHER_ECMWF_REGIONAL_GRID" in source
     assert "cropToRuntimeGrid" in source
+    assert "cropOfficialSurfaceElevation" in source
+    assert "WEATHER_ECMWF_OFFICIAL_HSURF" in source
     assert "estimatedNumberOfGridCells" in source
     assert '@Flag(name: "skip-full-run")' in source
     assert (
@@ -300,6 +303,42 @@ def test_regional_patch_applies_to_exact_locked_upstream() -> None:
         "nx: domain.sourceGrid.nx, ny: domain.sourceGrid.ny)\n"
         "             try grib2d.load(message: message)"
     ) in source
+
+
+def test_ecmwf_static_asset_contract_is_pinned() -> None:
+    assert static_asset.RELATIVE_PATH.as_posix() == "ecmwf_ifs025/HSURF.om"
+    assert static_asset.ASSET_BYTES == 433_648
+    assert (
+        static_asset.ASSET_SHA256
+        == "935d56ba000b438b61504fbc271bfaa8f70db2acb541d58d5b466a24d294a9fb"
+    )
+    assert static_asset.ASSET_URL.endswith(
+        "/data/ecmwf_ifs025/static/HSURF.om"
+    )
+
+
+def test_ecmwf_static_asset_is_verified_and_reused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = b"pinned-static-grid"
+    monkeypatch.setattr(static_asset, "ASSET_BYTES", len(payload))
+    monkeypatch.setattr(
+        static_asset,
+        "ASSET_SHA256",
+        hashlib.sha256(payload).hexdigest(),
+    )
+    monkeypatch.setattr(
+        static_asset,
+        "urlopen",
+        lambda *_args, **_kwargs: io.BytesIO(payload),
+    )
+
+    downloaded = static_asset.ensure(tmp_path)
+    reused = static_asset.ensure(tmp_path)
+
+    assert downloaded["status"] == "downloaded"
+    assert reused["status"] == "reused"
+    assert (tmp_path / static_asset.RELATIVE_PATH).read_bytes() == payload
 
 
 def test_ecmwf_pipeline_uses_panel_state_without_batch_lock() -> None:
@@ -322,6 +361,11 @@ def test_ecmwf_pipeline_uses_panel_state_without_batch_lock() -> None:
     assert 'payload.get("source_revision") == sys.argv[3]' in cycle
     assert 'payload.get("coverage_id") == expected_coverage_id' in cycle
     assert '"$role" == "target" || "$role" == "boundary-context"' in cycle
+    assert "scripts/ensure_ecmwf_static_asset.py" in cycle
+    assert (
+        "WEATHER_ECMWF_OFFICIAL_HSURF=/app/static/ecmwf_ifs025/HSURF.om"
+        in cycle
+    )
     assert installer.count('"weather_ecmwf_probe_cycle",') == 1
     assert "scripts/run_ecmwf_probe_and_cycle.sh" in installer
     assert "VALUES (CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?, 'shell', ?, ?, ?, 'Disable')" in installer

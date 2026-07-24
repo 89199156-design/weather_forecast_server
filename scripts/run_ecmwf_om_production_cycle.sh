@@ -17,6 +17,7 @@ if [[ ! "$RUN" =~ ^[0-9]{10}$ || "${RUN:8:2}" != "00" ]]; then
 fi
 
 ECMWF_ROOT="${WEATHER_ECMWF_ROOT:-$APP_DIR/data/ecmwf}"
+ECMWF_STATIC_ROOT="${WEATHER_ECMWF_STATIC_ROOT:-$APP_DIR/data/static}"
 STAGING_DIR="$ECMWF_ROOT/staging/ecmwf_$RUN"
 PROGRESS_PATH="$STAGING_DIR/production-progress.json"
 CURRENT_MARKER="$ECMWF_ROOT/groups/ecmwf/current/ready_for_processing.json"
@@ -73,6 +74,9 @@ export WEATHER_ECMWF_STORAGE_LEFT_LON="${WEATHER_ECMWF_STORAGE_LEFT_LON:-68}"
 export WEATHER_ECMWF_STORAGE_RIGHT_LON="${WEATHER_ECMWF_STORAGE_RIGHT_LON:-142}"
 export WEATHER_ECMWF_STORAGE_BOTTOM_LAT="${WEATHER_ECMWF_STORAGE_BOTTOM_LAT:--2}"
 export WEATHER_ECMWF_STORAGE_TOP_LAT="${WEATHER_ECMWF_STORAGE_TOP_LAT:-60}"
+python3 scripts/ensure_ecmwf_static_asset.py --root "$ECMWF_STATIC_ROOT"
+export WEATHER_OPENMETEO_STATIC_ROOT="$ECMWF_STATIC_ROOT"
+export WEATHER_ECMWF_OFFICIAL_HSURF=/app/static/ecmwf_ifs025/HSURF.om
 openmeteo_set_runtime_defaults
 write_sanitized_env_file
 trap 'rm -f "${SANITIZED_ENV_FILE:-}"' EXIT

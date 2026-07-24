@@ -147,6 +147,7 @@ write_sanitized_env_file() {
 run_openmeteo() {
   local task_scope="${WEATHER_OPENMETEO_TASK_SCOPE:-}"
   local task_args=()
+  local static_args=()
   if [[ -n "$task_scope" ]]; then
     if [[ ! "$task_scope" =~ ^[a-z][a-z0-9_-]{0,31}$ ]]; then
       printf '%s\n' "Invalid WEATHER_OPENMETEO_TASK_SCOPE=$task_scope" >&2
@@ -158,8 +159,20 @@ run_openmeteo() {
       --label "weather.forecast.task=$task_scope"
     )
   fi
+  if [[ -n "${WEATHER_OPENMETEO_STATIC_ROOT:-}" ]]; then
+    if [[ "${WEATHER_OPENMETEO_STATIC_ROOT:0:1}" != "/" \
+      || ! -d "$WEATHER_OPENMETEO_STATIC_ROOT" ]]; then
+      printf '%s\n' \
+        "WEATHER_OPENMETEO_STATIC_ROOT must be an existing absolute directory" >&2
+      return 2
+    fi
+    static_args=(
+      --volume "$WEATHER_OPENMETEO_STATIC_ROOT:/app/static:ro"
+    )
+  fi
   docker run --rm \
     "${task_args[@]}" \
+    "${static_args[@]}" \
     --cpus "$OPENMETEO_CPU_LIMIT" \
     --cpu-shares "$OPENMETEO_CPU_SHARES" \
     --blkio-weight "$OPENMETEO_BLKIO_WEIGHT" \
