@@ -268,6 +268,12 @@ def test_regional_patch_applies_to_exact_locked_upstream() -> None:
     assert "cropToRuntimeGrid" in source
     assert "estimatedNumberOfGridCells" in source
     assert '@Flag(name: "skip-full-run")' in source
+    assert (
+        '             let shortName = message.get(attribute: "shortName")!\n'
+        "+            var grib2d = GribArray2D("
+        "nx: domain.sourceGrid.nx, ny: domain.sourceGrid.ny)\n"
+        "             try grib2d.load(message: message)"
+    ) in source
 
 
 def test_ecmwf_pipeline_uses_panel_state_without_batch_lock() -> None:
