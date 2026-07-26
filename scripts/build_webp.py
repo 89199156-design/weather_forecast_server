@@ -141,6 +141,19 @@ DEFAULT_LAYER_DEFINITIONS: tuple[LayerDefinition, ...] = (
     LayerDefinition("cloud_mid_1", "cloud_mid_1", ("cloud_cover_mid",), "mcc", "%", 100.0, (0.0, 100.0)),
     LayerDefinition("cloud_low_1", "cloud_low_1", ("cloud_cover_low",), "lcc", "%", 100.0, (0.0, 100.0)),
     LayerDefinition("t2m", "t2m", ("temperature_2m",), "t2m", "C", 100.0, (-100.0, 100.0), vmin=-100.0),
+    LayerDefinition(
+        "surface_temperature",
+        "surface_temperature",
+        ("surface_temperature",),
+        "surface_temperature",
+        "C",
+        100.0,
+        (-100.0, 100.0),
+        vmin=-100.0,
+    ),
+    LayerDefinition("t80m", "t80m", ("temperature_80m",), "t80m", "C", 100.0, (-100.0, 100.0), vmin=-100.0),
+    LayerDefinition("t100m", "t100m", ("temperature_100m",), "t100m", "C", 100.0, (-100.0, 100.0), vmin=-100.0),
+    LayerDefinition("t120m", "t120m", ("temperature_100m",), "t120m", "C", 100.0, (-100.0, 100.0), vmin=-100.0),
     LayerDefinition("d2m", "d2m", ("dew_point_2m",), "d2m", "C", 100.0, (-100.0, 100.0), vmin=-100.0),
     LayerDefinition("r2", "r2", ("relative_humidity_2m",), "r2", "%", 100.0, (0.0, 100.0)),
     LayerDefinition(
@@ -153,6 +166,49 @@ DEFAULT_LAYER_DEFINITIONS: tuple[LayerDefinition, ...] = (
         (-100.0, 100.0),
         vmin=-100.0,
         data_type="vector",
+    ),
+    LayerDefinition(
+        "wind_80m",
+        "wind_80m",
+        ("wind_u_component_80m", "wind_v_component_80m"),
+        "wind_80m",
+        "m/s",
+        10.0,
+        (-100.0, 100.0),
+        vmin=-100.0,
+        data_type="vector",
+    ),
+    LayerDefinition(
+        "wind_100m",
+        "wind_100m",
+        ("wind_u_component_100m", "wind_v_component_100m"),
+        "wind_100m",
+        "m/s",
+        10.0,
+        (-100.0, 100.0),
+        vmin=-100.0,
+        data_type="vector",
+    ),
+    LayerDefinition(
+        "wind_120m",
+        "wind_120m",
+        ("wind_u_component_100m", "wind_v_component_100m"),
+        "wind_120m",
+        "m/s",
+        10.0,
+        (-100.0, 100.0),
+        vmin=-100.0,
+        api_multiplier=1.02068430819266,
+        data_type="vector",
+    ),
+    LayerDefinition(
+        "freezing_level_height",
+        "freezing_level_height",
+        ("freezing_level_height",),
+        "freezing_level_height",
+        "m",
+        1.0,
+        (0.0, 20000.0),
     ),
     LayerDefinition("tp", "tp", ("precipitation",), "tp", "mm", 100.0, (0.0, 600.0)),
     LayerDefinition("snod", "snod", ("snow_depth",), "snod", "mm", 10.0, (0.0, 2000.0), api_multiplier=1000.0),
@@ -215,12 +271,22 @@ CAMS_LAYER_DEFINITIONS: tuple[LayerDefinition, ...] = (
     LayerDefinition("dust", "dust", ("dust",), "dust", "ug/m3", 1.0, (0.0, 65535.0)),
 )
 
-# ECMWF Open Data does not expose GFS visibility or UV fields. All remaining
-# surface layers keep the identical encoding contract used by the GFS product.
+# ECMWF Open Data exposes 100 m wind, but not the additional GFS height
+# variables, freezing-level height, visibility, or UV fields.
 ECMWF_LAYER_DEFINITIONS: tuple[LayerDefinition, ...] = tuple(
     layer
     for layer in DEFAULT_LAYER_DEFINITIONS
-    if layer.name not in {"vis", "uv_index"}
+    if layer.name
+    not in {
+        "vis",
+        "uv_index",
+        "t80m",
+        "t100m",
+        "t120m",
+        "wind_80m",
+        "wind_120m",
+        "freezing_level_height",
+    }
 )
 
 
@@ -248,9 +314,17 @@ GFS_LAYER_RESOLUTIONS: dict[str, str] = {
     "cloud_mid_1": "13km",
     "cloud_low_1": "13km",
     "t2m": "13km",
+    "surface_temperature": "13km",
+    "t80m": "28km",
+    "t100m": "28km",
+    "t120m": "28km",
     "d2m": "13km",
     "r2": "13km",
     "wind": "13km",
+    "wind_80m": "28km",
+    "wind_100m": "28km",
+    "wind_120m": "28km",
+    "freezing_level_height": "28km",
     "tp": "13km",
     "snod": "13km",
     "gust": "28km",
@@ -287,7 +361,7 @@ def layer_resolution_for_layer(scope: str, layer_name: str) -> str:
 
 def layer_catalog_payload() -> dict[str, Any]:
     return {
-        "version": 1,
+        "version": 2,
         "products": {
             "gfs": {
                 "source": "gfs",
@@ -497,14 +571,10 @@ def compute_region_grid_for_scope(
     bottom_lat: float,
     top_lat: float,
 ) -> RegionGrid:
-    if scope == "ecmwf":
-        return compute_ecmwf025_region_grid(
-            left_lon=left_lon,
-            right_lon=right_lon,
-            bottom_lat=bottom_lat,
-            top_lat=top_lat,
-        )
-    if scope in {"gfs", "cams"}:
+    # Every published forecast WebP uses the same 597x495 display lattice.
+    # ECMWF's native 0.25-degree values are interpolated by its API onto this
+    # target grid before lossless encoding.
+    if scope in {"gfs", "cams", "ecmwf"}:
         return compute_gfs013_region_grid(
             left_lon=left_lon,
             right_lon=right_lon,
@@ -1065,8 +1135,14 @@ def build_layers(
             layer_dir.mkdir(parents=True, exist_ok=True)
             for time_index, stem in enumerate(stems):
                 if layer.data_type == "vector":
-                    u = stores[layer.api_variables[0]][time_index]
-                    v = stores[layer.api_variables[1]][time_index]
+                    u = (
+                        stores[layer.api_variables[0]][time_index]
+                        * np.float32(layer.api_multiplier)
+                    )
+                    v = (
+                        stores[layer.api_variables[1]][time_index]
+                        * np.float32(layer.api_multiplier)
+                    )
                     rgba = encode_wind_rgba(u, v)
                 else:
                     values = np.asarray(stores[layer.api_variables[0]][time_index], dtype=np.float32)

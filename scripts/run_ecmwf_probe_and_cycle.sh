@@ -39,7 +39,8 @@ raise SystemExit(
     and not payload.get("missing_optional_variables")
     and webp.get("status") == "complete"
     and webp.get("run") == sys.argv[3]
-    and webp.get("layer_count") == 16
+    and webp.get("contract_version") == 2
+    and webp.get("layer_count") == 18
     else 1
 )
 PY

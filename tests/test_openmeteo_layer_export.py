@@ -147,6 +147,14 @@ def test_layer_catalog_records_layer_resolution_labels():
     cams_layers = catalog["products"]["cams"]["layers"]
 
     assert gfs_layers["t2m"]["source_resolution"] == "13km"
+    assert gfs_layers["surface_temperature"]["source_resolution"] == "13km"
+    assert gfs_layers["t80m"]["source_resolution"] == "28km"
+    assert gfs_layers["t100m"]["source_resolution"] == "28km"
+    assert gfs_layers["t120m"]["source_resolution"] == "28km"
+    assert gfs_layers["wind_80m"]["source_resolution"] == "28km"
+    assert gfs_layers["wind_100m"]["source_resolution"] == "28km"
+    assert gfs_layers["wind_120m"]["source_resolution"] == "28km"
+    assert gfs_layers["freezing_level_height"]["source_resolution"] == "28km"
     assert gfs_layers["tp"]["source_resolution"] == "13km"
     assert gfs_layers["uv_index"]["source_resolution"] == "13km"
     assert gfs_layers["vis"]["source_resolution"] == "28km"
@@ -172,9 +180,17 @@ def test_layer_definitions_are_api_variables_not_legacy_grib_fields():
         "cloud_mid_1",
         "cloud_low_1",
         "t2m",
+        "surface_temperature",
+        "t80m",
+        "t100m",
+        "t120m",
         "d2m",
         "r2",
         "wind",
+        "wind_80m",
+        "wind_100m",
+        "wind_120m",
+        "freezing_level_height",
         "tp",
         "snod",
         "gust",
@@ -192,10 +208,18 @@ def test_layer_definitions_are_api_variables_not_legacy_grib_fields():
         "cloud_cover_mid",
         "cloud_cover_low",
         "temperature_2m",
+        "surface_temperature",
+        "temperature_80m",
+        "temperature_100m",
         "dew_point_2m",
         "relative_humidity_2m",
         "wind_u_component_10m",
         "wind_v_component_10m",
+        "wind_u_component_80m",
+        "wind_v_component_80m",
+        "wind_u_component_100m",
+        "wind_v_component_100m",
+        "freezing_level_height",
         "precipitation",
         "snow_depth",
         "wind_gusts_10m",
@@ -248,9 +272,16 @@ def test_layer_catalog_preserves_encoder_vmin_for_decoding():
 
     assert manifests["cloud_total_1"]["vmin"] == 0.0
     assert manifests["t2m"]["vmin"] == -100.0
+    for temperature_layer in ("surface_temperature", "t80m", "t100m", "t120m"):
+        assert manifests[temperature_layer]["vmin"] == -100.0
+        assert manifests[temperature_layer]["scale"] == 100.0
+        assert manifests[temperature_layer]["range"] == [-100.0, 100.0]
     assert manifests["d2m"]["vmin"] == -100.0
     assert manifests["wind"]["vmin"] == -100.0
     assert manifests["wind"]["encoding"] == "uv"
+    for wind_layer in ("wind_80m", "wind_100m", "wind_120m"):
+        assert manifests[wind_layer]["encoding"] == "uv"
+        assert manifests[wind_layer]["scale"] == 10.0
     assert manifests["prmsl"]["vmin"] == 50000.0
     assert manifests["sp"]["vmin"] == 30000.0
     assert manifests["sp"]["scale"] == 0.5
@@ -261,6 +292,22 @@ def test_layer_catalog_preserves_encoder_vmin_for_decoding():
     assert manifests["precip_phase"]["encoding"] == "categorical"
     assert manifests["thunderstorm_code"]["encoding"] == "categorical"
     assert manifests["tp"]["encoding"] == "scalar"
+    assert manifests["freezing_level_height"] == {
+        "subdir": "freezing_level_height",
+        "unit": "m",
+        "encoding": "scalar",
+        "scale": 1.0,
+        "vmin": 0.0,
+        "range": [0.0, 20000.0],
+        "source_resolution": "28km",
+    }
+
+    wind_120m = next(
+        layer
+        for layer in layers.DEFAULT_LAYER_DEFINITIONS
+        if layer.name == "wind_120m"
+    )
+    assert np.isclose(wind_120m.api_multiplier, 1.02068430819266)
 
 
 def test_scalar_and_wind_encoding_round_trip():

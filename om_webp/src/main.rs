@@ -16,6 +16,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
+const WEBP_CONTRACT_VERSION: u32 = 2;
+const GFS_100_TO_120_WIND_SCALE: f32 = 1.020_684_4;
+
 const GFS_LAYERS: &[Layer] = &[
     Layer::scalar("cloud_total_1", "cloud_cover", "%", 0.0, 100.0, 0.0, 100.0),
     Layer::scalar(
@@ -46,9 +49,58 @@ const GFS_LAYERS: &[Layer] = &[
         100.0,
     ),
     Layer::scalar("t2m", "temperature_2m", "C", -100.0, 100.0, -100.0, 100.0),
+    Layer::scalar(
+        "surface_temperature",
+        "surface_temperature",
+        "C",
+        -100.0,
+        100.0,
+        -100.0,
+        100.0,
+    ),
+    Layer::scalar("t80m", "temperature_80m", "C", -100.0, 100.0, -100.0, 100.0),
+    Layer::scalar(
+        "t100m",
+        "temperature_100m",
+        "C",
+        -100.0,
+        100.0,
+        -100.0,
+        100.0,
+    ),
+    Layer::scalar(
+        "t120m",
+        "temperature_100m",
+        "C",
+        -100.0,
+        100.0,
+        -100.0,
+        100.0,
+    ),
     Layer::scalar("d2m", "dew_point_2m", "C", -100.0, 100.0, -100.0, 100.0),
     Layer::scalar("r2", "relative_humidity_2m", "%", 0.0, 100.0, 0.0, 100.0),
     Layer::wind("wind", "wind_u_component_10m", "wind_v_component_10m"),
+    Layer::wind("wind_80m", "wind_u_component_80m", "wind_v_component_80m"),
+    Layer::wind(
+        "wind_100m",
+        "wind_u_component_100m",
+        "wind_v_component_100m",
+    ),
+    Layer::scaled_wind(
+        "wind_120m",
+        "wind_u_component_100m",
+        "wind_v_component_100m",
+        GFS_100_TO_120_WIND_SCALE,
+    ),
+    Layer::scalar(
+        "freezing_level_height",
+        "freezing_level_height",
+        "m",
+        0.0,
+        20000.0,
+        0.0,
+        1.0,
+    ),
     Layer::scalar("tp", "precipitation", "mm", 0.0, 600.0, 0.0, 100.0),
     Layer::scaled("snod", "snow_depth", "mm", 0.0, 2000.0, 0.0, 10.0, 1000.0),
     Layer::scalar("gust", "wind_gusts_10m", "m/s", 0.0, 200.0, 0.0, 100.0),
@@ -199,6 +251,8 @@ struct RenderedReleaseMarker {
     release_id: String,
     run: String,
     path: PathBuf,
+    contract_version: Option<u32>,
+    layers: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -268,6 +322,15 @@ impl Layer {
     }
 
     const fn wind(name: &'static str, variable: &'static str, variable_v: &'static str) -> Self {
+        Self::scaled_wind(name, variable, variable_v, 1.0)
+    }
+
+    const fn scaled_wind(
+        name: &'static str,
+        variable: &'static str,
+        variable_v: &'static str,
+        multiplier: f32,
+    ) -> Self {
         Self {
             name,
             variable,
@@ -277,7 +340,7 @@ impl Layer {
             max: 100.0,
             vmin: -100.0,
             scale: 10.0,
-            multiplier: 1.0,
+            multiplier,
             encoding: Encoding::Wind,
             derive: Derive::None,
         }
@@ -408,6 +471,7 @@ fn main() -> Result<()> {
     }
 
     let ready = load_group_ready(&args.data_root, args.scope)?;
+    let selected = select_layers(args.scope.layers(), args.layers.as_deref())?;
     let current_marker = args
         .output_root
         .join("current")
@@ -417,13 +481,13 @@ fn main() -> Result<()> {
         &args.output_root,
         args.scope,
         &ready,
+        &selected,
         args.public_root.as_deref(),
     )? {
         println!("{{\"status\":\"skipped\",\"reason\":\"release already rendered; publication verified\",\"scope\":\"{}\",\"release_id\":\"{}\"}}", args.scope.group(), ready.release_id);
         return Ok(());
     }
 
-    let selected = select_layers(args.scope.layers(), args.layers.as_deref())?;
     let grid = compute_grid(args.left_lon, args.right_lon, args.bottom_lat, args.top_lat)?;
     let start = parse_run(&ready.latest_complete_run)?;
     let times = render_times(start, args.frames)?;
@@ -522,6 +586,7 @@ fn main() -> Result<()> {
         args.scope,
         &ready,
         &release_root,
+        &selected,
         args.public_root.as_deref(),
     )?;
     prune_releases(&args.output_root, args.scope, args.keep_releases.max(1))?;
@@ -660,8 +725,8 @@ fn encode_layer_values(
                 encode_scalar(pixel, value, layer.vmin, layer.scale, &invalid);
             }
             Encoding::Wind => {
-                let u = values[index];
-                let v = values_v.expect("wind v")[index];
+                let u = values[index] * layer.multiplier;
+                let v = values_v.expect("wind v")[index] * layer.multiplier;
                 encode_wind(pixel, u, v, &invalid);
             }
         });
@@ -908,6 +973,7 @@ fn publish_current(
     scope: Scope,
     ready: &GroupReady,
     release_root: &Path,
+    layers: &[Layer],
     public_root: Option<&Path>,
 ) -> Result<()> {
     let release_root = release_root
@@ -953,9 +1019,15 @@ fn publish_current(
     }
     fs::write(
         &marker_tmp,
-        serde_json::to_vec_pretty(
-            &serde_json::json!({"status":"complete","scope":scope.group(),"release_id":ready.release_id,"run":ready.latest_complete_run,"path":release_root}),
-        )?,
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "status":"complete",
+            "scope":scope.group(),
+            "release_id":ready.release_id,
+            "run":ready.latest_complete_run,
+            "path":release_root,
+            "contract_version":WEBP_CONTRACT_VERSION,
+            "layers":layers.iter().map(|layer| layer.name).collect::<Vec<_>>(),
+        }))?,
     )?;
     fs::rename(marker_tmp, marker)?;
     Ok(())
@@ -990,16 +1062,23 @@ fn republish_matching_release(
     output_root: &Path,
     scope: Scope,
     ready: &GroupReady,
+    layers: &[Layer],
     public_root: Option<&Path>,
 ) -> Result<bool> {
     if !marker_path.exists() {
         return Ok(false);
     }
     let marker: RenderedReleaseMarker = serde_json::from_slice(&fs::read(marker_path)?)?;
+    let expected_layers = layers
+        .iter()
+        .map(|layer| layer.name.to_string())
+        .collect::<Vec<_>>();
     if marker.status != "complete"
         || marker.scope != scope.group()
         || marker.release_id != ready.release_id
         || marker.run != ready.latest_complete_run
+        || marker.contract_version != Some(WEBP_CONTRACT_VERSION)
+        || marker.layers.as_deref() != Some(expected_layers.as_slice())
     {
         return Ok(false);
     }
@@ -1028,7 +1107,14 @@ fn republish_matching_release(
     {
         return Ok(false);
     }
-    publish_current(output_root, scope, ready, &release_root, public_root)?;
+    publish_current(
+        output_root,
+        scope,
+        ready,
+        &release_root,
+        layers,
+        public_root,
+    )?;
     Ok(true)
 }
 
@@ -1060,7 +1146,7 @@ fn catalog_payload() -> serde_json::Value {
         )
     }
     serde_json::json!({
-        "version": 1,
+        "version": WEBP_CONTRACT_VERSION,
         "products": {
             "gfs": {
                 "source": "gfs",
@@ -1082,7 +1168,17 @@ fn source_resolution(scope: Scope, name: &str) -> &'static str {
     match scope {
         Scope::Cams => "44km",
         Scope::Gfs => match name {
-            "gust" | "vis" | "cape" | "prmsl" => "28km",
+            "gust"
+            | "vis"
+            | "cape"
+            | "prmsl"
+            | "t80m"
+            | "t100m"
+            | "t120m"
+            | "wind_80m"
+            | "wind_100m"
+            | "wind_120m"
+            | "freezing_level_height" => "28km",
             "precip_phase" | "thunderstorm_code" | "sp" => "28km(13+28)",
             _ => "13km",
         },
@@ -1121,7 +1217,7 @@ mod tests {
 
     #[test]
     fn layer_inventory_matches_singapore() {
-        assert_eq!(GFS_LAYERS.len(), 18);
+        assert_eq!(GFS_LAYERS.len(), 26);
         assert_eq!(CAMS_LAYERS.len(), 4);
         let surface_pressure = GFS_LAYERS.iter().find(|layer| layer.name == "sp").unwrap();
         assert_eq!(
@@ -1133,6 +1229,24 @@ mod tests {
             .find(|layer| layer.name == "dust")
             .unwrap();
         assert_eq!((dust.max, dust.scale), (6000.0, 10.0));
+        let wind_120m = GFS_LAYERS
+            .iter()
+            .find(|layer| layer.name == "wind_120m")
+            .unwrap();
+        assert!((wind_120m.multiplier - GFS_100_TO_120_WIND_SCALE).abs() < f32::EPSILON);
+        let surface_temperature = GFS_LAYERS
+            .iter()
+            .find(|layer| layer.name == "surface_temperature")
+            .unwrap();
+        assert_eq!(
+            (
+                surface_temperature.vmin,
+                surface_temperature.scale,
+                surface_temperature.min,
+                surface_temperature.max,
+            ),
+            (-100.0, 100.0, -100.0, 100.0)
+        );
     }
 
     #[test]
@@ -1184,7 +1298,15 @@ mod tests {
             latest_complete_run: "2026071300".to_string(),
             release_id: "gfs_native_test".to_string(),
         };
-        publish_current(&output_root, Scope::Gfs, &ready, &release_root, None).unwrap();
+        publish_current(
+            &output_root,
+            Scope::Gfs,
+            &ready,
+            &release_root,
+            Scope::Gfs.layers(),
+            None,
+        )
+        .unwrap();
 
         let marker = output_root.join("current/gfs.json");
         let public_root = temporary.path().join("public");
@@ -1193,6 +1315,7 @@ mod tests {
             &output_root,
             Scope::Gfs,
             &ready,
+            Scope::Gfs.layers(),
             Some(&public_root),
         )
         .unwrap());
@@ -1208,6 +1331,7 @@ mod tests {
             &output_root,
             Scope::Gfs,
             &ready,
+            Scope::Gfs.layers(),
             Some(&public_root),
         )
         .unwrap());

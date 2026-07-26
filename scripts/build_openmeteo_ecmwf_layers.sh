@@ -39,8 +39,10 @@ if (
 print(release_id)
 PY
 )"
-RELEASE_ROOT="$WEBP_ROOT/releases/$RELEASE_ID"
-STAGING_ROOT="$WEBP_ROOT/staging/${RELEASE_ID}_$$"
+WEBP_CONTRACT_VERSION=2
+WEBP_RELEASE_ID="${RELEASE_ID}-webp-v${WEBP_CONTRACT_VERSION}"
+RELEASE_ROOT="$WEBP_ROOT/releases/$WEBP_RELEASE_ID"
+STAGING_ROOT="$WEBP_ROOT/staging/${WEBP_RELEASE_ID}_$$"
 PRODUCT_DIR="$RELEASE_ROOT/ecmwf_ifs025"
 MARKER="$WEBP_ROOT/current/ecmwf.json"
 
@@ -66,7 +68,7 @@ PY
 
 marker_matches() {
   [[ -f "$MARKER" && -d "$PRODUCT_DIR" ]] || return 1
-  python3 - "$MARKER" "$RUN" "$RELEASE_ID" "$FRAME_COUNT" <<'PY'
+  python3 - "$MARKER" "$RUN" "$RELEASE_ID" "$FRAME_COUNT" "$WEBP_CONTRACT_VERSION" <<'PY'
 import json
 import sys
 payload = json.load(open(sys.argv[1], encoding="utf-8"))
@@ -75,6 +77,8 @@ raise SystemExit(
     and payload.get("run") == sys.argv[2]
     and payload.get("release_id") == sys.argv[3]
     and payload.get("frame_count") == int(sys.argv[4])
+    and payload.get("contract_version") == int(sys.argv[5])
+    and payload.get("layer_count") == 18
     else 1
 )
 PY
@@ -118,7 +122,7 @@ python3 "$APP_DIR/scripts/build_webp.py" \
   --request-retries "$REQUEST_RETRIES" \
   --request-retry-delay "$REQUEST_RETRY_DELAY"
 
-python3 - "$STAGING_ROOT" "$RUN" "$RELEASE_ID" "$FRAME_COUNT" <<'PY'
+python3 - "$STAGING_ROOT" "$RUN" "$RELEASE_ID" "$WEBP_RELEASE_ID" "$FRAME_COUNT" "$WEBP_CONTRACT_VERSION" <<'PY'
 from datetime import datetime, timezone
 import json
 from pathlib import Path
@@ -127,7 +131,9 @@ import sys
 root = Path(sys.argv[1])
 run = sys.argv[2]
 release_id = sys.argv[3]
-frame_count = int(sys.argv[4])
+webp_release_id = sys.argv[4]
+frame_count = int(sys.argv[5])
+contract_version = int(sys.argv[6])
 manifest = json.loads(
     (root / "ecmwf_ifs025" / "ecmwf_ifs025_data.json").read_text(
         encoding="utf-8"
@@ -136,19 +142,21 @@ manifest = json.loads(
 if (
     manifest.get("source") != "ecmwf"
     or manifest.get("frame_count") != frame_count
-    or manifest.get("grid", {}).get("width") != 281
-    or manifest.get("grid", {}).get("height") != 233
+    or manifest.get("grid", {}).get("width") != 597
+    or manifest.get("grid", {}).get("height") != 495
 ):
     raise SystemExit("ECMWF WebP manifest does not satisfy the product contract")
 payload = {
-    "version": 1,
+    "version": 2,
     "status": "complete",
     "scope": "ecmwf",
     "run": run,
     "release_id": release_id,
+    "webp_release_id": webp_release_id,
+    "contract_version": contract_version,
     "frame_count": frame_count,
-    "layer_count": 16,
-    "product_path": f"releases/{release_id}/ecmwf_ifs025",
+    "layer_count": 18,
+    "product_path": f"releases/{webp_release_id}/ecmwf_ifs025",
     "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
 }
 (root / "ready_for_processing.json").write_text(
@@ -176,4 +184,4 @@ cp -f "$APP_DIR/config/weather_layer_catalog.json" \
   "$PUBLIC_DATA_DIR/webp/weather_layer_catalog.json"
 
 printf '%s\n' \
-  "ECMWF WebP complete run=$RUN frames=$FRAME_COUNT layers=16 release=$RELEASE_ID"
+  "ECMWF WebP complete run=$RUN frames=$FRAME_COUNT layers=18 release=$WEBP_RELEASE_ID"

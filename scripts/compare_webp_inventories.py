@@ -13,7 +13,7 @@ from typing import Any
 
 
 SCOPE_CONTRACT = {
-    "gfs": {"product": "gfs013_surface", "manifest": "gfs013_surface_data.json", "layers": 18},
+    "gfs": {"product": "gfs013_surface", "manifest": "gfs013_surface_data.json", "layers": 26},
     "cams": {"product": "cams_global", "manifest": "cams_global_data.json", "layers": 4},
 }
 EXPECTED_FRAMES = 121

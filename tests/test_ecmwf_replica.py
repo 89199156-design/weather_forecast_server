@@ -478,8 +478,9 @@ def test_ecmwf_image_is_isolated_and_records_exact_provenance() -> None:
     assert "git -C \"$UPSTREAM_DIR\" apply --check" in build
 
 
-def test_ecmwf_webp_uses_native_quarter_degree_grid_and_16_layers() -> None:
-    grid = build_webp.compute_ecmwf025_region_grid(
+def test_ecmwf_webp_uses_shared_product_grid_and_18_layers() -> None:
+    grid = build_webp.compute_region_grid_for_scope(
+        scope="ecmwf",
         left_lon=70.0,
         right_lon=140.0,
         bottom_lat=0.0,
@@ -487,13 +488,15 @@ def test_ecmwf_webp_uses_native_quarter_degree_grid_and_16_layers() -> None:
     )
     layers = build_webp.layer_definitions_for_scope("ecmwf")
 
-    assert (grid.width, grid.height) == (281, 233)
-    assert grid.longitude_values[0] == 70.0
-    assert grid.longitude_values[-1] == 140.0
-    assert grid.latitude_values[0] == 58.0
-    assert grid.latitude_values[-1] == 0.0
+    assert (grid.width, grid.height) == (597, 495)
+    assert grid.longitude_values[0] == 70.078125
+    assert grid.longitude_values[-1] == 139.921875
+    assert grid.latitude_values[0] == 57.930354
+    assert grid.latitude_values[-1] == 0.058575
     assert grid.row_order == "north_to_south"
-    assert len(layers) == 16
+    assert len(layers) == 18
+    assert "surface_temperature" in {layer.name for layer in layers}
+    assert "wind_100m" in {layer.name for layer in layers}
     assert "vis" not in {layer.name for layer in layers}
     assert "uv_index" not in {layer.name for layer in layers}
 
@@ -526,7 +529,7 @@ def test_ecmwf_webp_api_and_catalog_contract() -> None:
     assert catalog["products"]["ecmwf"]["manifest"] == (
         "ecmwf_ifs025_data.json"
     )
-    assert len(catalog["products"]["ecmwf"]["layers"]) == 16
+    assert len(catalog["products"]["ecmwf"]["layers"]) == 18
 
 
 def test_ecmwf_webp_publisher_has_no_test_batch_lock() -> None:
@@ -547,7 +550,9 @@ def test_ecmwf_webp_publisher_has_no_test_batch_lock() -> None:
     assert 'DATA_RELEASE_MARKER="$APP_DIR/data/ecmwf/groups/ecmwf/current/ready_for_processing.json"' in script
     assert "latest_complete_run" in script
     assert "ecmwf_ifs025_[0-9]{10}_[a-f0-9]{12}" in script
-    assert '"layer_count": 16' in script
+    assert '"layer_count": 18' in script
+    assert '"width") != 597' in script
+    assert '"height") != 495' in script
 
 
 def test_ecmwf_proxy_route_is_managed_and_has_no_test_lock() -> None:

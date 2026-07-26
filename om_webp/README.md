@@ -5,7 +5,7 @@ published OM coverage directly through the same `om-api` snapshot,
 interpolation, product-mixing and weather-code code paths used by the point API.
 It never calls the HTTP API.
 
-The production inventory matches Singapore: 18 GFS layers and 4 CAMS layers.
+The production inventory matches Singapore: 26 GFS layers and 4 CAMS layers.
 Both products render exactly 121 WebP files per variable at one-hour intervals,
 from latest run hour 0 through hour 120. The longer five-run GFS / three-run
 CAMS OM windows are used by the database and API, not by WebP. Images use

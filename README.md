@@ -215,9 +215,11 @@ Storage is the native 0.25° lattice cropped to `68..142E, -2..60N`; the public
 product is limited to `70..140E, 0..58N`. The two-degree halo preserves normal
 Open-Meteo spatial interpolation and land/elevation selection at the requested
 boundary. The API retains the complete 361-hour forecast and 15 daily frames.
-WebP uses the public 0.25° grid (`281x233`) and the same surface encodings as
-GFS, excluding visibility and UV because ECMWF Open Data does not provide
-equivalent native inputs.
+WebP interpolates the native 0.25° values onto the shared `597x495` product
+grid (`dx=0.117188°`, `dy=0.117149°`) and uses the same surface encodings as
+GFS. ECMWF publishes 100 m wind and surface temperature, but excludes the
+unsupported GFS-only 80/120 m layers, freezing-level height, visibility, and
+UV index.
 
 The 1Panel row is `weather_ecmwf_probe_cycle`. A newly installed row is
 disabled, existing enable/disable state is preserved, and incomplete probes do
@@ -309,8 +311,8 @@ python3 scripts/compare_webp_inventories.py compare \
   --output-report /tmp/shanghai-singapore-webp-parity.json
 ```
 
-The strict gate requires 2,178 GFS files (18 layers x 121 hours) and 484 CAMS
-files (4 layers x 121 hours), 2,662 WebP files in total. Runs, normalized
+The strict gate requires 3,146 GFS files (26 layers x 121 hours) and 484 CAMS
+files (4 layers x 121 hours), 3,630 WebP files in total. Runs, normalized
 manifests and file paths must match. Every GFS frame, every PM2.5/PM10/AOD
 frame, and the 41 direct CAMS dust frames at f000/f003/.../f120 must have the
 same SHA-256. The 80 Shanghai-interpolated CAMS dust hours remain mandatory
