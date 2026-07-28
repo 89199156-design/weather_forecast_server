@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import io
 import json
@@ -36,21 +36,40 @@ def test_pinned_ecmwf_contract_is_complete_and_deterministic() -> None:
     assert len(ecmwf_contract.PRESSURE_RAW_VARIABLES) == 84
     assert len(ecmwf_contract.RAW_VARIABLES) == 116
     assert len(set(ecmwf_contract.RAW_VARIABLES)) == 116
-    assert len(ecmwf_contract.ROLLING_FALLBACK_VARIABLES) == 6
+    assert ecmwf_contract.SHORT_RUN_RETENTION == 3
+    assert ecmwf_contract.COMPLETE_RUN_RETENTION == 2
+    assert ecmwf_contract.TOTAL_RUN_RETENTION == 5
+    assert ecmwf_contract.SHORT_RUN_MAX_FORECAST_HOUR == 6
 
 
-def test_ecmwf_source_plan_seeds_predecessors_oldest_to_newest() -> None:
+def test_ecmwf_source_plan_keeps_three_short_and_two_complete_runs() -> None:
     plan = ecmwf_contract.source_run_plan("2026072300")
 
-    assert len(plan) == 13
-    assert plan[0] == ("2026072000", 360)
-    assert plan[1] == ("2026072006", 144)
-    assert plan[-2] == ("2026072218", 6)
+    assert len(plan) == 5
+    assert plan[:3] == (
+        ("2026072200", 6),
+        ("2026072206", 6),
+        ("2026072212", 6),
+    )
+    assert plan[-2] == ("2026072218", 144)
     assert plan[-1] == ("2026072300", 360)
     assert [run for run, _ in plan] == sorted(run for run, _ in plan)
 
 
-def test_ecmwf_source_plan_labels_full_boundary_context() -> None:
+def test_ecmwf_short_history_covers_shanghai_day_hours_before_target() -> None:
+    plan = ecmwf_contract.source_run_plan("2026072300")
+    target = ecmwf_contract.parse_run("2026072300")
+    for hours_before in range(8, 0, -1):
+        time = target - timedelta(hours=hours_before)
+        assert any(
+            ecmwf_contract.parse_run(run)
+            <= time
+            <= ecmwf_contract.parse_run(run) + timedelta(hours=horizon)
+            for run, horizon in plan
+        )
+
+
+def test_ecmwf_source_plan_labels_three_short_and_two_complete_roles() -> None:
     payload = json.loads(
         subprocess.check_output(
             [
@@ -65,15 +84,16 @@ def test_ecmwf_source_plan_labels_full_boundary_context() -> None:
 
     assert payload[-2] == {
         "run": "2026072218",
-        "max_forecast_hour": 6,
-        "role": "boundary-context",
+        "max_forecast_hour": 144,
+        "role": "previous-complete",
     }
     assert payload[-1] == {
         "run": "2026072300",
         "max_forecast_hour": 360,
         "role": "target",
     }
-    assert {item["role"] for item in payload[:-2]} == {"rolling-fallback"}
+    assert {item["role"] for item in payload[:-2]} == {"short-history"}
+    assert all(item["max_forecast_hour"] == 6 for item in payload[:-2])
 
 
 @pytest.mark.parametrize("run", ("2026072301", "2026-07-23", "bad"))
@@ -228,6 +248,17 @@ def test_release_publisher_requires_full_inventory_and_publishes_atomically(
     assert marker["latest_max_forecast_hour"] == 360
     assert marker["hourly_frames"] == 361
     assert marker["daily_frames"] == 15
+    assert marker["source_runs"] == [
+        "2026072200",
+        "2026072206",
+        "2026072212",
+        "2026072218",
+        "2026072300",
+    ]
+    assert marker["source_run_max_forecast_hours"] == [6, 6, 6, 144, 360]
+    assert marker["short_run_count"] == 3
+    assert marker["full_run_count"] == 2
+    assert marker["short_run_max_forecast_hour"] == 6
     assert marker["required_variables"] == list(ecmwf_contract.RAW_VARIABLES)
     assert marker["missing_required_variables"] == []
     assert marker["missing_optional_variables"] == []
@@ -416,7 +447,9 @@ def test_ecmwf_pipeline_uses_panel_state_without_batch_lock() -> None:
     assert 'python3 - "$CURRENT_MARKER" "$RUN" "$SOURCE_REVISION"' in cycle
     assert 'payload.get("source_revision") == sys.argv[3]' in cycle
     assert 'payload.get("coverage_id") == expected_coverage_id' in cycle
-    assert '"$role" == "target" || "$role" == "boundary-context"' in cycle
+    assert 'variables="$FALLBACK_VARIABLES"' not in cycle
+    assert '--only-variables "$RAW_VARIABLES"' in cycle
+    assert "--lookback-hours" not in cycle
     assert "scripts/ensure_ecmwf_static_asset.py" in cycle
     assert (
         "WEATHER_ECMWF_OFFICIAL_HSURF=/app/static/ecmwf_ifs025/HSURF.om"

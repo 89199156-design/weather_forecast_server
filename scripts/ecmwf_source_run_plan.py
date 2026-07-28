@@ -10,11 +10,10 @@ from ecmwf_contract import source_run_plan
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--run", required=True)
-    parser.add_argument("--lookback-hours", type=int, default=72)
     parser.add_argument("--format", choices=("json", "lines"), default="json")
     args = parser.parse_args()
-    plan = source_run_plan(args.run, args.lookback_hours)
-    boundary_context_run = plan[-2][0]
+    plan = source_run_plan(args.run)
+    previous_complete_run = plan[-2][0]
     payload = [
         {
             "run": run,
@@ -22,9 +21,9 @@ def main() -> int:
             "role": (
                 "target"
                 if run == args.run
-                else "boundary-context"
-                if run == boundary_context_run
-                else "rolling-fallback"
+                else "previous-complete"
+                if run == previous_complete_run
+                else "short-history"
             ),
         }
         for run, horizon in plan

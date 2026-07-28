@@ -9,7 +9,14 @@ import re
 import subprocess
 from pathlib import Path
 
-from ecmwf_contract import OPENMETEO_UPSTREAM_COMMIT, RAW_VARIABLES
+from ecmwf_contract import (
+    COMPLETE_RUN_RETENTION,
+    OPENMETEO_UPSTREAM_COMMIT,
+    RAW_VARIABLES,
+    SHORT_RUN_MAX_FORECAST_HOUR,
+    SHORT_RUN_RETENTION,
+    source_run_plan,
+)
 
 
 def docker_labels(image: str) -> dict[str, str]:
@@ -36,9 +43,16 @@ def verify(root: Path, image: str, patch: Path, source_revision: str) -> dict[st
     )
     if marker != release_marker:
         raise ValueError("ECMWF group and immutable release markers differ")
+    expected_plan = source_run_plan(str(marker.get("latest_complete_run", "")))
     if (
         marker.get("status") != "complete"
         or marker.get("latest_max_forecast_hour") != 360
+        or marker.get("source_runs") != [item[0] for item in expected_plan]
+        or marker.get("source_run_max_forecast_hours")
+        != [item[1] for item in expected_plan]
+        or marker.get("short_run_count") != SHORT_RUN_RETENTION
+        or marker.get("full_run_count") != COMPLETE_RUN_RETENTION
+        or marker.get("short_run_max_forecast_hour") != SHORT_RUN_MAX_FORECAST_HOUR
         or marker.get("missing_required_variables")
         or marker.get("missing_optional_variables")
         or marker.get("required_variables") != list(RAW_VARIABLES)

@@ -31,6 +31,11 @@ for rollback.
 - GFS keeps five runs: three strict `f000...f005` histories followed by the
   previous and latest complete official `f000...f384` runs. No older `f006`
   value is mixed into the next run's `f000`.
+- ECMWF keeps five runs in its generated rolling time-series database: three
+  native `f000/f003/f006` histories followed by the previous natural complete
+  run and the current 00Z complete `f000...f360` run. All required variables
+  are generated for every role. The short runs supply preceding local-day
+  hours; NaN fallback is limited to the immediately previous complete run.
 - CAMS ECPDS main keeps three consecutive complete 12-hour runs through `f120`
   in the immutable `cams` namespace.
 - CAMS ADS keeps three consecutive daily 00Z runs through `f120` on its native
@@ -149,6 +154,13 @@ raw/cache data after successful publication. The ECPDS cycle independently
 imports missing members of its latest three-run 12-hour window, validates all
 121 direct hourly frames for every main forecast variable, and atomically
 publishes only `coverages/cams`, `groups/cams`, and `current/cams`.
+
+The ECMWF cycle builds a fresh five-run rolling database oldest to newest. Its
+three short histories retain the native `f000/f003/f006` interpolation
+boundary, and both complete roles contain the full required variable catalog.
+The official hourly reader therefore fills preceding local-day hours before
+daily aggregation. Only the immediately previous complete role is retained as
+the current complete role's same-point, same-valid-time NaN fallback.
 
 The ADS task derives its target only from the date of the locally published
 ECPDS main run. If `groups/cams_greenhouse/current` is older, it prepares the

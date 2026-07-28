@@ -24,7 +24,6 @@ CURRENT_MARKER="$ECMWF_ROOT/groups/ecmwf/current/ready_for_processing.json"
 LOG_DIR="${WEATHER_OPENMETEO_BUILD_LOG_DIR:-/opt/1panel/apps/weather/logs}"
 IMAGE_NAME="${WEATHER_ECMWF_OPENMETEO_IMAGE:-weather-forecast-ecmwf}"
 IMAGE_TAG="${WEATHER_ECMWF_OPENMETEO_TAG:-}"
-LOOKBACK_HOURS="${WEATHER_ECMWF_ROLLING_LOOKBACK_HOURS:-72}"
 MINIMUM_START_FREE_BYTES="${WEATHER_ECMWF_MINIMUM_START_FREE_BYTES:-12884901888}"
 MINIMUM_RUNTIME_FREE_BYTES="${WEATHER_ECMWF_MINIMUM_RUNTIME_FREE_BYTES:-4294967296}"
 SOURCE_REVISION="$(git -C "$APP_DIR" rev-parse HEAD)"
@@ -86,12 +85,6 @@ from ecmwf_contract import RAW_VARIABLES
 print(",".join(RAW_VARIABLES))
 PY
 )"
-FALLBACK_VARIABLES="$(PYTHONPATH="$APP_DIR/scripts" python3 - <<'PY'
-from ecmwf_contract import ROLLING_FALLBACK_VARIABLES
-print(",".join(ROLLING_FALLBACK_VARIABLES))
-PY
-)"
-
 release_is_complete() {
   [[ -f "$CURRENT_MARKER" ]] || return 1
   python3 - "$CURRENT_MARKER" "$RUN" "$SOURCE_REVISION" <<'PY'
@@ -138,17 +131,13 @@ PY
         continue
       fi
       require_free_bytes "$MINIMUM_RUNTIME_FREE_BYTES" "$source_run"
-      variables="$FALLBACK_VARIABLES"
-      if [[ "$role" == "target" || "$role" == "boundary-context" ]]; then
-        variables="$RAW_VARIABLES"
-      fi
       printf '%s\n' \
         "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [ECMWF_OM] download role=$role run=$source_run horizon=$max_hour"
       run_openmeteo download-ecmwf \
         --domain ifs025 \
         --run "$source_run" \
         --max-forecast-hour "$max_hour" \
-        --only-variables "$variables" \
+        --only-variables "$RAW_VARIABLES" \
         --concurrent "${WEATHER_ECMWF_DOWNLOAD_CONCURRENT:-2}" \
         --skip-full-run
       transient="$STAGING_DIR/download-ecmwf_ifs025"
@@ -167,7 +156,6 @@ PY
     done < <(
       python3 scripts/ecmwf_source_run_plan.py \
         --run "$RUN" \
-        --lookback-hours "$LOOKBACK_HOURS" \
         --format lines
     )
 

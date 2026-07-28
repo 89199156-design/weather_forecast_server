@@ -11,9 +11,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ecmwf_contract import (
+    COMPLETE_RUN_RETENTION,
     MODEL,
     OPENMETEO_UPSTREAM_COMMIT,
     RAW_VARIABLES,
+    SHORT_RUN_MAX_FORECAST_HOUR,
+    SHORT_RUN_RETENTION,
     STORAGE_BOUNDS,
     parse_run,
     source_run_plan,
@@ -140,6 +143,9 @@ def publish(
         "source_run_max_forecast_hours": [
             item[1] for item in source_run_plan(run)
         ],
+        "short_run_count": SHORT_RUN_RETENTION,
+        "full_run_count": COMPLETE_RUN_RETENTION,
+        "short_run_max_forecast_hour": SHORT_RUN_MAX_FORECAST_HOUR,
         "required_variables": list(RAW_VARIABLES),
         "missing_required_variables": [],
         "optional_variables": [],

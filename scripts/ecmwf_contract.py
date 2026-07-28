@@ -75,17 +75,10 @@ PRESSURE_RAW_VARIABLES = tuple(
 )
 RAW_VARIABLES = (*SURFACE_RAW_VARIABLES, *PRESSURE_RAW_VARIABLES)
 
-# Open-Meteo deliberately ignores the current run's zero-valued/missing hour-0
-# messages for these accumulated/extreme fields. Seed prior cycles so the same
-# rolling time-series database supplies its normal predecessor values.
-ROLLING_FALLBACK_VARIABLES = (
-    "wind_gusts_10m",
-    "temperature_2m_max",
-    "temperature_2m_min",
-    "shortwave_radiation",
-    "precipitation",
-    "runoff",
-)
+COMPLETE_RUN_RETENTION = 2
+SHORT_RUN_RETENTION = 3
+SHORT_RUN_MAX_FORECAST_HOUR = 6
+TOTAL_RUN_RETENTION = COMPLETE_RUN_RETENTION + SHORT_RUN_RETENTION
 
 SURFACE_PROBE_PARAMS = {
     "2t",
@@ -131,24 +124,20 @@ def natural_max_forecast_hour(run: datetime) -> int:
     return 360 if run.hour in (0, 12) else 144
 
 
-def source_run_plan(target_run: str, lookback_hours: int = 72) -> tuple[tuple[str, int], ...]:
+def source_run_plan(target_run: str) -> tuple[tuple[str, int], ...]:
     target = parse_run(target_run)
     if target.hour != 0:
         raise ValueError("strict ECMWF comparison target must be a 00Z run")
-    if lookback_hours < 6 or lookback_hours % 6:
-        raise ValueError("lookback_hours must be a positive multiple of six")
     runs = []
-    cursor = target - timedelta(hours=lookback_hours)
-    while cursor < target:
-        runs.append((cursor.strftime("%Y%m%d%H"), natural_max_forecast_hour(cursor)))
+    cursor = target - timedelta(hours=6 * (TOTAL_RUN_RETENTION - 1))
+    for rank in range(TOTAL_RUN_RETENTION):
+        horizon = (
+            SHORT_RUN_MAX_FORECAST_HOUR
+            if rank < SHORT_RUN_RETENTION
+            else natural_max_forecast_hour(cursor)
+        )
+        runs.append((cursor.strftime("%Y%m%d%H"), horizon))
         cursor += timedelta(hours=6)
-    # The rolling database keeps the immediately preceding 18Z cycle through
-    # valid time 00Z.  All variables need its 21Z frame as the left Hermite
-    # support point for target hours 00Z..03Z; f006 also supplies accumulated
-    # and six-hour extreme fields at the target boundary.
-    previous_run, _previous_horizon = runs[-1]
-    runs[-1] = (previous_run, 6)
-    runs.append((target_run, 360))
     return tuple(runs)
 
 
