@@ -627,6 +627,8 @@ def test_ecmwf_webp_publisher_has_no_test_batch_lock() -> None:
     assert "flock" not in script
     assert "LOCK_FILE" not in script
     assert "/tmp/" not in script
+    assert '[[ "${RUN:8:2}" != "00" && "${RUN:8:2}" != "12" ]]' in script
+    assert "HH=00 or 12" in script
     assert "--scope ecmwf" in script
     assert 'FRAME_COUNT="${WEATHER_OPENMETEO_ECMWF_LAYER_FRAME_COUNT:-121}"' in script
     assert "start_hour=$RUN_HOUR&end_hour=$RUN_HOUR" in script
