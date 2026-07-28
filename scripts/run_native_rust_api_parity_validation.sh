@@ -64,7 +64,7 @@ CAMS_RUN="$(read_marker_run "$PRODUCER_ROOT/groups/cams/current/ready_for_proces
 mkdir -p "$REPORT_ROOT"
 
 if ! curl --silent --show-error --fail --max-time 10 \
-  "$SINGAPORE_URL/v1/forecast?latitude=31.2&longitude=121.5&hourly=temperature_2m&forecast_hours=1" \
+  "$SINGAPORE_URL/v1/gfs?latitude=31.2&longitude=121.5&hourly=temperature_2m&forecast_hours=1" \
   >/dev/null; then
   printf '%s\n' "Running Singapore Rust API is unavailable: $SINGAPORE_URL" >&2
   exit 1

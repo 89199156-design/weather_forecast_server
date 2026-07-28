@@ -7,7 +7,7 @@ DEM_ROOT="${WEATHER_OM_DEM_ROOT:-${WEATHER_OPENMETEO_DATA_DIR:-$RUNTIME_ROOT/dat
 DEM_LAT_MIN="${WEATHER_DEM_REQUIRED_LAT_MIN:-0}"
 DEM_LAT_MAX="${WEATHER_DEM_REQUIRED_LAT_MAX:-58}"
 DROPIN_PATH="${WEATHER_OM_API_DEM_DROPIN_PATH:-/etc/systemd/system/${API_SERVICE}.d/20-dem-root.conf}"
-HEALTHCHECK_URL="${WEATHER_OM_API_HEALTHCHECK_URL:-http://127.0.0.1:8088/v1/forecast?latitude=31.2304&longitude=121.4737&hourly=temperature_2m&forecast_hours=1&timezone=GMT}"
+HEALTHCHECK_URL="${WEATHER_OM_API_HEALTHCHECK_URL:-http://127.0.0.1:8088/v1/gfs?latitude=31.2304&longitude=121.4737&hourly=temperature_2m&forecast_hours=1&timezone=GMT}"
 INSTALL_LOCK="${WEATHER_OM_API_CONFIG_LOCK_FILE:-/tmp/weather_om_api_config.lock}"
 SUDO_BIN="${WEATHER_SUDO_BIN:-sudo}"
 SYSTEMCTL_BIN="${WEATHER_SYSTEMCTL_BIN:-systemctl}"

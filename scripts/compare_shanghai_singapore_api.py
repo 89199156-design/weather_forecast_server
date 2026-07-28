@@ -261,10 +261,10 @@ def request_path(
     }
     if scope == "gfs":
         params.update({"models": "gfs_global", "wind_speed_unit": "ms"})
-        endpoint = "/v1/forecast"
+        endpoint = "/v1/gfs"
     elif scope == "cams":
         params["domains"] = "cams_global"
-        endpoint = "/v1/air-quality"
+        endpoint = "/v1/cams"
     else:
         raise ValueError(f"unsupported scope: {scope}")
     return endpoint + "?" + urllib.parse.urlencode(params)

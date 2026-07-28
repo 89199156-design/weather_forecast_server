@@ -17,10 +17,10 @@ import requests
 from PIL import Image
 
 
-DEFAULT_GFS_API_BASE_URL = os.environ.get("WEATHER_OPENMETEO_GFS_API_URL", "http://127.0.0.1:18080/v1/forecast")
+DEFAULT_GFS_API_BASE_URL = os.environ.get("WEATHER_OPENMETEO_GFS_API_URL", "http://127.0.0.1:18080/v1/gfs")
 DEFAULT_CAMS_API_BASE_URL = os.environ.get(
     "WEATHER_OPENMETEO_CAMS_API_URL",
-    "http://127.0.0.1:18080/v1/air-quality",
+    "http://127.0.0.1:18080/v1/cams",
 )
 DEFAULT_ECMWF_API_BASE_URL = os.environ.get(
     "WEATHER_OPENMETEO_ECMWF_API_URL",

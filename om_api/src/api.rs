@@ -1,5 +1,8 @@
 use crate::official::OfficialDecoder;
-use crate::query::{forecast_for_query, route_forecast, PointQuery, RouteQuery};
+use crate::query::{
+    forecast_for_query, route_forecast, validate_cams_query, validate_gfs_query, PointQuery,
+    RouteQuery,
+};
 use crate::snapshot::OmDataSnapshot;
 use anyhow::{Context, Result};
 use axum::extract::{Query, State};
@@ -191,8 +194,8 @@ impl AppState {
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/", get(source_offer))
-        .route("/v1/forecast", get(forecast))
-        .route("/v1/air-quality", get(air_quality))
+        .route("/v1/gfs", get(gfs_forecast))
+        .route("/v1/cams", get(cams_forecast))
         .route("/v1/route", post(route))
         .with_state(state)
         .layer(middleware::map_response(source_offer_headers))
@@ -237,10 +240,11 @@ pub async fn serve(state: AppState, bind: SocketAddr) -> Result<()> {
     Ok(())
 }
 
-async fn forecast(
+async fn gfs_forecast(
     State(state): State<AppState>,
     Query(query): Query<PointQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    validate_gfs_query(&query)?;
     let snapshot = state.snapshot()?;
     let decoder = state.decoder.clone();
     let payload = tokio::task::spawn_blocking(move || {
@@ -251,17 +255,18 @@ async fn forecast(
     Ok(Json(payload))
 }
 
-async fn air_quality(
+async fn cams_forecast(
     State(state): State<AppState>,
     Query(query): Query<PointQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    validate_cams_query(&query)?;
     let snapshot = state.snapshot()?;
     let decoder = state.decoder.clone();
     let payload = tokio::task::spawn_blocking(move || {
         forecast_for_query(&snapshot, decoder.as_ref(), &query)
     })
     .await
-    .context("air-quality worker failed")??;
+    .context("CAMS forecast worker failed")??;
     Ok(Json(payload))
 }
 
@@ -311,7 +316,7 @@ mod tests {
     async fn source_offer_is_present_on_root_and_api_errors() {
         let root = TempDir::new().unwrap();
         let app = router(AppState::new(root.path().to_path_buf(), None).unwrap());
-        for uri in ["/", "/v1/forecast"] {
+        for uri in ["/", "/v1/gfs"] {
             let response = app
                 .clone()
                 .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
@@ -325,6 +330,35 @@ mod tests {
                 response.headers().get("x-source-code").unwrap(),
                 SOURCE_REPOSITORY
             );
+        }
+    }
+
+    #[tokio::test]
+    async fn public_model_routes_enforce_explicit_model_specific_variables() {
+        let root = TempDir::new().unwrap();
+        let app = router(AppState::new(root.path().to_path_buf(), None).unwrap());
+
+        for uri in ["/v1/forecast", "/v1/air-quality"] {
+            let response = app
+                .clone()
+                .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::NOT_FOUND, "{uri}");
+        }
+
+        for uri in [
+            "/v1/gfs?latitude=31.23&longitude=121.47",
+            "/v1/cams?latitude=31.23&longitude=121.47",
+            "/v1/gfs?latitude=31.23&longitude=121.47&hourly=pm2_5",
+            "/v1/cams?latitude=31.23&longitude=121.47&hourly=temperature_2m",
+        ] {
+            let response = app
+                .clone()
+                .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{uri}");
         }
     }
 

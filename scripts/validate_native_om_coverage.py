@@ -435,7 +435,7 @@ def build_api_url(
         "models": "gfs_global",
         "wind_speed_unit": "ms",
     }
-    return base_url.rstrip("/") + "/v1/forecast?" + urllib.parse.urlencode(params)
+    return base_url.rstrip("/") + "/v1/gfs?" + urllib.parse.urlencode(params)
 
 
 def main() -> int:

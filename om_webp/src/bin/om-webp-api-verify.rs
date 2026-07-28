@@ -196,7 +196,7 @@ fn main() -> Result<()> {
     let mut scopes = BTreeMap::new();
     let gfs = verify_scope(
         "gfs",
-        "v1/forecast",
+        "v1/gfs",
         &gfs_root,
         gfs_manifest,
         GFS_LAYERS,
@@ -216,7 +216,7 @@ fn main() -> Result<()> {
     ensure_same_grid(&samples, &cams_manifest.grid)?;
     let cams = verify_scope(
         "cams",
-        "v1/air-quality",
+        "v1/cams",
         &cams_root,
         cams_manifest,
         CAMS_LAYERS,

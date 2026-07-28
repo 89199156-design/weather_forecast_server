@@ -115,7 +115,7 @@ def test_http_validation_fetches_local_variables_by_chunk(monkeypatch, tmp_path)
         batch_index=1,
         points=[{"latitude": 30.0, "longitude": 120.0}],
         variables=["temperature_2m", "relative_humidity_2m", "wind_speed_10m"],
-            api_base_url="http://127.0.0.1:18080/v1/forecast",
+            api_base_url="http://127.0.0.1:18080/v1/gfs",
             local_openmeteo_mode="http",
         data_dir=tmp_path,
         output_dir=tmp_path,
@@ -878,8 +878,8 @@ def test_layer_scripts_are_documented_as_openmeteo_engine_backed():
     assert "Open-Meteo engine" in readme
     assert "import requests" in build_script
     assert "requests.get" in build_script
-    assert "/v1/forecast" in build_script
-    assert "/v1/air-quality" in build_script
+    assert "/v1/gfs" in build_script
+    assert "/v1/cams" in build_script
     assert "127.0.0.1:18080" in build_script
     assert "LayerGridExportCommand" not in configure
     assert "PointForecastExportCommand" not in configure
@@ -1030,13 +1030,13 @@ def test_layer_builders_are_split_by_source_product():
     assert "WEATHER_OPENMETEO_GFS_API_URL" in gfs
     assert "WEATHER_OPENMETEO_CAMS_API_URL" not in gfs
     assert "http://127.0.0.1:18080" in gfs
-    assert "/v1/forecast" in gfs
-    assert "/v1/air-quality" not in gfs
+    assert "/v1/gfs" in gfs
+    assert "/v1/cams" not in gfs
     assert "WEATHER_OPENMETEO_CAMS_API_URL" in cams
     assert "WEATHER_OPENMETEO_GFS_API_URL" not in cams
     assert "http://127.0.0.1:18080" in cams
-    assert "/v1/air-quality" in cams
-    assert "/v1/forecast" not in cams
+    assert "/v1/cams" in cams
+    assert "/v1/gfs" not in cams
 
 
 def test_combined_production_cycle_is_removed_in_favor_of_split_source_cycles():
@@ -1447,14 +1447,14 @@ def test_split_layer_builders_publish_only_their_product():
     assert "--scope cams" not in gfs
     assert "export-layer-grid" not in gfs
     assert "http://127.0.0.1:18080" in gfs
-    assert "/v1/forecast" in gfs
+    assert "/v1/gfs" in gfs
     assert "gfs013_surface" in gfs
     assert "cams_global" not in gfs
     assert "--scope cams" in cams
     assert "--scope gfs" not in cams
     assert "export-layer-grid" not in cams
     assert "http://127.0.0.1:18080" in cams
-    assert "/v1/air-quality" in cams
+    assert "/v1/cams" in cams
     assert "cams_global" in cams
     assert "gfs013_surface" not in cams
     assert "date -u" in gfs

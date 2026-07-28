@@ -216,7 +216,7 @@ def build_cams_api_url(
         "end_hour": iso_hour(end),
         "domains": "cams_global",
     }
-    return base_url.rstrip("/") + "/v1/air-quality?" + urllib.parse.urlencode(params)
+    return base_url.rstrip("/") + "/v1/cams?" + urllib.parse.urlencode(params)
 
 
 def main() -> int:
