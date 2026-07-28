@@ -659,9 +659,15 @@ def test_ecmwf_proxy_route_is_managed_and_has_no_test_lock() -> None:
 
     assert "BEGIN weather-forecast ECMWF API (managed)" in script
     assert "location ^~ /v1/ecmwf" in script
+    assert "location = /v1/gfs" in script
+    assert "location = /v1/cams" in script
     assert "proxy_pass http://127.0.0.1:{port}" in script
+    assert "proxy_pass http://127.0.0.1:{native_port}" in script
+    assert "00.default.conf" in script
+    assert "install(default_path" in script
     assert "proxy_set_header Host api.open-meteo.com;" in script
     assert "openresty -t" in script
     assert "openresty -s reload" in script
+    assert "wait_for_route" in script
     assert "flock" not in script
     assert "LOCK_FILE" not in script
