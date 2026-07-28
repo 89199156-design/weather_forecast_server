@@ -494,6 +494,10 @@ def test_ecmwf_pipeline_uses_panel_state_without_batch_lock() -> None:
         assert "/tmp/weather_openmeteo_production.lock" not in source
         assert "WEATHER_1PANEL_VERIFIED_TASK" in source
     assert 'python3 - "$CURRENT_MARKER" "$RUN" "$SOURCE_REVISION"' in cycle
+    assert (
+        'git -c safe.directory="$APP_DIR" -C "$APP_DIR" rev-parse HEAD'
+        in cycle
+    )
     assert 'payload.get("source_revision") == sys.argv[3]' in cycle
     assert 'payload.get("coverage_id") == expected_coverage_id' in cycle
     assert 'variables="$FALLBACK_VARIABLES"' not in cycle
@@ -532,6 +536,10 @@ def test_ecmwf_api_mounts_model_and_dem_below_writable_data_tmpfs() -> None:
     assert installer.index(data_tmpfs) < installer.index(model_mount)
     assert installer.index(model_mount) < installer.index(dem_mount)
     assert 'RELEASE_MARKER="$ECMWF_ROOT/groups/ecmwf/current/ready_for_processing.json"' in installer
+    assert (
+        'git -c safe.directory="$APP_DIR" -C "$APP_DIR" rev-parse HEAD'
+        in installer
+    )
     assert 'printf \'%s\\n\' "$SOURCE_REVISION" >"$INSTALL_ROOT/source-revision"' in installer
     assert (
         'printf \'%s\\n\' "$DATA_SOURCE_REVISION" '

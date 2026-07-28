@@ -11,7 +11,7 @@ IMAGE_NAME="${WEATHER_ECMWF_OPENMETEO_IMAGE:-weather-forecast-ecmwf}"
 IMAGE_TAG="${WEATHER_ECMWF_OPENMETEO_TAG:-}"
 IMAGE_REF="$IMAGE_NAME:$IMAGE_TAG"
 PATCH_PATH="$APP_DIR/vendor/patches/open-meteo-ecmwf-regional.patch"
-SOURCE_REVISION="$(git -C "$APP_DIR" rev-parse HEAD)"
+SOURCE_REVISION="$(git -c safe.directory="$APP_DIR" -C "$APP_DIR" rev-parse HEAD)"
 INSTALL_ROOT="${WEATHER_ECMWF_API_INSTALL_ROOT:-/opt/1panel/apps/weather_ecmwf_api}"
 UNIT_PATH=/etc/systemd/system/weather-ecmwf-api.service
 PORT="${WEATHER_ECMWF_API_PORT:-18081}"
