@@ -32,8 +32,8 @@ for rollback.
   previous and latest complete official `f000...f384` runs. No older `f006`
   value is mixed into the next run's `f000`.
 - ECMWF keeps five runs in its generated rolling time-series database: three
-  native `f000/f003/f006` histories followed by the previous natural complete
-  run and the current 00Z complete `f000...f360` run. All required variables
+  native `f000/f003/f006` histories followed by the previous complete 00Z/12Z
+  long run and the latest complete 00Z/12Z `f000...f360` run. All required variables
   are generated for every role. The short runs supply preceding local-day
   hours; NaN fallback is limited to the immediately previous complete run.
 - CAMS ECPDS main keeps three consecutive complete 12-hour runs through `f120`

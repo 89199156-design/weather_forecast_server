@@ -1224,7 +1224,7 @@ def test_openmeteo_cron_installer_creates_four_independent_1panel_tasks():
     gfs_spec = "0 * * * *,20 * * * *,40 * * * *"
     cams_ecpds_spec = "5 * * * *,25 * * * *,45 * * * *"
     cams_ads_spec = "10 * * * *,30 * * * *,50 * * * *"
-    ecmwf_spec = "10 16 * * *,10 17 * * *,10 18 * * *"
+    ecmwf_spec = "10 * * * *"
     assert gfs_spec in script
     assert cams_ecpds_spec in script
     assert cams_ads_spec in script

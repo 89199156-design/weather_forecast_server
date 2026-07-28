@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Read-only completeness probe for one ECMWF Open Data deterministic run."""
+"""Read-only completeness probe for ECMWF Open Data long forecast runs."""
 
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timedelta, timezone
 import json
+from pathlib import Path
 import sys
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -15,7 +17,10 @@ from ecmwf_contract import (
     SOIL_PROBE_FIELDS,
     SURFACE_PROBE_PARAMS,
     parse_run,
+    source_run_plan,
 )
+
+UTC = timezone.utc
 
 
 def index_url(base_url: str, run: str, hour: int) -> str:
@@ -99,22 +104,113 @@ def validate(run: str, records: list[dict[str, object]]) -> dict[str, object]:
     }
 
 
+def read_local_state(root: Path) -> tuple[datetime | None, tuple[str, ...]]:
+    marker = root / "groups" / "ecmwf" / "current" / "ready_for_processing.json"
+    if not marker.is_file():
+        return None, ()
+    try:
+        payload = json.loads(marker.read_text(encoding="utf-8"))
+        if payload.get("status") != "complete":
+            return None, ()
+        run = parse_run(str(payload.get("latest_complete_run") or ""))
+        source_runs = tuple(str(value) for value in payload.get("source_runs", ()))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None, ()
+    if run.hour not in (0, 12):
+        return None, ()
+    return run, source_runs
+
+
+def read_local_latest(root: Path) -> datetime | None:
+    return read_local_state(root)[0]
+
+
+def floor_to_long_run(now: datetime) -> datetime:
+    current = now.astimezone(UTC).replace(minute=0, second=0, microsecond=0)
+    return current.replace(hour=12 if current.hour >= 12 else 0)
+
+
+def candidate_runs(
+    now: datetime,
+    local_latest: datetime | None,
+    lookback_hours: int,
+    local_source_runs: tuple[str, ...] = (),
+) -> list[datetime]:
+    if lookback_hours < 12 or lookback_hours % 12:
+        raise ValueError("lookback_hours must be a positive multiple of twelve")
+    first = floor_to_long_run(now)
+    runs = [
+        first - timedelta(hours=12 * offset)
+        for offset in range((lookback_hours // 12) + 1)
+    ]
+    if local_latest is None:
+        return runs
+    candidates = [run for run in runs if run > local_latest]
+    expected = tuple(
+        run
+        for run, _horizon in source_run_plan(
+            local_latest.strftime("%Y%m%d%H")
+        )
+    )
+    if local_source_runs != expected and local_latest in runs:
+        candidates.append(local_latest)
+    return sorted(set(candidates), reverse=True)
+
+
+def probe_run(base_url: str, run: str, timeout: float) -> dict[str, object]:
+    parsed = parse_run(run)
+    if parsed.hour not in (0, 12):
+        raise ValueError("probe target must be a 00Z or 12Z long run")
+    url = index_url(base_url, run, 360)
+    payload = validate(run, load_index(url, timeout))
+    payload["index_url"] = url
+    return payload
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--run", required=True)
+    target = parser.add_mutually_exclusive_group(required=True)
+    target.add_argument("--run")
+    target.add_argument("--latest-ready", action="store_true")
+    parser.add_argument("--data-root", type=Path, default=Path("./data/ecmwf"))
+    parser.add_argument("--lookback-hours", type=int, default=72)
     parser.add_argument(
         "--base-url",
         default="https://data.ecmwf.int/forecasts",
     )
     parser.add_argument("--timeout", type=float, default=30.0)
     args = parser.parse_args()
+    if args.latest_ready:
+        local_latest, local_source_runs = read_local_state(args.data_root)
+        try:
+            candidates = candidate_runs(
+                datetime.now(UTC),
+                local_latest,
+                args.lookback_hours,
+                local_source_runs,
+            )
+        except ValueError as exc:
+            parser.error(str(exc))
+        for candidate in candidates:
+            run = candidate.strftime("%Y%m%d%H")
+            try:
+                payload = probe_run(args.base_url, run, args.timeout)
+            except (
+                ValueError,
+                HTTPError,
+                URLError,
+                TimeoutError,
+                json.JSONDecodeError,
+            ) as exc:
+                print(f"NOT_READY {run} {exc}", file=sys.stderr)
+                continue
+            print(f"READY {run} {payload['index_url']}")
+            return 0
+        local = local_latest.strftime("%Y%m%d%H") if local_latest else "none"
+        print(f"NOT_READY local_latest={local}", file=sys.stderr)
+        return 1
     try:
-        run = parse_run(args.run)
-        if run.hour != 0:
-            raise ValueError("probe target must be a 00Z long run")
-        url = index_url(args.base_url, args.run, 360)
-        payload = validate(args.run, load_index(url, args.timeout))
-        payload["index_url"] = url
+        payload = probe_run(args.base_url, args.run, args.timeout)
     except (ValueError, HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
         print(
             json.dumps(

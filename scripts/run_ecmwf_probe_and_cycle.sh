@@ -10,20 +10,35 @@ fi
 source "$APP_DIR/scripts/openmeteo_runtime_common.sh"
 load_weather_env
 
+ECMWF_ROOT="${WEATHER_ECMWF_ROOT:-$APP_DIR/data/ecmwf}"
+cd "$APP_DIR"
 if [[ -n "${WEATHER_ECMWF_REFERENCE_RUN:-}" ]]; then
   RUN="$WEATHER_ECMWF_REFERENCE_RUN"
+  if ! python3 scripts/probe_ecmwf_open_data_run.py --run "$RUN"; then
+    printf '%s\n' \
+      "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [ECMWF_PROBE] incomplete run=$RUN; no download started"
+    exit 0
+  fi
 else
-  RUN="$(date -u -d '8 hours ago' '+%Y%m%d00')"
+  probe_output=""
+  if ! probe_output="$(python3 scripts/probe_ecmwf_open_data_run.py \
+    --latest-ready \
+    --data-root "$ECMWF_ROOT" 2>&1)"; then
+    printf '%s\n' \
+      "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [ECMWF_PROBE] $probe_output"
+    exit 0
+  fi
+  ready_line="$(printf '%s\n' "$probe_output" | awk '$1 == "READY" && $2 != "" { print; exit }')"
+  if [[ -z "$ready_line" ]]; then
+    printf '%s\n' \
+      "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [ECMWF_PROBE] no complete long run found"
+    exit 0
+  fi
+  set -- $ready_line
+  RUN="$2"
 fi
 
-cd "$APP_DIR"
-if ! python3 scripts/probe_ecmwf_open_data_run.py --run "$RUN"; then
-  printf '%s\n' \
-    "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [ECMWF_PROBE] incomplete run=$RUN; no download started"
-  exit 0
-fi
-
-CURRENT_MARKER="${WEATHER_ECMWF_ROOT:-$APP_DIR/data/ecmwf}/groups/ecmwf/current/ready_for_processing.json"
+CURRENT_MARKER="$ECMWF_ROOT/groups/ecmwf/current/ready_for_processing.json"
 WEBP_MARKER="${WEATHER_OM_WEBP_DATA_ROOT:-/opt/1panel/apps/weather_om_webp/data}/current/ecmwf.json"
 API_PORT="${WEATHER_ECMWF_API_PORT:-18081}"
 if [[ -f "$CURRENT_MARKER" && -f "$WEBP_MARKER" ]] && python3 - "$CURRENT_MARKER" "$WEBP_MARKER" "$RUN" <<'PY'

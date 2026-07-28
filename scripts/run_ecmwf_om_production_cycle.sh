@@ -11,8 +11,8 @@ source "$APP_DIR/scripts/openmeteo_runtime_common.sh"
 load_weather_env
 
 RUN="${1:-${WEATHER_ECMWF_RUN:-}}"
-if [[ ! "$RUN" =~ ^[0-9]{10}$ || "${RUN:8:2}" != "00" ]]; then
-  printf '%s\n' "Usage: run_ecmwf_om_production_cycle.sh YYYYMMDD00" >&2
+if [[ ! "$RUN" =~ ^[0-9]{10}$ || ! "${RUN:8:2}" =~ ^(00|12)$ ]]; then
+  printf '%s\n' "Usage: run_ecmwf_om_production_cycle.sh YYYYMMDD{00|12}" >&2
   exit 2
 fi
 

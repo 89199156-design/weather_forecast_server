@@ -145,10 +145,9 @@ tasks = (
         ),
         (
             "weather_ecmwf_probe_cycle",
-            # The free IFS 00Z f360 index normally completes during the
-            # Singapore afternoon. Three bounded probes are cheap; incomplete
-            # probes never enter the downloader.
-            "10 16 * * *,10 17 * * *,10 18 * * *",
+            # The index probe is lightweight. Run hourly without an artificial
+            # publication delay and scan 00Z/12Z newest to oldest.
+            "10 * * * *",
             "scripts/run_ecmwf_probe_and_cycle.sh",
         ),
     )

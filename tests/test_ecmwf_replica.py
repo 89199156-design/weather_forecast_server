@@ -47,13 +47,19 @@ def test_ecmwf_source_plan_keeps_three_short_and_two_complete_runs() -> None:
 
     assert len(plan) == 5
     assert plan[:3] == (
+        ("2026072118", 6),
         ("2026072200", 6),
         ("2026072206", 6),
-        ("2026072212", 6),
     )
-    assert plan[-2] == ("2026072218", 144)
+    assert plan[-2] == ("2026072212", 360)
     assert plan[-1] == ("2026072300", 360)
     assert [run for run, _ in plan] == sorted(run for run, _ in plan)
+
+    midday_plan = ecmwf_contract.source_run_plan("2026072312")
+    assert midday_plan[-2:] == (
+        ("2026072300", 360),
+        ("2026072312", 360),
+    )
 
 
 def test_ecmwf_short_history_covers_shanghai_day_hours_before_target() -> None:
@@ -83,8 +89,8 @@ def test_ecmwf_source_plan_labels_three_short_and_two_complete_roles() -> None:
     )
 
     assert payload[-2] == {
-        "run": "2026072218",
-        "max_forecast_hour": 144,
+        "run": "2026072212",
+        "max_forecast_hour": 360,
         "role": "previous-complete",
     }
     assert payload[-1] == {
@@ -147,6 +153,49 @@ def test_final_index_probe_validates_full_surface_and_pressure_inventory() -> No
         "required_soil_fields": 8,
         "required_pressure_fields": 84,
     }
+
+
+def test_ecmwf_probe_candidates_include_12z_and_fall_back_from_newer_00z() -> None:
+    now = datetime(2026, 7, 28, 4, tzinfo=timezone.utc)
+    local = datetime(2026, 7, 26, 12, tzinfo=timezone.utc)
+
+    assert [
+        candidate.strftime("%Y%m%d%H")
+        for candidate in probe.candidate_runs(
+            now,
+            local,
+            48,
+            tuple(
+                run
+                for run, _horizon in ecmwf_contract.source_run_plan("2026072612")
+            ),
+        )
+    ] == ["2026072800", "2026072712", "2026072700"]
+
+
+def test_ecmwf_probe_does_not_revisit_local_or_older_long_runs() -> None:
+    now = datetime(2026, 7, 28, 18, tzinfo=timezone.utc)
+    local = datetime(2026, 7, 28, 0, tzinfo=timezone.utc)
+
+    assert [
+        candidate.strftime("%Y%m%d%H")
+        for candidate in probe.candidate_runs(
+            now,
+            local,
+            48,
+            tuple(
+                run
+                for run, _horizon in ecmwf_contract.source_run_plan("2026072800")
+            ),
+        )
+    ] == ["2026072812"]
+
+
+def test_ecmwf_probe_rechecks_local_run_when_retained_window_is_incomplete() -> None:
+    now = datetime(2026, 7, 28, 4, tzinfo=timezone.utc)
+    local = datetime(2026, 7, 28, 0, tzinfo=timezone.utc)
+
+    assert probe.candidate_runs(now, local, 48, ("2026072800",)) == [local]
 
 
 def test_final_index_probe_stops_on_first_missing_pressure_field() -> None:
@@ -249,13 +298,13 @@ def test_release_publisher_requires_full_inventory_and_publishes_atomically(
     assert marker["hourly_frames"] == 361
     assert marker["daily_frames"] == 15
     assert marker["source_runs"] == [
+        "2026072118",
         "2026072200",
         "2026072206",
         "2026072212",
-        "2026072218",
         "2026072300",
     ]
-    assert marker["source_run_max_forecast_hours"] == [6, 6, 6, 144, 360]
+    assert marker["source_run_max_forecast_hours"] == [6, 6, 6, 360, 360]
     assert marker["short_run_count"] == 3
     assert marker["full_run_count"] == 2
     assert marker["short_run_max_forecast_hour"] == 6
@@ -450,6 +499,11 @@ def test_ecmwf_pipeline_uses_panel_state_without_batch_lock() -> None:
     assert 'variables="$FALLBACK_VARIABLES"' not in cycle
     assert '--only-variables "$RAW_VARIABLES"' in cycle
     assert "--lookback-hours" not in cycle
+    assert "--latest-ready" in probe_cycle
+    assert "date -u -d" not in probe_cycle
+    assert "00Z or 12Z long run" in (
+        SCRIPTS / "probe_ecmwf_open_data_run.py"
+    ).read_text(encoding="utf-8")
     assert "scripts/ensure_ecmwf_static_asset.py" in cycle
     assert (
         "WEATHER_ECMWF_OFFICIAL_HSURF=/app/static/ecmwf_ifs025/HSURF.om"

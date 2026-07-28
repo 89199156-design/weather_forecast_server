@@ -120,25 +120,26 @@ def parse_run(run: str) -> datetime:
     return value
 
 
-def natural_max_forecast_hour(run: datetime) -> int:
-    return 360 if run.hour in (0, 12) else 144
-
-
 def source_run_plan(target_run: str) -> tuple[tuple[str, int], ...]:
     target = parse_run(target_run)
-    if target.hour != 0:
-        raise ValueError("strict ECMWF comparison target must be a 00Z run")
-    runs = []
-    cursor = target - timedelta(hours=6 * (TOTAL_RUN_RETENTION - 1))
-    for rank in range(TOTAL_RUN_RETENTION):
-        horizon = (
-            SHORT_RUN_MAX_FORECAST_HOUR
-            if rank < SHORT_RUN_RETENTION
-            else natural_max_forecast_hour(cursor)
+    if target.hour not in (0, 12):
+        raise ValueError("ECMWF production target must be a 00Z or 12Z long run")
+    previous_complete = target - timedelta(hours=12)
+    short_start = previous_complete - timedelta(
+        hours=6 * SHORT_RUN_RETENTION
+    )
+    short_runs = tuple(
+        (
+            (short_start + timedelta(hours=6 * rank)).strftime("%Y%m%d%H"),
+            SHORT_RUN_MAX_FORECAST_HOUR,
         )
-        runs.append((cursor.strftime("%Y%m%d%H"), horizon))
-        cursor += timedelta(hours=6)
-    return tuple(runs)
+        for rank in range(SHORT_RUN_RETENTION)
+    )
+    return (
+        *short_runs,
+        (previous_complete.strftime("%Y%m%d%H"), 360),
+        (target_run, 360),
+    )
 
 
 assert len(SURFACE_RAW_VARIABLES) == 32
