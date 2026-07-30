@@ -108,6 +108,104 @@ def test_ecmwf_validator_accepts_real_tuple_dimensions(
     publisher.validate_static(tmp_path)
 
 
+def test_ecmwf_validator_accounts_for_undefined_hour_zero_frames(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    run_root = (
+        tmp_path
+        / "data_run"
+        / "ecmwf_ifs025"
+        / "2026"
+        / "07"
+        / "29"
+        / "0600Z"
+    )
+    run_root.mkdir(parents=True)
+    variables = {"temperature_2m", "precipitation", "wind_gusts_10m"}
+    for variable in variables:
+        (run_root / f"{variable}.om").write_bytes(b"om")
+    (run_root / "meta.json").write_text(
+        json.dumps(
+            {
+                "reference_time": "2026-07-29T06:00:00Z",
+                "valid_times": [
+                    "2026-07-29T06:00:00Z",
+                    "2026-07-29T09:00:00Z",
+                    "2026-07-29T12:00:00Z",
+                ],
+                "variables": sorted(variables),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def dimensions(path: Path) -> tuple[int, ...]:
+        return (
+            (249, 297, 2)
+            if Path(path).stem in {"precipitation", "wind_gusts_10m"}
+            else (249, 297, 3)
+        )
+
+    monkeypatch.setattr(publisher, "read_array_dimensions", dimensions)
+    publisher.validate_run(
+        tmp_path,
+        "ecmwf_ifs025",
+        "2026072906",
+        6,
+        variables,
+    )
+
+
+def test_ecmwf_validator_does_not_relax_hour_zero_for_instant_fields(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    run_root = (
+        tmp_path
+        / "data_run"
+        / "ecmwf_ifs025"
+        / "2026"
+        / "07"
+        / "29"
+        / "0600Z"
+    )
+    run_root.mkdir(parents=True)
+    (run_root / "temperature_2m.om").write_bytes(b"om")
+    (run_root / "meta.json").write_text(
+        json.dumps(
+            {
+                "reference_time": "2026-07-29T06:00:00Z",
+                "valid_times": [
+                    "2026-07-29T06:00:00Z",
+                    "2026-07-29T09:00:00Z",
+                    "2026-07-29T12:00:00Z",
+                ],
+                "variables": ["temperature_2m"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        publisher,
+        "read_array_dimensions",
+        lambda _path: (249, 297, 2),
+    )
+
+    try:
+        publisher.validate_run(
+            tmp_path,
+            "ecmwf_ifs025",
+            "2026072906",
+            6,
+            {"temperature_2m"},
+        )
+    except ValueError as exc:
+        assert "expected=(249, 297, 3)" in str(exc)
+    else:
+        raise AssertionError("instantaneous field dimension mismatch was accepted")
+
+
 def test_ecmwf_cycle_recovers_webp_without_republishing_immutable_om() -> None:
     source = (SCRIPTS / "run_ecmwf_native_production_cycle.sh").read_text(
         encoding="utf-8"

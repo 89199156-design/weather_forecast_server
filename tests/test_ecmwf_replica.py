@@ -37,9 +37,20 @@ def test_pinned_ecmwf_contract_is_complete_and_deterministic() -> None:
     assert len(ecmwf_contract.RAW_VARIABLES) == 116
     assert len(set(ecmwf_contract.RAW_VARIABLES)) == 116
     short_variables = ecmwf_contract.raw_variables_for_horizon(6)
-    assert len(short_variables) == 114
+    assert len(short_variables) == 108
     assert "temperature_2m_min" not in short_variables
     assert "temperature_2m_max" not in short_variables
+    for kind in ecmwf_contract.PRESSURE_RAW_TYPES:
+        assert f"{kind}_10hPa" not in short_variables
+    assert ecmwf_contract.RAW_VARIABLES_OMIT_HOUR_ZERO == {
+        "temperature_2m_min",
+        "temperature_2m_max",
+        "wind_gusts_10m",
+        "shortwave_radiation",
+        "precipitation",
+        "runoff",
+        "snowfall_water_equivalent",
+    }
     assert ecmwf_contract.SHORT_RUN_RETENTION == 3
     assert ecmwf_contract.COMPLETE_RUN_RETENTION == 2
     assert ecmwf_contract.TOTAL_RUN_RETENTION == 5

@@ -16,6 +16,7 @@ from typing import Any
 from ecmwf_contract import (
     MODEL,
     OPENMETEO_UPSTREAM_COMMIT,
+    RAW_VARIABLES_OMIT_HOUR_ZERO,
     STORAGE_BOUNDS,
     parse_run,
     raw_variables_for_horizon,
@@ -131,7 +132,13 @@ def validate_run(
         if not file_path.is_file() or file_path.stat().st_size <= 0:
             raise ValueError(f"missing ECMWF native file: {file_path}")
         dimensions = read_array_dimensions(file_path)
-        expected_dimensions = (249, 297, len(expected_times))
+        expected_time_count = len(expected_times)
+        if (
+            domain == MODEL
+            and variable in RAW_VARIABLES_OMIT_HOUR_ZERO
+        ):
+            expected_time_count -= 1
+        expected_dimensions = (249, 297, expected_time_count)
         if dimensions != expected_dimensions:
             raise ValueError(
                 f"{domain} {run} {variable} dimensions={dimensions}, "
