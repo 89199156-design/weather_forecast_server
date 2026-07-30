@@ -219,6 +219,8 @@ def validate_run_metadata(
     expected_forecast_hours: list[int],
     expected_stored_time_count: int | dict[str, int] | None = None,
 ) -> dict[str, Any]:
+    if not expected_forecast_hours:
+        raise ValueError(f"{domain} run {run} has an empty forecast-hour contract")
     directory = run_directory(staging, domain, run)
     path = directory / "meta.json"
     if not path.is_file():
@@ -311,10 +313,20 @@ def validate_gfs_retained_run(
 
 def probability_forecast_hours(domain: str, horizon: int) -> list[int]:
     if domain == "ncep_gefs025":
-        return list(range(3, horizon + 1, 3))
-    if domain == "ncep_gefs05":
-        return [*range(3, min(240, horizon), 3), *range(240, horizon + 1, 6)]
-    raise ValueError(f"unsupported GFS probability domain: {domain}")
+        hours = list(range(3, horizon + 1, 3))
+    elif domain == "ncep_gefs05":
+        hours = (
+            list(range(3, horizon + 1, 3))
+            if horizon < 240
+            else [*range(3, 240, 3), *range(240, horizon + 1, 6)]
+        )
+    else:
+        raise ValueError(f"unsupported GFS probability domain: {domain}")
+    if not hours or hours[-1] != horizon:
+        raise ValueError(
+            f"unsupported GFS probability horizon: domain={domain} horizon={horizon}"
+        )
+    return hours
 
 
 def validate_probability_run(

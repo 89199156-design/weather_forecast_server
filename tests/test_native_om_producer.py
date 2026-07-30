@@ -275,6 +275,22 @@ def make_cams_greenhouse_staging(output_root: Path, run: str) -> Path:
 
 
 class NativeOmProducerTests(unittest.TestCase):
+    def test_probability_schedule_supports_short_smoke_horizons(self):
+        publisher = load_publisher_module()
+
+        self.assertEqual(
+            publisher.probability_forecast_hours("ncep_gefs025", 3),
+            [3],
+        )
+        self.assertEqual(
+            publisher.probability_forecast_hours("ncep_gefs05", 3),
+            [3],
+        )
+        self.assertEqual(
+            publisher.probability_forecast_hours("ncep_gefs05", 384),
+            [*range(3, 240, 3), *range(240, 385, 6)],
+        )
+
     def test_pre_reload_retention_ignores_missing_stale_applied_coverage(self):
         publisher = load_publisher_module()
         with tempfile.TemporaryDirectory() as directory:
