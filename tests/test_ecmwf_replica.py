@@ -469,6 +469,11 @@ def test_regional_patch_applies_to_exact_locked_upstream() -> None:
         "[1000, 925, 850, 700, 600, 500, 400, 300, 250, 200, 150, 100, 50, 10]"
         in source
     )
+    assert (
+        "fileprivate static let pressureLevelsToKeep = "
+        "[1000, 925, 850, 700, 600, 500, 400, 300, 250, 200, 150, 100, 50, 10]"
+        in source
+    )
     assert "estimatedNumberOfGridCells" in source
     assert '@Flag(name: "skip-full-run")' in source
     assert (
