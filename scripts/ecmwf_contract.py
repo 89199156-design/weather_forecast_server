@@ -74,6 +74,9 @@ PRESSURE_RAW_VARIABLES = tuple(
     for kind in PRESSURE_RAW_TYPES
 )
 RAW_VARIABLES = (*SURFACE_RAW_VARIABLES, *PRESSURE_RAW_VARIABLES)
+SHORT_RUN_UNAVAILABLE_RAW_VARIABLES = frozenset(
+    {"temperature_2m_min", "temperature_2m_max"}
+)
 
 COMPLETE_RUN_RETENTION = 2
 SHORT_RUN_RETENTION = 3
@@ -111,6 +114,25 @@ SOIL_PROBE_FIELDS = {
     for level in (1, 2, 3, 4)
 }
 PRESSURE_PROBE_PARAMS = {"t", "r", "gh", "u", "v", "w"}
+SHORT_RUN_UNAVAILABLE_PROBE_PARAMS = frozenset({"mn2t6", "mx2t6"})
+
+
+def raw_variables_for_horizon(max_forecast_hour: int) -> tuple[str, ...]:
+    if max_forecast_hour == SHORT_RUN_MAX_FORECAST_HOUR:
+        return tuple(
+            variable
+            for variable in RAW_VARIABLES
+            if variable not in SHORT_RUN_UNAVAILABLE_RAW_VARIABLES
+        )
+    return RAW_VARIABLES
+
+
+def surface_probe_params_for_horizon(
+    max_forecast_hour: int,
+) -> set[str]:
+    if max_forecast_hour == SHORT_RUN_MAX_FORECAST_HOUR:
+        return SURFACE_PROBE_PARAMS - SHORT_RUN_UNAVAILABLE_PROBE_PARAMS
+    return set(SURFACE_PROBE_PARAMS)
 
 
 def parse_run(run: str) -> datetime:
@@ -146,3 +168,4 @@ assert len(SURFACE_RAW_VARIABLES) == 32
 assert len(PRESSURE_RAW_VARIABLES) == 84
 assert len(RAW_VARIABLES) == 116
 assert len(set(RAW_VARIABLES)) == len(RAW_VARIABLES)
+assert len(raw_variables_for_horizon(SHORT_RUN_MAX_FORECAST_HOUR)) == 114

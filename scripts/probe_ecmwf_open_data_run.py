@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only completeness probe for ECMWF Open Data long forecast runs."""
+"""Read-only completeness probe for ECMWF Open Data forecast runs."""
 
 from __future__ import annotations
 
@@ -15,9 +15,9 @@ from ecmwf_contract import (
     PRESSURE_LEVELS_HPA,
     PRESSURE_PROBE_PARAMS,
     SOIL_PROBE_FIELDS,
-    SURFACE_PROBE_PARAMS,
     parse_run,
     source_run_plan,
+    surface_probe_params_for_horizon,
 )
 
 UTC = timezone.utc
@@ -48,18 +48,26 @@ def load_index(url: str, timeout: float) -> list[dict[str, object]]:
     return records
 
 
-def validate(run: str, records: list[dict[str, object]]) -> dict[str, object]:
+def validate(
+    run: str,
+    records: list[dict[str, object]],
+    max_forecast_hour: int = 360,
+) -> dict[str, object]:
     expected_date = run[:8]
     expected_time = f"{run[8:]}00"
+    expected_step = str(max_forecast_hour)
     mismatched = [
         record
         for record in records
         if str(record.get("date")) != expected_date
         or str(record.get("time")).zfill(4) != expected_time
-        or str(record.get("step")) != "360"
+        or str(record.get("step")) != expected_step
     ]
     if mismatched:
-        raise ValueError("ECMWF final index identity does not match requested run/f360")
+        raise ValueError(
+            "ECMWF final index identity does not match requested "
+            f"run/f{max_forecast_hour}"
+        )
 
     surface = {
         str(record.get("param"))
@@ -78,7 +86,8 @@ def validate(run: str, records: list[dict[str, object]]) -> dict[str, object]:
         if str(record.get("levtype")) == "sol"
         and str(record.get("levelist", "")).isdigit()
     }
-    missing_surface = sorted(SURFACE_PROBE_PARAMS - surface)
+    required_surface = surface_probe_params_for_horizon(max_forecast_hour)
+    missing_surface = sorted(required_surface - surface)
     missing_soil = sorted(SOIL_PROBE_FIELDS - soil)
     missing_pressure = sorted(
         (param, level)
@@ -88,16 +97,16 @@ def validate(run: str, records: list[dict[str, object]]) -> dict[str, object]:
     )
     if missing_surface or missing_soil or missing_pressure:
         raise ValueError(
-            "ECMWF f360 inventory is incomplete: "
+            f"ECMWF f{max_forecast_hour} inventory is incomplete: "
             f"surface={missing_surface}, soil={missing_soil}, "
             f"pressure={missing_pressure[:20]}"
         )
     return {
         "status": "complete",
         "run": run,
-        "max_forecast_hour": 360,
+        "max_forecast_hour": max_forecast_hour,
         "index_records": len(records),
-        "required_surface_params": len(SURFACE_PROBE_PARAMS),
+        "required_surface_params": len(required_surface),
         "required_soil_fields": len(SOIL_PROBE_FIELDS),
         "required_pressure_fields": len(PRESSURE_PROBE_PARAMS)
         * len(PRESSURE_LEVELS_HPA),
@@ -157,12 +166,21 @@ def candidate_runs(
     return sorted(set(candidates), reverse=True)
 
 
-def probe_run(base_url: str, run: str, timeout: float) -> dict[str, object]:
-    parsed = parse_run(run)
-    if parsed.hour not in (0, 12):
-        raise ValueError("probe target must be a 00Z or 12Z long run")
-    url = index_url(base_url, run, 360)
-    payload = validate(run, load_index(url, timeout))
+def probe_run(
+    base_url: str,
+    run: str,
+    timeout: float,
+    max_forecast_hour: int = 360,
+) -> dict[str, object]:
+    parse_run(run)
+    if max_forecast_hour <= 0:
+        raise ValueError("max_forecast_hour must be positive")
+    url = index_url(base_url, run, max_forecast_hour)
+    payload = validate(
+        run,
+        load_index(url, timeout),
+        max_forecast_hour,
+    )
     payload["index_url"] = url
     return payload
 
@@ -178,6 +196,7 @@ def main() -> int:
         "--base-url",
         default="https://data.ecmwf.int/forecasts",
     )
+    parser.add_argument("--max-forecast-hour", type=int, default=360)
     parser.add_argument("--timeout", type=float, default=30.0)
     args = parser.parse_args()
     if args.latest_ready:
@@ -194,7 +213,12 @@ def main() -> int:
         for candidate in candidates:
             run = candidate.strftime("%Y%m%d%H")
             try:
-                payload = probe_run(args.base_url, run, args.timeout)
+                payload = probe_run(
+                    args.base_url,
+                    run,
+                    args.timeout,
+                    args.max_forecast_hour,
+                )
             except (
                 ValueError,
                 HTTPError,
@@ -210,7 +234,12 @@ def main() -> int:
         print(f"NOT_READY local_latest={local}", file=sys.stderr)
         return 1
     try:
-        payload = probe_run(args.base_url, args.run, args.timeout)
+        payload = probe_run(
+            args.base_url,
+            args.run,
+            args.timeout,
+            args.max_forecast_hour,
+        )
     except (ValueError, HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
         print(
             json.dumps(

@@ -16,9 +16,9 @@ from typing import Any
 from ecmwf_contract import (
     MODEL,
     OPENMETEO_UPSTREAM_COMMIT,
-    RAW_VARIABLES,
     STORAGE_BOUNDS,
     parse_run,
+    raw_variables_for_horizon,
     source_run_plan,
 )
 from om_v3_metadata import read_array_dimensions
@@ -250,7 +250,13 @@ def publish(args: argparse.Namespace) -> dict[str, Any]:
     deterministic_plan = source_run_plan(args.run)
     ensemble_plan = ensemble_source_run_plan(args.run)
     for source_run, horizon in deterministic_plan:
-        validate_run(staging, MODEL, source_run, horizon, set(RAW_VARIABLES))
+        validate_run(
+            staging,
+            MODEL,
+            source_run,
+            horizon,
+            set(raw_variables_for_horizon(horizon)),
+        )
     for source_run, horizon in ensemble_plan:
         validate_run(
             staging,

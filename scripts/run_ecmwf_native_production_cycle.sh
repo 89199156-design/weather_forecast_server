@@ -209,14 +209,14 @@ PY
     write_sanitized_env_file
     trap 'rm -f "${SANITIZED_ENV_FILE:-}"' EXIT
 
-    RAW_VARIABLES="$(PYTHONPATH="$APP_DIR/scripts" python3 - <<'PY'
-from ecmwf_contract import RAW_VARIABLES
-print(",".join(RAW_VARIABLES))
+    while IFS='|' read -r source_run max_hour role; do
+      RUN_VARIABLES="$(PYTHONPATH="$APP_DIR/scripts" python3 - "$max_hour" <<'PY'
+import sys
+from ecmwf_contract import raw_variables_for_horizon
+print(",".join(raw_variables_for_horizon(int(sys.argv[1]))))
 PY
 )"
-
-    while IFS='|' read -r source_run max_hour role; do
-      if validate_native_run ecmwf_ifs025 "$source_run" "$max_hour" "$RAW_VARIABLES"; then
+      if validate_native_run ecmwf_ifs025 "$source_run" "$max_hour" "$RUN_VARIABLES"; then
         printf '%s\n' \
           "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [ECMWF_NATIVE] reuse deterministic role=$role run=$source_run"
         continue
@@ -225,16 +225,18 @@ PY
         "$STAGING_DIR/data_run/ecmwf_ifs025/${source_run:0:4}/${source_run:4:2}/${source_run:6:2}/${source_run:8:2}00Z" \
         "$STAGING_DIR/data_run/ecmwf_ifs025/${source_run:0:4}/${source_run:4:2}/${source_run:6:2}"
       require_free_bytes "$ECMWF_ROOT" "$MINIMUM_DATA_RUNTIME_FREE_BYTES" "deterministic-$source_run"
-      python3 scripts/probe_ecmwf_open_data_run.py --run "$source_run"
+      python3 scripts/probe_ecmwf_open_data_run.py \
+        --run "$source_run" \
+        --max-forecast-hour "$max_hour"
       run_openmeteo download-ecmwf \
         --domain ifs025 \
         --run "$source_run" \
         --max-forecast-hour "$max_hour" \
-        --only-variables "$RAW_VARIABLES" \
+        --only-variables "$RUN_VARIABLES" \
         --concurrent "${WEATHER_ECMWF_DOWNLOAD_CONCURRENT:-2}" \
         --skip-timeseries
       remove_scoped_path "$STAGING_DIR/download-ecmwf_ifs025" "$STAGING_DIR"
-      validate_native_run ecmwf_ifs025 "$source_run" "$max_hour" "$RAW_VARIABLES"
+      validate_native_run ecmwf_ifs025 "$source_run" "$max_hour" "$RUN_VARIABLES"
     done < <(python3 scripts/ecmwf_source_run_plan.py --run "$RUN" --format lines)
 
     while IFS='|' read -r source_run max_hour; do

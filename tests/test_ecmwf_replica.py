@@ -36,6 +36,10 @@ def test_pinned_ecmwf_contract_is_complete_and_deterministic() -> None:
     assert len(ecmwf_contract.PRESSURE_RAW_VARIABLES) == 84
     assert len(ecmwf_contract.RAW_VARIABLES) == 116
     assert len(set(ecmwf_contract.RAW_VARIABLES)) == 116
+    short_variables = ecmwf_contract.raw_variables_for_horizon(6)
+    assert len(short_variables) == 114
+    assert "temperature_2m_min" not in short_variables
+    assert "temperature_2m_max" not in short_variables
     assert ecmwf_contract.SHORT_RUN_RETENTION == 3
     assert ecmwf_contract.COMPLETE_RUN_RETENTION == 2
     assert ecmwf_contract.TOTAL_RUN_RETENTION == 5
@@ -108,15 +112,22 @@ def test_ecmwf_contract_rejects_invalid_runs(run: str) -> None:
         ecmwf_contract.parse_run(run)
 
 
-def complete_index(run: str) -> list[dict[str, object]]:
+def complete_index(
+    run: str,
+    max_forecast_hour: int = 360,
+) -> list[dict[str, object]]:
     common: dict[str, object] = {
         "date": run[:8],
         "time": f"{run[8:]}00",
-        "step": "360",
+        "step": str(max_forecast_hour),
     }
     records = [
         {**common, "levtype": "sfc", "param": param}
-        for param in sorted(ecmwf_contract.SURFACE_PROBE_PARAMS)
+        for param in sorted(
+            ecmwf_contract.surface_probe_params_for_horizon(
+                max_forecast_hour
+            )
+        )
     ]
     records.extend(
         {
@@ -153,6 +164,17 @@ def test_final_index_probe_validates_full_surface_and_pressure_inventory() -> No
         "required_soil_fields": 8,
         "required_pressure_fields": 84,
     }
+
+
+def test_short_run_probe_validates_its_planned_final_inventory() -> None:
+    run = "2026072306"
+    result = probe.validate(run, complete_index(run, 6), 6)
+
+    assert result["status"] == "complete"
+    assert result["run"] == run
+    assert result["max_forecast_hour"] == 6
+    assert result["index_records"] == 113
+    assert result["required_surface_params"] == 21
 
 
 def test_ecmwf_probe_candidates_include_12z_and_fall_back_from_newer_00z() -> None:
@@ -509,9 +531,10 @@ def test_ecmwf_pipeline_uses_panel_state_without_batch_lock() -> None:
     assert "--lookback-hours" not in cycle
     assert "--latest-ready" in probe_cycle
     assert "date -u -d" not in probe_cycle
-    assert "00Z or 12Z long run" in (
-        SCRIPTS / "probe_ecmwf_open_data_run.py"
+    native_cycle = (
+        SCRIPTS / "run_ecmwf_native_production_cycle.sh"
     ).read_text(encoding="utf-8")
+    assert '--max-forecast-hour "$max_hour"' in native_cycle
     assert "scripts/ensure_ecmwf_static_asset.py" in cycle
     assert (
         "WEATHER_ECMWF_OFFICIAL_HSURF=/app/static/ecmwf_ifs025/HSURF.om"
