@@ -37,11 +37,11 @@ def test_pinned_ecmwf_contract_is_complete_and_deterministic() -> None:
     assert len(ecmwf_contract.RAW_VARIABLES) == 116
     assert len(set(ecmwf_contract.RAW_VARIABLES)) == 116
     short_variables = ecmwf_contract.raw_variables_for_horizon(6)
-    assert len(short_variables) == 108
+    assert len(short_variables) == 114
     assert "temperature_2m_min" not in short_variables
     assert "temperature_2m_max" not in short_variables
     for kind in ecmwf_contract.PRESSURE_RAW_TYPES:
-        assert f"{kind}_10hPa" not in short_variables
+        assert f"{kind}_10hPa" in short_variables
     assert ecmwf_contract.RAW_VARIABLES_OMIT_HOUR_ZERO == {
         "temperature_2m_min",
         "temperature_2m_max",
@@ -464,6 +464,11 @@ def test_regional_patch_applies_to_exact_locked_upstream() -> None:
     assert "cropToRuntimeGrid" in source
     assert "cropOfficialSurfaceElevation" in source
     assert "WEATHER_ECMWF_OFFICIAL_HSURF" in source
+    assert (
+        "static let pressure_levels = "
+        "[1000, 925, 850, 700, 600, 500, 400, 300, 250, 200, 150, 100, 50, 10]"
+        in source
+    )
     assert "estimatedNumberOfGridCells" in source
     assert '@Flag(name: "skip-full-run")' in source
     assert (

@@ -99,6 +99,19 @@ index 02af0fba..49828c66 100644
                      
                      // try message.debugGrid(grid: domain.grid, flipLatidude: false, shift180Longitude: false)
                      // fatalError()
+diff --git a/Sources/App/Ecmwf/EcmwfVariable.swift b/Sources/App/Ecmwf/EcmwfVariable.swift
+index c25fb0c7..fb17acd4 100644
+--- a/Sources/App/Ecmwf/EcmwfVariable.swift
++++ b/Sources/App/Ecmwf/EcmwfVariable.swift
+@@ -287,7 +287,7 @@ enum EcmwfVariable: String, CaseIterable, Hashable, EcmwfVariableDownloadable,
+         }
+     }
+ 
+-    static let pressure_levels = [1000, 925, 850, 700, 600, 500, 400, 300, 250, 200, 150, 100, 50]
++    static let pressure_levels = [1000, 925, 850, 700, 600, 500, 400, 300, 250, 200, 150, 100, 50, 10]
+ 
+     var omFileName: (file: String, level: Int) {
+         return (nameInFiles, 0)
 diff --git a/Sources/App/Ecmwf/EcmwfDomain.swift b/Sources/App/Ecmwf/EcmwfDomain.swift
 index cac52e19..af3aeb9f 100644
 --- a/Sources/App/Ecmwf/EcmwfDomain.swift

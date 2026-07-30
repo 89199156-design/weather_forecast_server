@@ -78,7 +78,6 @@ SHORT_RUN_UNAVAILABLE_RAW_VARIABLES = frozenset(
     {
         "temperature_2m_min",
         "temperature_2m_max",
-        *(f"{kind}_10hPa" for kind in PRESSURE_RAW_TYPES),
     }
 )
 # The upstream downloader deliberately omits the undefined forecast-hour-zero
@@ -187,4 +186,4 @@ assert len(SURFACE_RAW_VARIABLES) == 32
 assert len(PRESSURE_RAW_VARIABLES) == 84
 assert len(RAW_VARIABLES) == 116
 assert len(set(RAW_VARIABLES)) == len(RAW_VARIABLES)
-assert len(raw_variables_for_horizon(SHORT_RUN_MAX_FORECAST_HOUR)) == 108
+assert len(raw_variables_for_horizon(SHORT_RUN_MAX_FORECAST_HOUR)) == 114
