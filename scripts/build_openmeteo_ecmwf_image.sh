@@ -22,12 +22,10 @@ git -C "$UPSTREAM_DIR" diff --cached --quiet
 git -C "$UPSTREAM_DIR" apply --check "$PATCH_PATH"
 
 PATCH_SHA256="$(sha256sum "$PATCH_PATH" | awk '{print $1}')"
-SOURCE_ID="$({
-  printf '%s\n' "$ACTUAL_UPSTREAM"
-  printf '%s\n' "$PATCH_SHA256"
-  sha256sum "$DOCKERFILE" | awk '{print $1}'
-} | sha256sum | cut -c1-12)"
-IMAGE_TAG="${WEATHER_ECMWF_OPENMETEO_TAG:-ifs025-$SOURCE_ID}"
+git -C "$REPO_ROOT" diff --quiet -- "$DOCKERFILE" "$PATCH_PATH"
+git -C "$REPO_ROOT" diff --cached --quiet -- "$DOCKERFILE" "$PATCH_PATH"
+SOURCE_ID="$(git -C "$REPO_ROOT" rev-parse HEAD)"
+IMAGE_TAG="${WEATHER_ECMWF_OPENMETEO_TAG:-ifs025-${SOURCE_ID:0:12}}"
 
 docker build \
   --file "$DOCKERFILE" \

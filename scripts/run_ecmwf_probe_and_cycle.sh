@@ -39,30 +39,30 @@ else
 fi
 
 CURRENT_MARKER="$ECMWF_ROOT/groups/ecmwf/current/ready_for_processing.json"
-WEBP_MARKER="${WEATHER_OM_WEBP_DATA_ROOT:-/opt/1panel/apps/weather_om_webp/data}/current/ecmwf.json"
-API_PORT="${WEATHER_ECMWF_API_PORT:-18081}"
+WEBP_MARKER="${WEATHER_OM_WEBP_DATA_ROOT:-/opt/1panel/apps/weather_om_webp/data}/current/ecmwf_ifs025.json"
+API_PORT="${WEATHER_OM_API_PORT:-8088}"
 if [[ -f "$CURRENT_MARKER" && -f "$WEBP_MARKER" ]] && python3 - "$CURRENT_MARKER" "$WEBP_MARKER" "$RUN" <<'PY'
 import json
 import sys
 payload = json.load(open(sys.argv[1], encoding="utf-8"))
 webp = json.load(open(sys.argv[2], encoding="utf-8"))
+products = payload.get("products") or {}
 raise SystemExit(
     0 if payload.get("status") == "complete"
+    and payload.get("runtime_format") == "openmeteo-native-v1"
     and payload.get("latest_complete_run") == sys.argv[3]
-    and payload.get("latest_max_forecast_hour") == 360
-    and not payload.get("missing_required_variables")
-    and not payload.get("missing_optional_variables")
+    and {"ecmwf_ifs025", "ecmwf_ifs025_ensemble"} <= set(products)
     and webp.get("status") == "complete"
+    and webp.get("scope") == "ecmwf_ifs025"
     and webp.get("run") == sys.argv[3]
     and webp.get("contract_version") == 2
-    and webp.get("layer_count") == 18
+    and len(webp.get("layers") or []) == 18
     else 1
 )
 PY
 then
   if ! curl --fail --silent --show-error \
-    --header 'Host: api.open-meteo.com' \
-    "http://127.0.0.1:$API_PORT/v1/ecmwf?latitude=31.23&longitude=121.47&hourly=temperature_2m&forecast_days=1" \
+    "http://127.0.0.1:$API_PORT/v1/ecmwf?latitude=31.23&longitude=121.47&hourly=temperature_2m,precipitation_probability&forecast_days=1" \
     >/dev/null; then
     printf '%s\n' \
       "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [ECMWF_PROBE] API repair required run=$RUN"
@@ -73,4 +73,4 @@ then
   fi
 fi
 
-exec bash "$APP_DIR/scripts/run_ecmwf_om_production_cycle.sh" "$RUN"
+exec bash "$APP_DIR/scripts/run_ecmwf_native_production_cycle.sh" "$RUN"

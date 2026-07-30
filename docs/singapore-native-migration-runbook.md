@@ -12,7 +12,9 @@ for rollback.
 - API and WebP validation uses the real Singapore services and paths.
 - The previous Singapore API/WebP release targets are preserved until the new
   binaries pass health and parity gates.
-- No fixed free-disk threshold is used.
+- GFS requires 16 GiB free before starting and 6 GiB before each source-run
+  import by default. ECMWF uses its independent 10 GiB start and 6 GiB runtime
+  thresholds. These admission gates protect the host filesystem reserve.
 - No local process/directory completion polling is installed.
 - GFS, CAMS ECPDS, and CAMS ADS are three independent 1Panel tasks. Each task
   first identifies its current `job_records` row by the 1Panel log path and
@@ -31,11 +33,11 @@ for rollback.
 - GFS keeps five runs: three strict `f000...f005` histories followed by the
   previous and latest complete official `f000...f384` runs. No older `f006`
   value is mixed into the next run's `f000`.
-- ECMWF keeps five runs in its generated rolling time-series database: three
-  native `f000/f003/f006` histories followed by the previous complete 00Z/12Z
-  long run and the latest complete 00Z/12Z `f000...f360` run. All required variables
-  are generated for every role. The short runs supply preceding local-day
-  hours; NaN fallback is limited to the immediately previous complete run.
+- ECMWF publishes one native OM coverage containing five deterministic runs
+  (three short histories and two complete 00Z/12Z runs) plus five ensemble
+  precipitation runs. The ensemble importer writes only
+  `precipitation_probability` full-run OM, so probability support adds no
+  duplicate time-series database or always-on Swift API.
 - CAMS ECPDS main keeps three consecutive complete 12-hour runs through `f120`
   in the immutable `cams` namespace.
 - CAMS ADS keeps three consecutive daily 00Z runs through `f120` on its native
@@ -47,15 +49,15 @@ for rollback.
 
 ## 1. Prepare production artifacts
 
-Build the patched Swift image with a `native-*` source-identity tag. Do not tag
-or replace `latest`. Build the Rust `om-api` and `om-webp` from this repository
-and build the official
+Build the patched Swift producer images with source-identity tags. Do not tag
+or replace `latest`. Build the Rust `om-api` and `om-webp` from the same clean
+`om_weather_server` default-branch revision deployed in Shanghai, and build the official
 `libomfileformat.so` artifacts in Linux. Record SHA-256 for all artifacts.
 Build the decoder at the exact `om-file-format` revision pinned by the vendored
 Open-Meteo `Package.swift`; an unpinned repository HEAD is not acceptable. Keep
 the generated `libomfileformat.build.json` beside the shared library.
 
-`om-webp` uses the sibling `../om_api` path from this repository, so both
+`om-webp` uses the sibling `../om_api` path from `om_weather_server`, so both
 binaries must be built from the same checked-out Git revision. Record that
 single repository revision, the Swift image identity, decoder revision and the
 four resulting artifact hashes in the acceptance evidence; binaries built from
@@ -155,12 +157,14 @@ imports missing members of its latest three-run 12-hour window, validates all
 121 direct hourly frames for every main forecast variable, and atomically
 publishes only `coverages/cams`, `groups/cams`, and `current/cams`.
 
-The ECMWF cycle builds a fresh five-run rolling database oldest to newest. Its
-three short histories retain the native `f000/f003/f006` interpolation
-boundary, and both complete roles contain the full required variable catalog.
-The official hourly reader therefore fills preceding local-day hours before
-daily aggregation. Only the immediately previous complete role is retained as
-the current complete role's same-point, same-valid-time NaN fallback.
+The ECMWF cycle incrementally builds and validates an immutable native OM
+coverage. Three short and two complete deterministic runs preserve the official
+rolling/fallback behavior; a separate product in the same coverage contains
+only ensemble-derived `precipitation_probability`. After atomic publication,
+the Shanghai-compatible Rust WebP renderer runs and the single Rust API
+receives one `SIGHUP`. If OM is already published but WebP or reload was
+interrupted, the cycle reuses the immutable coverage instead of downloading or
+publishing it again.
 
 The ADS task derives its target only from the date of the locally published
 ECPDS main run. If `groups/cams_greenhouse/current` is older, it prepares the

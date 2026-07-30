@@ -39,16 +39,18 @@ The implementation order is:
 2. Configure Open-Meteo raw source ingestion with only the required
    region/variable boundary patches.
 3. Publish immutable native Open-Meteo coverages with atomic group markers.
-4. Build the Rust API and WebP renderer from this same repository and let their
-   native-runtime adapter consume those coverages.
+4. Build the Rust API and WebP renderer from the same `om_weather_server`
+   revision deployed in Shanghai and let its native-runtime adapter consume
+   those coverages.
 5. Deploy to Singapore and remove old satellite code/tasks there.
-6. Validate exactly 2,000 reproducible random regional points over every
-   published GFS/CAMS hour and three consecutive daily aggregation dates
-   against Shanghai with strict output equality.
+6. Validate exactly 2,000 reproducible regional points (1,000 common grid
+   points and 1,000 off-grid points) over all GFS/ECMWF/CAMS hourly and daily
+   values against Shanghai with strict, sequential stop-on-first-difference
+   equality.
 
 ## Native OM Production
 
-The GFS/CAMS OM cycle scripts are producer-only: they download original data,
+The GFS/ECMWF/CAMS OM cycle scripts are producer-only: they download original data,
 let the vendored Open-Meteo Swift importer write native `.om` runtime data,
 validate it, and atomically publish an immutable coverage. The scheduled entry
 uses `run_native_model_pipeline.sh` to continue synchronously into Rust WebP
@@ -125,15 +127,16 @@ staging/
 The group ready marker is written last. Consumers must reload only after seeing
 a new complete marker. Two immutable GFS rollback coverages and three CAMS
 coverages are retained by default; this is separate from the model source-run
-history inside each coverage. The producer does not impose a fixed free-space
-threshold. Bounded retention and post-import cleanup control disk use.
+history inside each coverage. Bounded retention and post-import cleanup control
+steady-state disk use. GFS also requires 16 GiB free before starting a cycle and
+6 GiB before each source-run import by default, so an abnormal or cold rebuild
+stops before consuming the filesystem's emergency reserve.
 
 The Singapore configuration limits Swift importer containers to 1.5 CPUs on
 the current 2-vCPU host, with reduced CPU shares and low block-I/O weight so the
 client-facing Rust API retains CPU and I/O headroom while a model cycle is
-running. These controls are independent of disk capacity and do not reintroduce
-a free-space threshold. Singapore sets Rust WebP to one worker and publishes
-only after the complete immutable release is ready. Both limits remain
+running. Singapore sets Rust WebP to one worker and publishes only after the
+complete immutable release is ready. Resource and disk-admission limits remain
 configurable if the host is upgraded.
 
 ### No local completion polling
@@ -182,19 +185,20 @@ contract contains the actual cropped `nx`, `ny`, `lat_min`, `lon_min`, `dx`,
 vendored Swift domains. Rust consumers must use this contract; cropped runtime
 dimensions must not be interpreted as the original global grid dimensions.
 
-The Shanghai Rust API/WebP implementation is copied into `om_api` and
-`om_webp` in this repository. Its native-runtime backend preserves the recorded
-regional grid, source-run and time indexes while reading the Swift-produced OM
-files. Weather formulas remain baseline-locked; storage adaptation never
-compensates for a producer value error.
+The API and WebP binaries are built from the same tested
+`om_weather_server` default-branch revision used by Shanghai. Its
+native-runtime backend preserves the recorded regional grid, product-specific
+source-run and time indexes while reading the Swift-produced OM files. Weather
+formulas remain baseline-locked; storage adaptation never compensates for a
+producer value error.
 
-Rust WebP remains a fixed 121-frame product for both GFS and CAMS: one file per
+Rust WebP remains a fixed 121-frame product for GFS, ECMWF and CAMS: one file per
 hour from the latest run at 0h through 120h. The longer 408h GFS and 144h CAMS
 retained windows belong to OM/API and do not increase WebP file counts.
 
 ## ECMWF IFS 0.25° Replica
 
-ECMWF is isolated from the already validated GFS/CAMS engine. Its image uses
+The ECMWF producer is isolated from the already validated GFS/CAMS imports. Its image uses
 the exact Open-Meteo commit and container digests recorded in
 [`vendor/UPSTREAM_LOCKS.md`](vendor/UPSTREAM_LOCKS.md), then applies only the
 auditable regional storage patch. The native source is ECMWF Open Data; this
@@ -204,17 +208,19 @@ The production sequence is:
 
 ```text
 ECMWF f360 index complete
-  -> seed 72 hours of predecessor cycles for upstream hour-0 fallback
-  -> import the target 00Z run through f360
-  -> atomically publish the regional Open-Meteo time-series database
-  -> start/reload the isolated official Swift /v1/ecmwf service
-  -> render and atomically publish 121 hourly WebP frames
+  -> import three short and two complete deterministic source runs
+  -> import five ensemble precipitation source runs
+  -> generate native precipitation_probability OM
+  -> atomically publish one regional native OM coverage
+  -> render and atomically publish 121 WebP frames with Rust
+  -> reload the unified Rust GFS/ECMWF/CAMS API once
 ```
 
 Storage is the native 0.25° lattice cropped to `68..142E, -2..60N`; the public
 product is limited to `70..140E, 0..58N`. The two-degree halo preserves normal
 Open-Meteo spatial interpolation and land/elevation selection at the requested
-boundary. The API retains the complete 361-hour forecast and 15 daily frames.
+boundary. The API retains the complete 361-hour deterministic forecast and
+the corresponding ensemble precipitation-probability horizon.
 WebP interpolates the native 0.25° values onto the shared `597x495` product
 grid (`dx=0.117188°`, `dy=0.117149°`) and uses the same surface encodings as
 GFS. ECMWF publishes 100 m wind and surface temperature, but excludes the
@@ -225,9 +231,10 @@ The 1Panel row is `weather_ecmwf_probe_cycle`. A newly installed row is
 disabled, existing enable/disable state is preserved, and incomplete probes do
 not start a download. Manual production is rejected unless the current
 invocation is proven by its 1Panel log record. Validation captures one frozen
-official 500-point oracle for a new common run, compares Singapore one point at
-a time over all hourly and daily values with stop-on-first-difference, then
-replays the identical oracle against Shanghai.
+2,000-point comparison requires a normalized marker-identity report proving
+that both servers expose the same source runs and horizons. It then compares
+one point at a time over every hourly and daily value and stops at the first
+difference; a point is never advanced until GFS, ECMWF and CAMS all pass.
 
 After a coverage is generated, validate it without replacing the production
 API:

@@ -29,6 +29,7 @@ PRODUCER_ROOT="${WEATHER_OM_PRODUCER_ROOT:-$APP_DIR/data/om_producer}"
 WEBP_BIN="${WEATHER_OM_WEBP_BIN:-/opt/1panel/apps/weather_om_webp/bin/om-webp}"
 WEBP_OUTPUT_ROOT="${WEATHER_OM_WEBP_DATA_ROOT:-/opt/1panel/apps/weather_om_webp/data}"
 WEBP_PUBLIC_ROOT="${WEATHER_OM_WEBP_PUBLIC_ROOT:-/opt/1panel/apps/weather/data}"
+WEBP_STRICT_DATA_ROOT="${WEATHER_OM_STRICT_DATA_ROOT:-/srv/weather-data}"
 WEBP_WORKERS="${WEATHER_OM_WEBP_WORKERS:-1}"
 WEBP_NOFILE_LIMIT="${WEATHER_OM_WEBP_NOFILE_LIMIT:-65536}"
 OMFILE_LIB="${WEATHER_OMFILE_LIB:-/opt/1panel/apps/weather_om_api/native/libomfileformat.so}"
@@ -90,6 +91,7 @@ PY
     --scope "$SCOPE" \
     --data-root "$PRODUCER_ROOT" \
     --output-root "$WEBP_OUTPUT_ROOT" \
+    --strict-data-root "$WEBP_STRICT_DATA_ROOT" \
     --public-root "$WEBP_PUBLIC_ROOT" \
     --decoder-lib "$OMFILE_LIB" \
     --workers "$WEBP_WORKERS"

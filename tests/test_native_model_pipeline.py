@@ -41,6 +41,8 @@ class NativeModelPipelineTests(unittest.TestCase):
         self.assertIn('--public-root "$WEBP_PUBLIC_ROOT"', source)
         self.assertIn('--workers "$WEBP_WORKERS"', source)
         self.assertIn('WEATHER_OM_WEBP_NOFILE_LIMIT:-65536', source)
+        self.assertIn('WEATHER_OM_STRICT_DATA_ROOT:-/srv/weather-data', source)
+        self.assertIn('--strict-data-root "$WEBP_STRICT_DATA_ROOT"', source)
         self.assertNotIn("systemctl reload", source)
         self.assertIn("systemctl reload", reload_helper)
         self.assertIn("--show-cursor", reload_helper)

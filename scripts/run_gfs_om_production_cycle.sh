@@ -28,12 +28,35 @@ HISTORY_MAX_FORECAST_HOUR="${WEATHER_GFS_REQUIRED_HISTORY_FORECAST_HOUR:-5}"
 LOCAL_UTC_OFFSET_HOURS="${WEATHER_GFS_LOCAL_UTC_OFFSET_HOURS:-8}"
 MIN_PUBLIC_HOURS="${WEATHER_GFS_MIN_PUBLIC_HOURS:-300}"
 KEEP_COVERAGES="${WEATHER_OM_GFS_KEEP_COVERAGES:-1}"
+MINIMUM_START_FREE_BYTES="${WEATHER_GFS_MINIMUM_START_FREE_BYTES:-17179869184}"
+MINIMUM_RUNTIME_FREE_BYTES="${WEATHER_GFS_MINIMUM_RUNTIME_FREE_BYTES:-6442450944}"
 GFS_UPPER_LEVELS="${WEATHER_GFS_REQUIRED_UPPER_LEVELS:-1000,975,950,925,900,850,800,750,700,650,600,550,500,450,400,350,300,250,200,150,100,50}"
 GFS_UPPER_LEVEL_VARIABLES="${WEATHER_GFS_UPPER_LEVEL_VARIABLES:-temperature,wind_u_component,wind_v_component,geopotential_height,cloud_cover,relative_humidity,vertical_velocity}"
 GFS_STORAGE_LEFT_LON="${WEATHER_GFS_STORAGE_LEFT_LON:-69}"
 GFS_STORAGE_RIGHT_LON="${WEATHER_GFS_STORAGE_RIGHT_LON:-141}"
 GFS_STORAGE_BOTTOM_LAT="${WEATHER_GFS_STORAGE_BOTTOM_LAT:--1}"
 GFS_STORAGE_TOP_LAT="${WEATHER_GFS_STORAGE_TOP_LAT:-59}"
+
+available_bytes() {
+  df -P -B1 -- "$PRODUCER_ROOT" | awk 'NR == 2 { print $4 }'
+}
+
+require_free_bytes() {
+  local required="$1"
+  local stage="$2"
+  local available
+  if [[ ! "$required" =~ ^[0-9]+$ ]]; then
+    printf '%s\n' \
+      "invalid GFS free-space requirement stage=$stage required=$required" >&2
+    exit 2
+  fi
+  available="$(available_bytes)"
+  if [[ ! "$available" =~ ^[0-9]+$ || "$available" -lt "$required" ]]; then
+    printf '%s\n' \
+      "GFS disk preflight failed stage=$stage available=$available required=$required" >&2
+    exit 1
+  fi
+}
 
 # The producer keeps a one-degree storage halo around the public 70-140E,
 # 0-58N service area. Do not inherit older generic region/pressure settings:
@@ -75,6 +98,7 @@ mkdir -p "$LOG_DIR" "$PRODUCER_ROOT/staging"
       --producer-root "$PRODUCER_ROOT" \
       --scope gfs
   fi
+  require_free_bytes "$MINIMUM_START_FREE_BYTES" start
 
   cd "$APP_DIR"
   read -r SOURCE_RUNS PUBLIC_START_UTC PUBLIC_END_UTC PUBLIC_HOURS LOCAL_DAY_START_UTC < <(
@@ -174,6 +198,30 @@ except (OSError, ValueError, json.JSONDecodeError) as exc:
     raise SystemExit(1)
 PY
   }
+  validate_staged_gfs_probabilities() {
+    PYTHONPATH="$APP_DIR/scripts${PYTHONPATH:+:$PYTHONPATH}" python3 - \
+      "$STAGING_DIR" \
+      "$RUN" \
+      "$GFS_STORAGE_LEFT_LON" \
+      "$GFS_STORAGE_RIGHT_LON" \
+      "$GFS_STORAGE_BOTTOM_LAT" \
+      "$GFS_STORAGE_TOP_LAT" <<'PY'
+from pathlib import Path
+import sys
+
+from native_grid_contract import gfs_domain_grids
+from publish_native_om_coverage import (
+    GFS_PROBABILITY_DOMAINS,
+    validate_probability_run,
+)
+
+staging = Path(sys.argv[1])
+run = sys.argv[2]
+grids = gfs_domain_grids(*(float(value) for value in sys.argv[3:7]))
+for domain, horizon in GFS_PROBABILITY_DOMAINS.items():
+    validate_probability_run(staging, domain, run, horizon, grids[domain])
+PY
+  }
   restore_latest_metadata() {
     local source_run="$1"
     local relative="${source_run:0:4}/${source_run:4:2}/${source_run:6:2}/${source_run:8:2}00Z"
@@ -237,6 +285,7 @@ PY
       fi
       echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_GFS_OM] repair invalid role=$SOURCE_ROLE run=$SOURCE_RUN horizon=$SOURCE_MAX_FORECAST_HOUR"
     fi
+    require_free_bytes "$MINIMUM_RUNTIME_FREE_BYTES" "$SOURCE_RUN"
     echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_GFS_OM] download role=$SOURCE_ROLE run=$SOURCE_RUN horizon=$SOURCE_MAX_FORECAST_HOUR"
     if is_truthy "$PARTIAL_REPAIR"; then
       preserve_run_metadata "$SOURCE_RUN"
@@ -261,6 +310,7 @@ PY
   if is_truthy "$REUSE_LATEST"; then
     echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_GFS_OM] reuse validated latest run=$RUN horizon=$LATEST_MAX_FORECAST_HOUR"
   else
+    require_free_bytes "$MINIMUM_RUNTIME_FREE_BYTES" "$RUN"
     echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_GFS_OM] latest run=$RUN horizon=$LATEST_MAX_FORECAST_HOUR"
     if is_truthy "$PARTIAL_REPAIR"; then
       preserve_run_metadata "$RUN"
@@ -274,6 +324,13 @@ PY
   fi
 
   restore_latest_metadata "$RUN"
+  if validate_staged_gfs_probabilities; then
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_GFS_OM] reuse validated probability run=$RUN"
+  else
+    require_free_bytes "$MINIMUM_RUNTIME_FREE_BYTES" probability
+    WEATHER_GFS_RUN="$RUN" bash scripts/download_gfs_probability_data.sh "$RUN"
+    validate_staged_gfs_probabilities
+  fi
   python3 scripts/validate_openmeteo_latest_run.py \
     --data-dir "$STAGING_DIR" \
     --run "$RUN" \
@@ -301,6 +358,10 @@ PY
     --data-dir "$STAGING_DIR" \
     --domains ncep_gfs013,ncep_gfs025 \
     --retained-runs "$SOURCE_RUNS"
+  python3 scripts/prune_native_om_runs.py \
+    --data-dir "$STAGING_DIR" \
+    --domains ncep_gefs025,ncep_gefs05 \
+    --retained-runs "$RUN"
 
   COVERAGE_REVISION_ARGS=()
   if [[ -n "$COVERAGE_REVISION" ]]; then

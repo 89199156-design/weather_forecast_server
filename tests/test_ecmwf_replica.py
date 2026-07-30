@@ -434,6 +434,10 @@ def test_regional_patch_applies_to_exact_locked_upstream() -> None:
     assert "estimatedNumberOfGridCells" in source
     assert '@Flag(name: "skip-full-run")' in source
     assert (
+        "[.ifs025, .ifs025_ensemble, .ifs025_ensemble_mean].contains(self)"
+        in source
+    )
+    assert (
         '             let shortName = message.get(attribute: "shortName")!\n'
         "+            var grib2d = GribArray2D("
         "nx: domain.sourceGrid.nx, ny: domain.sourceGrid.ny)\n"

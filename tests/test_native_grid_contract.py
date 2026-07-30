@@ -17,10 +17,15 @@ class NativeGridContractTests(unittest.TestCase):
 
         self.assertEqual((grids["ncep_gfs013"]["nx"], grids["ncep_gfs013"]["ny"]), (597, 495))
         self.assertEqual((grids["ncep_gfs025"]["nx"], grids["ncep_gfs025"]["ny"]), (281, 233))
+        self.assertEqual((grids["ncep_gefs025"]["nx"], grids["ncep_gefs025"]["ny"]), (281, 233))
+        self.assertEqual((grids["ncep_gefs05"]["nx"], grids["ncep_gefs05"]["ny"]), (141, 117))
         self.assertEqual(grids["ncep_gfs013"]["halo_cells"], 0)
         self.assertEqual(grids["ncep_gfs025"]["halo_cells"], 0)
         self.assertEqual(grids["ncep_gfs013"]["dt_seconds"], 3600)
         self.assertEqual(grids["ncep_gfs013"]["om_file_length"], 481)
+        self.assertEqual(grids["ncep_gefs025"]["dt_seconds"], 10800)
+        self.assertEqual(grids["ncep_gefs025"]["om_file_length"], 481)
+        self.assertEqual(grids["ncep_gefs05"]["om_file_length"], 313)
 
     def test_default_cams_grid_matches_vendored_swift_regional_slice(self):
         grid = cams_domain_grids()["cams_global"]

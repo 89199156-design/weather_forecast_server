@@ -1,4 +1,4 @@
-FROM ghcr.io/open-meteo/docker-container-build:latest AS build
+FROM ghcr.io/open-meteo/docker-container-build@sha256:e0ef0354d44c4a9330eabe68be5b29cf303ca654444db4ae76f2b601ec161e6f AS build
 
 WORKDIR /build
 COPY vendor/open-meteo/Package.swift /build/open-meteo/Package.swift
@@ -11,7 +11,7 @@ COPY vendor/open-meteo /build/open-meteo
 RUN ENABLE_PARQUET=TRUE swift package resolve
 RUN ENABLE_PARQUET=TRUE MARCH_SKYLAKE=TRUE swift build -c release
 
-FROM ghcr.io/open-meteo/docker-container-run:latest
+FROM ghcr.io/open-meteo/docker-container-run@sha256:7e6ee634cc774abdcf1875dc632229d51368a2b32e4714fed880c41bd7155aff
 
 ARG SWIFT_SOURCE_ID=unknown
 LABEL io.weather-forecast.swift-source-id=$SWIFT_SOURCE_ID

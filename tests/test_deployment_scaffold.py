@@ -24,7 +24,18 @@ def test_root_dockerfile_builds_unmodified_vendored_openmeteo():
     dockerfile = ROOT / "docker" / "openmeteo-engine.Dockerfile"
     source = dockerfile.read_text(encoding="utf-8")
 
-    assert "FROM ghcr.io/open-meteo/docker-container-build:latest AS build" in source
+    assert (
+        "FROM ghcr.io/open-meteo/docker-container-build@sha256:"
+        "e0ef0354d44c4a9330eabe68be5b29cf303ca654444db4ae76f2b601ec161e6f AS build"
+        in source
+    )
+    assert (
+        "FROM ghcr.io/open-meteo/docker-container-run@sha256:"
+        "7e6ee634cc774abdcf1875dc632229d51368a2b32e4714fed880c41bd7155aff"
+        in source
+    )
+    assert "docker-container-build:latest" not in source
+    assert "docker-container-run:latest" not in source
     assert "COPY vendor/openmeteo-sdk /build/openmeteo-sdk" not in source
     assert "COPY vendor/open-meteo/Package.swift /build/open-meteo/Package.swift" in source
     assert "COPY vendor/open-meteo/Package.*" not in source
@@ -423,6 +434,14 @@ def test_singapore_config_uses_shanghai_22_level_pressure_contract():
     assert "WEATHER_GFS_REQUIRED_SOURCE_RUN_COUNT=5" in config
     assert "WEATHER_GFS_REQUIRED_FULL_RUN_COUNT=2" in config
     assert "WEATHER_OM_GFS_SAME_RUN_COVERAGE_REVISION=three-short-two-full-v1" in config
+    assert "WEATHER_GFS_MINIMUM_START_FREE_BYTES=17179869184" in config
+    assert "WEATHER_GFS_MINIMUM_RUNTIME_FREE_BYTES=6442450944" in config
+    assert "WEATHER_ECMWF_MINIMUM_START_FREE_BYTES=10737418240" in config
+    assert "WEATHER_ECMWF_MINIMUM_RUNTIME_FREE_BYTES=6442450944" in config
+    assert "WEATHER_SYSTEM_MINIMUM_FREE_BYTES=10737418240" in config
+    assert "WEATHER_ECMWF_KEEP_NATIVE_COVERAGES=2" in config
+    assert "WEATHER_ECMWF_API_PORT=" not in config
+    assert "WEATHER_OPENMETEO_ECMWF_API_URL=" not in config
     assert "WEATHER_GFS_UPPER_LEVELS=1000,975,950,925,900,850,800,750,700,650,600,550,500,450,400,350,300,250,200,150,100,50" in config
     assert (
         "WEATHER_GFS_UPPER_LEVEL_VARIABLES="

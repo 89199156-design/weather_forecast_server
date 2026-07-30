@@ -50,6 +50,12 @@ struct GfsDownload: AsyncCommand {
 
         @Flag(name: "download-from-aws", help: "Download GRIB files from AWS")
         var downloadFromAws: Bool
+
+        @Flag(
+            name: "probability-full-run-only",
+            help: "For an ensemble domain, export only precipitation_probability to data_run"
+        )
+        var probabilityFullRunOnly: Bool
     }
 
     var help: String {
@@ -107,6 +113,28 @@ struct GfsDownload: AsyncCommand {
             let handles = try await downloadGfs(application: context.application, domain: domain, run: run, variables: variables, secondFlush: signature.secondFlush, maxForecastHour: signature.maxForecastHour, skipMissing: signature.skipMissing, downloadFromAws: signature.downloadFromAws, uploadS3Bucket: signature.uploadS3Bucket)
 
             let nConcurrent = signature.concurrent ?? 4
+            if signature.probabilityFullRunOnly {
+                guard domain.countEnsembleMember > 1 else {
+                    fatalError("probability-full-run-only requires an ensemble GFS domain")
+                }
+                let probabilityHandles = handles.filter {
+                    $0.variable.omFileName.file == "precipitation_probability"
+                }
+                guard !probabilityHandles.isEmpty else {
+                    fatalError("ensemble download produced no precipitation_probability handles")
+                }
+                try await GenericVariableHandle.generateFullRunData(
+                    logger: logger,
+                    domain: domain,
+                    run: run,
+                    handles: probabilityHandles,
+                    concurrent: nConcurrent,
+                    compression: .pfor_delta2d_int16,
+                    skipMeta: false
+                )
+                logger.info("Finished probability-only full-run export in \(start.timeElapsedPretty())")
+                return
+            }
             try await GenericVariableHandle.convert(application: context.application, domain: domain, createNetcdf: signature.createNetcdf, run: run, handles: handles, concurrent: nConcurrent, writeUpdateJson: true, uploadS3Bucket: signature.uploadS3Bucket, uploadS3OnlyProbabilities: signature.uploadS3OnlyProbabilities, generateFullRun: generateFullRun)
         case .gfswave025, .gfswave025_ens, .gfswave016:
             variables = GfsWaveVariable.allCases
@@ -637,7 +665,7 @@ private enum GfsRegionalDownload {
                 haloCells: 0
             )
             return Slice(fullNx: 3072, fullNy: 1536, x0: slice.x0, y0: slice.y0, nx: slice.nx, ny: slice.ny)
-        case .gfs025:
+        case .gfs025, .gfs025_ens:
             let slice = WeatherForecastServerSourceConfig.regularGridSlice(
                 fullNx: 1440,
                 fullNy: 721,
@@ -649,6 +677,18 @@ private enum GfsRegionalDownload {
                 haloCells: 0
             )
             return Slice(fullNx: 1440, fullNy: 721, x0: slice.x0, y0: slice.y0, nx: slice.nx, ny: slice.ny)
+        case .gfs05_ens:
+            let slice = WeatherForecastServerSourceConfig.regularGridSlice(
+                fullNx: 720,
+                fullNy: 361,
+                latMin: -90,
+                lonMin: -180,
+                dx: 0.5,
+                dy: 0.5,
+                region: WeatherForecastServerSourceConfig.region,
+                haloCells: 0
+            )
+            return Slice(fullNx: 720, fullNy: 361, x0: slice.x0, y0: slice.y0, nx: slice.nx, ny: slice.ny)
         default:
             return nil
         }

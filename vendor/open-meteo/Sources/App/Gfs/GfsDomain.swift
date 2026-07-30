@@ -415,7 +415,21 @@ enum GfsDomain: String, GenericDomain, CaseIterable {
     var grid: any Gridable {
         switch self {
         case .gfs05_ens ,.gefs05_ensemble_mean:
-            return RegularGrid(nx: 720, ny: 361, latMin: -90, lonMin: -180, dx: 0.5, dy: 0.5)
+            let base = RegularGrid(nx: 720, ny: 361, latMin: -90, lonMin: -180, dx: 0.5, dy: 0.5)
+            if self == .gfs05_ens || self == .gefs05_ensemble_mean {
+                let slice = WeatherForecastServerSourceConfig.regularGridSlice(
+                    fullNx: 720,
+                    fullNy: 361,
+                    latMin: -90,
+                    lonMin: -180,
+                    dx: 0.5,
+                    dy: 0.5,
+                    region: WeatherForecastServerSourceConfig.region,
+                    haloCells: 0
+                )
+                return RegionalRegularGrid(base: base, x0: slice.x0, y0: slice.y0, nx: slice.nx, ny: slice.ny)
+            }
+            return base
         case .gfs013:
             let base = RegularGrid(nx: 3072, ny: 1536, latMin: -0.11714935 * (1536 - 1) / 2, lonMin: -180, dx: 360 / 3072, dy: 0.11714935)
             let slice = WeatherForecastServerSourceConfig.regularGridSlice(
@@ -430,7 +444,7 @@ enum GfsDomain: String, GenericDomain, CaseIterable {
             )
             return RegionalRegularGrid(base: base, x0: slice.x0, y0: slice.y0, nx: slice.nx, ny: slice.ny)
         case .gfs025_ens, .gfs025, .gfswave025, .gfswave025_ens, .gefs025_ensemble_mean, .gefswave025_ensemble_mean:
-            if self == .gfs025 {
+            if self == .gfs025 || self == .gfs025_ens || self == .gefs025_ensemble_mean {
                 let base = RegularGrid(nx: 1440, ny: 721, latMin: -90, lonMin: -180, dx: 0.25, dy: 0.25)
                 let slice = WeatherForecastServerSourceConfig.regularGridSlice(
                     fullNx: 1440,

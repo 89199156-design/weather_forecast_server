@@ -105,6 +105,40 @@ def make_staging(output_root: Path, run: str) -> Path:
                 ),
                 encoding="utf-8",
             )
+    probability_schedules = {
+        "ncep_gefs025": list(range(3, 241, 3)),
+        "ncep_gefs05": [*range(3, 240, 3), *range(240, 385, 6)],
+    }
+    latest_base = datetime.strptime(run, "%Y%m%d%H").replace(tzinfo=timezone.utc)
+    for domain, forecast_hours in probability_schedules.items():
+        run_dir = (
+            staging
+            / "data_run"
+            / domain
+            / latest_base.strftime("%Y/%m/%d/%H00Z")
+        )
+        run_dir.mkdir(parents=True, exist_ok=True)
+        write_fake_om(
+            run_dir / "precipitation_probability.om",
+            (233 if domain == "ncep_gefs025" else 117,
+             281 if domain == "ncep_gefs025" else 141,
+             len(forecast_hours)),
+        )
+        (run_dir / "meta.json").write_text(
+            json.dumps(
+                {
+                    "reference_time": latest_base.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "valid_times": [
+                        (latest_base + timedelta(hours=hour)).strftime(
+                            "%Y-%m-%dT%H:%MZ"
+                        )
+                        for hour in forecast_hours
+                    ],
+                    "variables": ["precipitation_probability"],
+                }
+            ),
+            encoding="utf-8",
+        )
     return staging
 
 
@@ -734,6 +768,23 @@ class NativeOmProducerTests(unittest.TestCase):
         self.assertIn('restore_latest_metadata "$RUN"', producer)
         self.assertIn("reuse validated latest run=$RUN", producer)
         self.assertIn('KEEP_COVERAGES="${WEATHER_OM_GFS_KEEP_COVERAGES:-1}"', producer)
+        self.assertIn(
+            'MINIMUM_START_FREE_BYTES="${WEATHER_GFS_MINIMUM_START_FREE_BYTES:-17179869184}"',
+            producer,
+        )
+        self.assertIn(
+            'MINIMUM_RUNTIME_FREE_BYTES="${WEATHER_GFS_MINIMUM_RUNTIME_FREE_BYTES:-6442450944}"',
+            producer,
+        )
+        self.assertIn(
+            'require_free_bytes "$MINIMUM_START_FREE_BYTES" start',
+            producer,
+        )
+        self.assertEqual(
+            producer.count('require_free_bytes "$MINIMUM_RUNTIME_FREE_BYTES"'),
+            3,
+        )
+        self.assertIn("GFS disk preflight failed", producer)
         self.assertIn('RESUME_STAGING="${WEATHER_OM_GFS_RESUME_STAGING:-}"', producer)
         self.assertIn('cp -al -- "$RESUME_SOURCE" "$STAGING_DIR"', producer)
         self.assertIn('"$(dirname -- "$RESUME_SOURCE")" != "$RESUME_ROOT"', producer)

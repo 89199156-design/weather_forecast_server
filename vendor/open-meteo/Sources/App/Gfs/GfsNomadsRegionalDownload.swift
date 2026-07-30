@@ -107,6 +107,15 @@ private enum GfsNomadsRegionalDownload {
     }
 
     static func filterEndpoint(filename: String) throws -> String {
+        if filename.contains(".pgrb2s.0p25.") {
+            return "https://nomads.ncep.noaa.gov/cgi-bin/filter_gefs_atmos_0p25s.pl"
+        }
+        if filename.contains(".pgrb2a.0p50.") {
+            return "https://nomads.ncep.noaa.gov/cgi-bin/filter_gefs_atmos_0p50a.pl"
+        }
+        if filename.contains(".pgrb2b.0p50.") {
+            return "https://nomads.ncep.noaa.gov/cgi-bin/filter_gefs_atmos_0p50b.pl"
+        }
         if filename.contains(".sfluxgrbf") {
             return "https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_sflux.pl"
         }
@@ -128,13 +137,18 @@ private enum GfsNomadsRegionalDownload {
             throw GfsNomadsRegionalDownloadError.invalidSourceUrl(sourceUrl)
         }
         let path = source.path.split(separator: "/").map(String.init)
-        guard let gfsIndex = path.firstIndex(where: { $0.hasPrefix("gfs.") }),
-              path.indices.contains(gfsIndex + 3),
-              path[gfsIndex + 2] == "atmos" else {
+        guard let datasetIndex = path.firstIndex(where: {
+                  $0.hasPrefix("gfs.") || $0.hasPrefix("gefs.")
+              }),
+              path.indices.contains(datasetIndex + 3),
+              path[datasetIndex + 2] == "atmos" else {
             throw GfsNomadsRegionalDownloadError.invalidSourceUrl(sourceUrl)
         }
-        let objectPath = path[gfsIndex...].joined(separator: "/")
-        return "https://noaa-gfs-bdp-pds.s3.amazonaws.com/\(objectPath).idx"
+        let objectPath = path[datasetIndex...].joined(separator: "/")
+        let bucket = path[datasetIndex].hasPrefix("gefs.")
+            ? "https://noaa-gefs-pds.s3.amazonaws.com/"
+            : "https://noaa-gfs-bdp-pds.s3.amazonaws.com/"
+        return "\(bucket)\(objectPath).idx"
     }
 
     static func sourceDataUrl(inventoryUrl: String) throws -> String {
@@ -149,9 +163,11 @@ private enum GfsNomadsRegionalDownload {
             throw GfsNomadsRegionalDownloadError.invalidSourceUrl(sourceUrl)
         }
         let path = source.path.split(separator: "/").map(String.init)
-        guard let gfsIndex = path.firstIndex(where: { $0.hasPrefix("gfs.") }),
-              path.indices.contains(gfsIndex + 2),
-              path[gfsIndex + 2] == "atmos",
+        guard let datasetIndex = path.firstIndex(where: {
+                  $0.hasPrefix("gfs.") || $0.hasPrefix("gefs.")
+              }),
+              path.indices.contains(datasetIndex + 2),
+              path[datasetIndex + 2] == "atmos",
               let filename = path.last else {
             throw GfsNomadsRegionalDownloadError.invalidSourceUrl(sourceUrl)
         }
@@ -165,7 +181,10 @@ private enum GfsNomadsRegionalDownload {
         var components = URLComponents(string: try filterEndpoint(filename: filename))!
         var items = [
             URLQueryItem(name: "file", value: filename),
-            URLQueryItem(name: "dir", value: "/\(path[gfsIndex])/\(path[gfsIndex + 1])/atmos"),
+            URLQueryItem(
+                name: "dir",
+                value: "/" + path[datasetIndex..<(path.count - 1)].joined(separator: "/")
+            ),
             URLQueryItem(name: "subregion", value: ""),
             URLQueryItem(name: "leftlon", value: String(region.leftLon)),
             URLQueryItem(name: "rightlon", value: String(region.rightLon)),

@@ -20,6 +20,10 @@ from om_v3_metadata import read_array_dimensions
 
 UTC = timezone.utc
 GFS_DOMAINS = ("ncep_gfs013", "ncep_gfs025")
+GFS_PROBABILITY_DOMAINS = {
+    "ncep_gefs025": 240,
+    "ncep_gefs05": 384,
+}
 DEFAULT_GFS013_REQUIRED = "temperature_2m,surface_temperature,cloud_cover,cloud_cover_low,cloud_cover_mid,cloud_cover_high,relative_humidity_2m,precipitation,wind_v_component_10m,wind_u_component_10m,snow_depth,showers,snowfall_water_equivalent,uv_index,uv_index_clear_sky,boundary_layer_height,shortwave_radiation,latent_heat_flux,sensible_heat_flux,diffuse_radiation,total_column_integrated_water_vapour,soil_temperature_0_to_10cm,soil_temperature_10_to_40cm,soil_temperature_40_to_100cm,soil_temperature_100_to_200cm,soil_moisture_0_to_10cm,soil_moisture_10_to_40cm,soil_moisture_40_to_100cm,soil_moisture_100_to_200cm"
 DEFAULT_GFS025_REQUIRED = "pressure_msl,categorical_freezing_rain,temperature_80m,temperature_100m,wind_v_component_80m,wind_u_component_80m,wind_v_component_100m,wind_u_component_100m,wind_gusts_10m,freezing_level_height,cape,lifted_index,convective_inhibition,visibility"
 DEFAULT_PRESSURE_LEVELS = "1000,975,950,925,900,850,800,750,700,650,600,550,500,450,400,350,300,250,200,150,100,50"
@@ -305,6 +309,44 @@ def validate_gfs_retained_run(
         )
 
 
+def probability_forecast_hours(domain: str, horizon: int) -> list[int]:
+    if domain == "ncep_gefs025":
+        return list(range(3, horizon + 1, 3))
+    if domain == "ncep_gefs05":
+        return [*range(3, min(240, horizon), 3), *range(240, horizon + 1, 6)]
+    raise ValueError(f"unsupported GFS probability domain: {domain}")
+
+
+def validate_probability_run(
+    staging: Path,
+    domain: str,
+    run: str,
+    horizon: int,
+    grid: dict[str, Any],
+) -> None:
+    expected_hours = probability_forecast_hours(domain, horizon)
+    payload = validate_run_metadata(
+        staging,
+        domain,
+        run,
+        expected_hours,
+        len(expected_hours),
+    )
+    variables = set(payload.get("variables") or [])
+    if variables != {"precipitation_probability"}:
+        raise ValueError(
+            f"{domain} run {run} must contain only precipitation_probability"
+        )
+    dimensions = read_array_dimensions(
+        run_directory(staging, domain, run) / "precipitation_probability.om"
+    )
+    expected_dimensions = (grid["ny"], grid["nx"], len(expected_hours))
+    if dimensions != expected_dimensions:
+        raise ValueError(
+            f"{domain} probability dimensions={dimensions}, expected={expected_dimensions}"
+        )
+
+
 def directory_stats(root: Path) -> tuple[int, int]:
     files = 0
     bytes_total = 0
@@ -521,7 +563,11 @@ def retain_coverages_before_reload(
             shutil.rmtree(resolved)
 
 
-def product_contract(coverage_id: str, domain_grids: dict[str, Any]) -> dict[str, Any]:
+def product_contract(
+    coverage_id: str,
+    domain_grids: dict[str, Any],
+    latest_run: str,
+) -> dict[str, Any]:
     return {
         "gfs013_surface": {
             "coverage_id": coverage_id,
@@ -537,6 +583,24 @@ def product_contract(coverage_id: str, domain_grids: dict[str, Any]) -> dict[str
             "coverage_id": coverage_id,
             "runtime_domain": "ncep_gfs025",
             "grid": domain_grids["ncep_gfs025"],
+        },
+        "ncep_gefs025": {
+            "coverage_id": coverage_id,
+            "runtime_domain": "ncep_gefs025",
+            "grid": domain_grids["ncep_gefs025"],
+            "source_runs": [latest_run],
+            "source_run_max_forecast_hours": [
+                GFS_PROBABILITY_DOMAINS["ncep_gefs025"]
+            ],
+        },
+        "ncep_gefs05": {
+            "coverage_id": coverage_id,
+            "runtime_domain": "ncep_gefs05",
+            "grid": domain_grids["ncep_gefs05"],
+            "source_runs": [latest_run],
+            "source_run_max_forecast_hours": [
+                GFS_PROBABILITY_DOMAINS["ncep_gefs05"]
+            ],
         },
     }
 
@@ -580,6 +644,14 @@ def publish_gfs_coverage(args: argparse.Namespace) -> dict[str, Any]:
         getattr(args, "bottom_lat", 0.0),
         getattr(args, "top_lat", 58.0),
     )
+    for domain, horizon in GFS_PROBABILITY_DOMAINS.items():
+        validate_probability_run(
+            staging,
+            domain,
+            args.latest_run,
+            horizon,
+            domain_grids[domain],
+        )
     static_sources = {
         "copernicus_dem90": validate_dem_static(
             staging,
@@ -624,7 +696,7 @@ def publish_gfs_coverage(args: argparse.Namespace) -> dict[str, Any]:
         "local_day_start_utc": args.local_day_start_utc,
         "public_end_utc": args.public_end_utc,
         "public_hours": args.public_hours,
-        "domains": list(GFS_DOMAINS),
+        "domains": [*GFS_DOMAINS, *GFS_PROBABILITY_DOMAINS],
         "domain_grids": domain_grids,
         "static_sources": static_sources,
         "files": files,
@@ -662,7 +734,7 @@ def publish_gfs_coverage(args: argparse.Namespace) -> dict[str, Any]:
         "public_end_utc": args.public_end_utc,
         "public_hours": args.public_hours,
         "coverage_path": coverage_relative.as_posix(),
-        "products": product_contract(coverage_id, domain_grids),
+        "products": product_contract(coverage_id, domain_grids, args.latest_run),
         "domain_grids": domain_grids,
         "static_sources": static_sources,
         "files": files,

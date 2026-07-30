@@ -90,8 +90,41 @@ def gfs_domain_grids(
             top_lat=top_lat,
             halo_cells=0,
         ),
+        "ncep_gefs025": regular_grid_slice(
+            full_nx=1440,
+            full_ny=721,
+            lat_min=-90.0,
+            lon_min=-180.0,
+            dx=0.25,
+            dy=0.25,
+            left_lon=left_lon,
+            right_lon=right_lon,
+            bottom_lat=bottom_lat,
+            top_lat=top_lat,
+            halo_cells=0,
+        ),
+        "ncep_gefs05": regular_grid_slice(
+            full_nx=720,
+            full_ny=361,
+            lat_min=-90.0,
+            lon_min=-180.0,
+            dx=0.5,
+            dy=0.5,
+            left_lon=left_lon,
+            right_lon=right_lon,
+            bottom_lat=bottom_lat,
+            top_lat=top_lat,
+            halo_cells=0,
+        ),
     }
-    for grid in grids.values():
+    for name, grid in grids.items():
+        if name.startswith("ncep_gefs"):
+            grid["dt_seconds"] = 3 * 3600
+            # Match the upstream GenericDomain storage contract exactly.  The
+            # 0.25-degree GEFS domain shares the 481-slot GFS chunk length;
+            # the extended 0.5-degree domain uses its upstream 313-slot chunk.
+            grid["om_file_length"] = 481 if name == "ncep_gefs025" else 313
+            continue
         grid["dt_seconds"] = 3600
         grid["om_file_length"] = 481
     return grids

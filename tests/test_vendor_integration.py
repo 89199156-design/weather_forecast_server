@@ -133,6 +133,8 @@ def test_vendored_openmeteo_only_has_required_region_patches():
     assert 'case "0C isotherm"' in regional_download
     assert "RegularGrid(nx: 1440, ny: 721, latMin: -90, lonMin: -180, dx: 0.25, dy: 0.25)" in domain
     assert "return RegionalRegularGrid(base: base" in domain
+    assert "self == .gfs025_ens || self == .gefs025_ensemble_mean" in domain
+    assert "self == .gfs05_ens || self == .gefs05_ensemble_mean" in domain
 
     assert "downloadCamsGlobalArea" not in cams_download
     assert "cams-global-atmospheric-composition-forecasts" not in cams_download
@@ -210,6 +212,17 @@ def test_cds_ads_queue_state_is_fail_closed_and_post_is_never_retried():
     assert "error404WaitTime" in cds
     assert 'environment["WEATHER_CDS_POLL_INTERVAL_SECONDS"]' in cds
     assert 'environment["WEATHER_CDS_JOB_TIMEOUT_HOURS"]' in cds
+
+
+def test_ecmwf_image_is_labeled_with_the_exact_weather_source_revision():
+    script = (ROOT / "scripts" / "build_openmeteo_ecmwf_image.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'SOURCE_ID="$(git -C "$REPO_ROOT" rev-parse HEAD)"' in script
+    assert 'IMAGE_TAG="${WEATHER_ECMWF_OPENMETEO_TAG:-ifs025-${SOURCE_ID:0:12}}"' in script
+    assert '--build-arg "ECMWF_SOURCE_ID=$SOURCE_ID"' in script
+    assert 'git -C "$REPO_ROOT" diff --quiet -- "$DOCKERFILE" "$PATCH_PATH"' in script
 
 
 def test_openmeteo_raw_download_is_the_default_runtime_data_mode():
