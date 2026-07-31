@@ -164,21 +164,12 @@ def source_run_plan(target_run: str) -> tuple[tuple[str, int], ...]:
     target = parse_run(target_run)
     if target.hour not in (0, 12):
         raise ValueError("ECMWF production target must be a 00Z or 12Z long run")
-    previous_complete = target - timedelta(hours=12)
-    short_start = previous_complete - timedelta(
-        hours=6 * SHORT_RUN_RETENTION
-    )
-    short_runs = tuple(
+    return tuple(
         (
-            (short_start + timedelta(hours=6 * rank)).strftime("%Y%m%d%H"),
-            SHORT_RUN_MAX_FORECAST_HOUR,
+            (target - timedelta(hours=offset)).strftime("%Y%m%d%H"),
+            360 if offset in (12, 0) else SHORT_RUN_MAX_FORECAST_HOUR,
         )
-        for rank in range(SHORT_RUN_RETENTION)
-    )
-    return (
-        *short_runs,
-        (previous_complete.strftime("%Y%m%d%H"), 360),
-        (target_run, 360),
+        for offset in (24, 18, 12, 6, 0)
     )
 
 

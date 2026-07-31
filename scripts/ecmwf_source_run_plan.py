@@ -13,7 +13,9 @@ def main() -> int:
     parser.add_argument("--format", choices=("json", "lines"), default="json")
     args = parser.parse_args()
     plan = source_run_plan(args.run)
-    previous_complete_run = plan[-2][0]
+    previous_complete_run = next(
+        run for run, horizon in reversed(plan[:-1]) if horizon == 360
+    )
     payload = [
         {
             "run": run,

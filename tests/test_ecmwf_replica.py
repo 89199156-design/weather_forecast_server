@@ -60,21 +60,33 @@ def test_pinned_ecmwf_contract_is_complete_and_deterministic() -> None:
 def test_ecmwf_source_plan_keeps_three_short_and_two_complete_runs() -> None:
     plan = ecmwf_contract.source_run_plan("2026072300")
 
-    assert len(plan) == 5
-    assert plan[:3] == (
-        ("2026072118", 6),
+    assert plan == (
         ("2026072200", 6),
         ("2026072206", 6),
+        ("2026072212", 360),
+        ("2026072218", 6),
+        ("2026072300", 360),
     )
-    assert plan[-2] == ("2026072212", 360)
-    assert plan[-1] == ("2026072300", 360)
     assert [run for run, _ in plan] == sorted(run for run, _ in plan)
+    assert [horizon for _, horizon in plan] == [6, 6, 360, 6, 360]
 
     midday_plan = ecmwf_contract.source_run_plan("2026072312")
-    assert midday_plan[-2:] == (
-        ("2026072300", 360),
-        ("2026072312", 360),
+    assert midday_plan[2] == ("2026072300", 360)
+    assert midday_plan[3] == ("2026072306", 6)
+    assert midday_plan[-1] == ("2026072312", 360)
+
+
+def test_ecmwf_source_plan_keeps_immediately_previous_short_cycle() -> None:
+    plan = ecmwf_contract.source_run_plan("2026073012")
+
+    assert plan == (
+        ("2026072912", 6),
+        ("2026072918", 6),
+        ("2026073000", 360),
+        ("2026073006", 6),
+        ("2026073012", 360),
     )
+    assert "2026072906" not in {run for run, _ in plan}
 
 
 def test_ecmwf_short_history_covers_shanghai_day_hours_before_target() -> None:
@@ -103,7 +115,7 @@ def test_ecmwf_source_plan_labels_three_short_and_two_complete_roles() -> None:
         )
     )
 
-    assert payload[-2] == {
+    assert payload[2] == {
         "run": "2026072212",
         "max_forecast_hour": 360,
         "role": "previous-complete",
@@ -113,8 +125,9 @@ def test_ecmwf_source_plan_labels_three_short_and_two_complete_roles() -> None:
         "max_forecast_hour": 360,
         "role": "target",
     }
-    assert {item["role"] for item in payload[:-2]} == {"short-history"}
-    assert all(item["max_forecast_hour"] == 6 for item in payload[:-2])
+    short_items = [item for item in payload if item["role"] == "short-history"]
+    assert len(short_items) == 3
+    assert all(item["max_forecast_hour"] == 6 for item in short_items)
 
 
 @pytest.mark.parametrize("run", ("2026072301", "2026-07-23", "bad"))
@@ -331,13 +344,13 @@ def test_release_publisher_requires_full_inventory_and_publishes_atomically(
     assert marker["hourly_frames"] == 361
     assert marker["daily_frames"] == 15
     assert marker["source_runs"] == [
-        "2026072118",
         "2026072200",
         "2026072206",
         "2026072212",
+        "2026072218",
         "2026072300",
     ]
-    assert marker["source_run_max_forecast_hours"] == [6, 6, 6, 360, 360]
+    assert marker["source_run_max_forecast_hours"] == [6, 6, 360, 6, 360]
     assert marker["short_run_count"] == 3
     assert marker["full_run_count"] == 2
     assert marker["short_run_max_forecast_hour"] == 6
