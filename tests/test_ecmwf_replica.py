@@ -626,7 +626,11 @@ def test_ecmwf_image_uses_clean_source_and_records_exact_provenance() -> None:
     assert "io.weather-forecast.openmeteo-upstream-commit" in dockerfile
     assert "io.weather-forecast.ecmwf-patch-sha256" in dockerfile
     assert ecmwf_contract.OPENMETEO_UPSTREAM_COMMIT in build
-    assert "git -C \"$UPSTREAM_DIR\" apply --check" in build
+    assert (
+        'git -c safe.directory="$UPSTREAM_DIR" -C "$UPSTREAM_DIR" apply --check'
+        in build
+    )
+    assert 'git -c safe.directory="$REPO_ROOT" -C "$REPO_ROOT" rev-parse HEAD' in build
 
 
 def test_ecmwf_webp_uses_shared_product_grid_and_18_layers() -> None:

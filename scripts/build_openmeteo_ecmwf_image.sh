@@ -14,17 +14,17 @@ EXPECTED_UPSTREAM="b743cbc9a7fab3f8f7dda85968fb770eee48b9ec"
 [[ -d "$UPSTREAM_DIR/.git" || -f "$UPSTREAM_DIR/.git" ]] \
   || { printf '%s\n' "Initialise vendor/open-meteo-ecmwf submodule first" >&2; exit 1; }
 
-ACTUAL_UPSTREAM="$(git -C "$UPSTREAM_DIR" rev-parse HEAD)"
+ACTUAL_UPSTREAM="$(git -c safe.directory="$UPSTREAM_DIR" -C "$UPSTREAM_DIR" rev-parse HEAD)"
 [[ "$ACTUAL_UPSTREAM" == "$EXPECTED_UPSTREAM" ]] \
   || { printf '%s\n' "Unexpected ECMWF Open-Meteo source: $ACTUAL_UPSTREAM" >&2; exit 1; }
-git -C "$UPSTREAM_DIR" diff --quiet
-git -C "$UPSTREAM_DIR" diff --cached --quiet
-git -C "$UPSTREAM_DIR" apply --check "$PATCH_PATH"
+git -c safe.directory="$UPSTREAM_DIR" -C "$UPSTREAM_DIR" diff --quiet
+git -c safe.directory="$UPSTREAM_DIR" -C "$UPSTREAM_DIR" diff --cached --quiet
+git -c safe.directory="$UPSTREAM_DIR" -C "$UPSTREAM_DIR" apply --check "$PATCH_PATH"
 
 PATCH_SHA256="$(sha256sum "$PATCH_PATH" | awk '{print $1}')"
-git -C "$REPO_ROOT" diff --quiet -- "$DOCKERFILE" "$PATCH_PATH"
-git -C "$REPO_ROOT" diff --cached --quiet -- "$DOCKERFILE" "$PATCH_PATH"
-SOURCE_ID="$(git -C "$REPO_ROOT" rev-parse HEAD)"
+git -c safe.directory="$REPO_ROOT" -C "$REPO_ROOT" diff --quiet -- "$DOCKERFILE" "$PATCH_PATH"
+git -c safe.directory="$REPO_ROOT" -C "$REPO_ROOT" diff --cached --quiet -- "$DOCKERFILE" "$PATCH_PATH"
+SOURCE_ID="$(git -c safe.directory="$REPO_ROOT" -C "$REPO_ROOT" rev-parse HEAD)"
 IMAGE_TAG="${WEATHER_ECMWF_OPENMETEO_TAG:-ifs025-${SOURCE_ID:0:12}}"
 
 docker build \
