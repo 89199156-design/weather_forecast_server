@@ -97,9 +97,15 @@ RAW_VARIABLES_OMIT_HOUR_ZERO = frozenset(
 )
 
 COMPLETE_RUN_RETENTION = 2
-SHORT_RUN_RETENTION = 3
+SHORT_RUN_RETENTION = 1
+GUST_SUPPORT_RUN_RETENTION = 5
 SHORT_RUN_MAX_FORECAST_HOUR = 6
-TOTAL_RUN_RETENTION = COMPLETE_RUN_RETENTION + SHORT_RUN_RETENTION
+GUST_SUPPORT_MAX_FORECAST_HOUR = 186
+TOTAL_RUN_RETENTION = (
+    COMPLETE_RUN_RETENTION
+    + SHORT_RUN_RETENTION
+    + GUST_SUPPORT_RUN_RETENTION
+)
 
 SURFACE_PROBE_PARAMS = {
     "2t",
@@ -136,6 +142,8 @@ SHORT_RUN_UNAVAILABLE_PROBE_PARAMS = frozenset({"mn2t6", "mx2t6"})
 
 
 def raw_variables_for_horizon(max_forecast_hour: int) -> tuple[str, ...]:
+    if max_forecast_hour == GUST_SUPPORT_MAX_FORECAST_HOUR:
+        return ("wind_gusts_10m",)
     if max_forecast_hour == SHORT_RUN_MAX_FORECAST_HOUR:
         return tuple(
             variable
@@ -148,6 +156,8 @@ def raw_variables_for_horizon(max_forecast_hour: int) -> tuple[str, ...]:
 def surface_probe_params_for_horizon(
     max_forecast_hour: int,
 ) -> set[str]:
+    if max_forecast_hour == GUST_SUPPORT_MAX_FORECAST_HOUR:
+        return {"10fg"}
     if max_forecast_hour == SHORT_RUN_MAX_FORECAST_HOUR:
         return SURFACE_PROBE_PARAMS - SHORT_RUN_UNAVAILABLE_PROBE_PARAMS
     return set(SURFACE_PROBE_PARAMS)
@@ -164,13 +174,29 @@ def source_run_plan(target_run: str) -> tuple[tuple[str, int], ...]:
     target = parse_run(target_run)
     if target.hour not in (0, 12):
         raise ValueError("ECMWF production target must be a 00Z or 12Z long run")
-    return tuple(
+    # The official rolling database omits the alternate `10fg3` gust field in
+    # the target run's f093...f144 band. Five older long cycles supply the
+    # six-hour gust frames, and the oldest one supplies Hermite predecessor
+    # context. Only wind_gusts_10m is retained for these bounded support runs.
+    support = tuple(
         (
             (target - timedelta(hours=offset)).strftime("%Y%m%d%H"),
-            360 if offset in (12, 0) else SHORT_RUN_MAX_FORECAST_HOUR,
+            GUST_SUPPORT_MAX_FORECAST_HOUR,
         )
-        for offset in (24, 18, 12, 6, 0)
+        for offset in (72, 60, 48, 36, 24)
     )
+    ordinary = (
+        (
+            (target - timedelta(hours=12)).strftime("%Y%m%d%H"),
+            360,
+        ),
+        (
+            (target - timedelta(hours=6)).strftime("%Y%m%d%H"),
+            SHORT_RUN_MAX_FORECAST_HOUR,
+        ),
+        (target.strftime("%Y%m%d%H"), 360),
+    )
+    return support + ordinary
 
 
 assert len(SURFACE_RAW_VARIABLES) == 32
@@ -178,3 +204,6 @@ assert len(PRESSURE_RAW_VARIABLES) == 84
 assert len(RAW_VARIABLES) == 116
 assert len(set(RAW_VARIABLES)) == len(RAW_VARIABLES)
 assert len(raw_variables_for_horizon(SHORT_RUN_MAX_FORECAST_HOUR)) == 114
+assert raw_variables_for_horizon(GUST_SUPPORT_MAX_FORECAST_HOUR) == (
+    "wind_gusts_10m",
+)

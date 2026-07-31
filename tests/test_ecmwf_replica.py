@@ -51,28 +51,36 @@ def test_pinned_ecmwf_contract_is_complete_and_deterministic() -> None:
         "runoff",
         "snowfall_water_equivalent",
     }
-    assert ecmwf_contract.SHORT_RUN_RETENTION == 3
+    assert ecmwf_contract.SHORT_RUN_RETENTION == 1
     assert ecmwf_contract.COMPLETE_RUN_RETENTION == 2
-    assert ecmwf_contract.TOTAL_RUN_RETENTION == 5
+    assert ecmwf_contract.GUST_SUPPORT_RUN_RETENTION == 5
+    assert ecmwf_contract.TOTAL_RUN_RETENTION == 8
     assert ecmwf_contract.SHORT_RUN_MAX_FORECAST_HOUR == 6
+    assert ecmwf_contract.GUST_SUPPORT_MAX_FORECAST_HOUR == 186
+    assert ecmwf_contract.raw_variables_for_horizon(186) == (
+        "wind_gusts_10m",
+    )
 
 
-def test_ecmwf_source_plan_keeps_three_short_and_two_complete_runs() -> None:
+def test_ecmwf_source_plan_keeps_official_gust_support_and_complete_runs() -> None:
     plan = ecmwf_contract.source_run_plan("2026072300")
 
     assert plan == (
-        ("2026072200", 6),
-        ("2026072206", 6),
+        ("2026072000", 186),
+        ("2026072012", 186),
+        ("2026072100", 186),
+        ("2026072112", 186),
+        ("2026072200", 186),
         ("2026072212", 360),
         ("2026072218", 6),
         ("2026072300", 360),
     )
     assert [run for run, _ in plan] == sorted(run for run, _ in plan)
-    assert [horizon for _, horizon in plan] == [6, 6, 360, 6, 360]
+    assert [horizon for _, horizon in plan] == [186] * 5 + [360, 6, 360]
 
     midday_plan = ecmwf_contract.source_run_plan("2026072312")
-    assert midday_plan[2] == ("2026072300", 360)
-    assert midday_plan[3] == ("2026072306", 6)
+    assert midday_plan[5] == ("2026072300", 360)
+    assert midday_plan[6] == ("2026072306", 6)
     assert midday_plan[-1] == ("2026072312", 360)
 
 
@@ -80,13 +88,16 @@ def test_ecmwf_source_plan_keeps_immediately_previous_short_cycle() -> None:
     plan = ecmwf_contract.source_run_plan("2026073012")
 
     assert plan == (
-        ("2026072912", 6),
-        ("2026072918", 6),
+        ("2026072712", 186),
+        ("2026072800", 186),
+        ("2026072812", 186),
+        ("2026072900", 186),
+        ("2026072912", 186),
         ("2026073000", 360),
         ("2026073006", 6),
         ("2026073012", 360),
     )
-    assert "2026072906" not in {run for run, _ in plan}
+    assert "2026072918" not in {run for run, _ in plan}
 
 
 def test_ecmwf_short_history_covers_shanghai_day_hours_before_target() -> None:
@@ -102,7 +113,7 @@ def test_ecmwf_short_history_covers_shanghai_day_hours_before_target() -> None:
         )
 
 
-def test_ecmwf_source_plan_labels_three_short_and_two_complete_roles() -> None:
+def test_ecmwf_source_plan_labels_gust_support_short_and_complete_roles() -> None:
     payload = json.loads(
         subprocess.check_output(
             [
@@ -115,7 +126,7 @@ def test_ecmwf_source_plan_labels_three_short_and_two_complete_roles() -> None:
         )
     )
 
-    assert payload[2] == {
+    assert payload[5] == {
         "run": "2026072212",
         "max_forecast_hour": 360,
         "role": "previous-complete",
@@ -125,8 +136,11 @@ def test_ecmwf_source_plan_labels_three_short_and_two_complete_roles() -> None:
         "max_forecast_hour": 360,
         "role": "target",
     }
+    support_items = [item for item in payload if item["role"] == "gust-support"]
+    assert len(support_items) == 5
+    assert all(item["max_forecast_hour"] == 186 for item in support_items)
     short_items = [item for item in payload if item["role"] == "short-history"]
-    assert len(short_items) == 3
+    assert len(short_items) == 1
     assert all(item["max_forecast_hour"] == 6 for item in short_items)
 
 
@@ -199,6 +213,17 @@ def test_short_run_probe_validates_its_planned_final_inventory() -> None:
     assert result["max_forecast_hour"] == 6
     assert result["index_records"] == 113
     assert result["required_surface_params"] == 21
+
+
+def test_gust_support_probe_requires_only_the_bounded_gust_inventory() -> None:
+    run = "2026072012"
+    result = probe.validate(run, complete_index(run, 186), 186)
+
+    assert result["status"] == "complete"
+    assert result["max_forecast_hour"] == 186
+    assert result["required_surface_params"] == 1
+    assert result["required_soil_fields"] == 0
+    assert result["required_pressure_fields"] == 0
 
 
 def test_ecmwf_probe_candidates_include_12z_and_fall_back_from_newer_00z() -> None:
@@ -344,14 +369,17 @@ def test_release_publisher_requires_full_inventory_and_publishes_atomically(
     assert marker["hourly_frames"] == 361
     assert marker["daily_frames"] == 15
     assert marker["source_runs"] == [
+        "2026072000",
+        "2026072012",
+        "2026072100",
+        "2026072112",
         "2026072200",
-        "2026072206",
         "2026072212",
         "2026072218",
         "2026072300",
     ]
-    assert marker["source_run_max_forecast_hours"] == [6, 6, 360, 6, 360]
-    assert marker["short_run_count"] == 3
+    assert marker["source_run_max_forecast_hours"] == [186] * 5 + [360, 6, 360]
+    assert marker["short_run_count"] == 1
     assert marker["full_run_count"] == 2
     assert marker["short_run_max_forecast_hour"] == 6
     assert marker["required_variables"] == list(ecmwf_contract.RAW_VARIABLES)
@@ -487,14 +515,8 @@ def test_regional_patch_applies_to_exact_locked_upstream() -> None:
         "[1000, 925, 850, 700, 600, 500, 400, 300, 250, 200, 150, 100, 50, 10]"
         in source
     )
-    assert (
-        '["max_i10fg", "10fg3", "10fg6"].contains(entry.param)'
-        in source
-    )
-    assert (
-        '["max_i10fg", "10fg3", "10fg6"].contains(shortName)'
-        in source
-    )
+    assert '"10fg3"' not in source
+    assert '"10fg6"' not in source
     assert "estimatedNumberOfGridCells" in source
     assert '@Flag(name: "skip-full-run")' in source
     assert (

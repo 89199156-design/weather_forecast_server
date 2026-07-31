@@ -14,9 +14,13 @@ import sys
 from typing import Any
 
 from ecmwf_contract import (
+    COMPLETE_RUN_RETENTION,
+    GUST_SUPPORT_MAX_FORECAST_HOUR,
+    GUST_SUPPORT_RUN_RETENTION,
     MODEL,
     OPENMETEO_UPSTREAM_COMMIT,
     RAW_VARIABLES_OMIT_HOUR_ZERO,
+    SHORT_RUN_RETENTION,
     STORAGE_BOUNDS,
     parse_run,
     raw_variables_for_horizon,
@@ -68,7 +72,12 @@ def expected_forecast_hours(
     parsed = parse_run(run)
     if horizon < 0:
         raise ValueError("ECMWF horizon must not be negative")
-    if parsed.hour in (0, 12):
+    if horizon == GUST_SUPPORT_MAX_FORECAST_HOUR:
+        schedule = [
+            *range(3, min(90, horizon) + 1, 3),
+            *range(150, horizon + 1, 6),
+        ]
+    elif parsed.hour in (0, 12):
         schedule = [
             *range(0, min(144, horizon) + 1, 3),
             *range(150, horizon + 1, 6),
@@ -136,6 +145,7 @@ def validate_run(
         if (
             domain == MODEL
             and variable in RAW_VARIABLES_OMIT_HOUR_ZERO
+            and expected_times[0] == reference
         ):
             expected_time_count -= 1
         expected_dimensions = (249, 297, expected_time_count)
@@ -295,10 +305,20 @@ def publish(args: argparse.Namespace) -> dict[str, Any]:
     generated_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     deterministic_runs = [item[0] for item in deterministic_plan]
     deterministic_horizons = [item[1] for item in deterministic_plan]
+    deterministic_roles = [
+        "target"
+        if source_run == args.run
+        else "gust-support"
+        if horizon == GUST_SUPPORT_MAX_FORECAST_HOUR
+        else "previous-complete"
+        if horizon == 360
+        else "short-history"
+        for source_run, horizon in deterministic_plan
+    ]
     ensemble_runs = [item[0] for item in ensemble_plan]
     ensemble_horizons = [item[1] for item in ensemble_plan]
     grid = grid_contract()
-    public_start = parse_run(deterministic_runs[0]).strftime("%Y-%m-%dT%H:%M:%SZ")
+    public_start = parse_run(args.run).strftime("%Y-%m-%dT%H:%M:%SZ")
     products = {
         MODEL: {
             "coverage_id": coverage_id,
@@ -324,8 +344,11 @@ def publish(args: argparse.Namespace) -> dict[str, Any]:
         "latest_complete_run": args.run,
         "source_runs": deterministic_runs,
         "source_run_max_forecast_hours": deterministic_horizons,
-        "short_run_count": 3,
-        "full_run_count": 2,
+        "source_run_roles": deterministic_roles,
+        "short_run_count": SHORT_RUN_RETENTION,
+        "full_run_count": COMPLETE_RUN_RETENTION,
+        "gust_support_run_count": GUST_SUPPORT_RUN_RETENTION,
+        "gust_support_max_forecast_hour": GUST_SUPPORT_MAX_FORECAST_HOUR,
         "public_start_utc": public_start,
         "products": products,
         "domain_grids": {MODEL: grid, ENSEMBLE_MODEL: grid},

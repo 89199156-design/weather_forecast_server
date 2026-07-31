@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 
-from ecmwf_contract import source_run_plan
+from ecmwf_contract import GUST_SUPPORT_MAX_FORECAST_HOUR, source_run_plan
 
 
 def main() -> int:
@@ -23,6 +23,8 @@ def main() -> int:
             "role": (
                 "target"
                 if run == args.run
+                else "gust-support"
+                if horizon == GUST_SUPPORT_MAX_FORECAST_HOUR
                 else "previous-complete"
                 if run == previous_complete_run
                 else "short-history"

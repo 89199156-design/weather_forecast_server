@@ -208,7 +208,8 @@ The production sequence is:
 
 ```text
 ECMWF f360 index complete
-  -> import three short and two complete deterministic source runs
+  -> import five bounded older-cycle wind-gust support runs
+  -> import the previous complete run, adjacent short run, and target complete run
   -> import five ensemble precipitation source runs
   -> generate native precipitation_probability OM
   -> atomically publish one regional native OM coverage
@@ -221,6 +222,9 @@ product is limited to `70..140E, 0..58N`. The two-degree halo preserves normal
 Open-Meteo spatial interpolation and land/elevation selection at the requested
 boundary. The API retains the complete 361-hour deterministic forecast and
 the corresponding ensemble precipitation-probability horizon.
+The bounded support runs contain only the original `wind_gusts_10m` field;
+they reproduce the official rolling-run interpolation window without copying
+or downloading any prepared Open-Meteo `.om` data.
 WebP interpolates the native 0.25° values onto the shared `597x495` product
 grid (`dx=0.117188°`, `dy=0.117149°`) and uses the same surface encodings as
 GFS. ECMWF publishes 100 m wind and surface temperature, but excludes the

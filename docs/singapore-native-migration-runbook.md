@@ -33,9 +33,11 @@ for rollback.
 - GFS keeps five runs: three strict `f000...f005` histories followed by the
   previous and latest complete official `f000...f384` runs. No older `f006`
   value is mixed into the next run's `f000`.
-- ECMWF publishes one native OM coverage containing five deterministic runs
-  (three short histories and two complete 00Z/12Z runs) plus five ensemble
-  precipitation runs. The ensemble importer writes only
+- ECMWF publishes one native OM coverage containing eight deterministic source
+  runs: five bounded older-cycle wind-gust-only support runs, the previous
+  complete 00Z/12Z run, the adjacent six-hour short run, and the target
+  complete run. It also contains five ensemble precipitation runs. The
+  ensemble importer writes only
   `precipitation_probability` full-run OM, so probability support adds no
   duplicate time-series database or always-on Swift API.
 - CAMS ECPDS main keeps three consecutive complete 12-hour runs through `f120`
@@ -158,13 +160,17 @@ imports missing members of its latest three-run 12-hour window, validates all
 publishes only `coverages/cams`, `groups/cams`, and `current/cams`.
 
 The ECMWF cycle incrementally builds and validates an immutable native OM
-coverage. Three short and two complete deterministic runs preserve the official
-rolling/fallback behavior; a separate product in the same coverage contains
-only ensemble-derived `precipitation_probability`. After atomic publication,
-the Shanghai-compatible Rust WebP renderer runs and the single Rust API
-receives one `SIGHUP`. If OM is already published but WebP or reload was
-interrupted, the cycle reuses the immutable coverage instead of downloading or
-publishing it again.
+coverage. Five older 00Z/12Z cycles retain only `wind_gusts_10m` through the
+bounded support horizon, followed by the previous complete run, adjacent short
+run, and target complete run. This reproduces the official rolling/fallback
+behavior while avoiding a second full database. A separate product in the same
+coverage contains only ensemble-derived `precipitation_probability`. After
+atomic publication, the Shanghai-compatible Rust WebP renderer runs and the
+single Rust API receives one `SIGHUP`. If OM is already published but WebP or
+reload was interrupted, the cycle reuses the immutable coverage instead of
+downloading or publishing it again. Shanghai is used only as a read-only result
+baseline; no prepared OM is copied from Shanghai or downloaded from an
+Open-Meteo bucket.
 
 The ADS task derives its target only from the date of the locally published
 ECPDS main run. If `groups/cams_greenhouse/current` is older, it prepares the

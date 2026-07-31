@@ -42,6 +42,15 @@ def test_ecmwf_probability_schedule_skips_undefined_hour_zero() -> None:
     assert len(deterministic) == len(probability) + 1
 
 
+def test_ecmwf_gust_support_schedule_matches_available_original_frames() -> None:
+    hours = expected_forecast_hours("2026072712", 186)
+
+    assert hours == [*range(3, 91, 3), *range(150, 187, 6)]
+    assert len(hours) == 37
+    assert 93 not in hours
+    assert 144 not in hours
+
+
 def test_ecmwf_short_ensemble_cycle_uses_three_hour_frames() -> None:
     hours = expected_forecast_hours(
         "2026072918",
@@ -222,6 +231,8 @@ def test_ecmwf_cycle_recovers_webp_without_republishing_immutable_om() -> None:
     assert '"io.weather-forecast.ecmwf-patch-sha256": sys.argv[2]' in source
     assert '"io.weather-forecast.ecmwf-source-id": sys.argv[3]' in source
     assert "ECMWF native image provenance mismatch" in source
+    assert 'raw_variables_for_horizon(int(sys.argv[1]))' in source
+    assert '--only-variables "$RUN_VARIABLES"' in source
 
 
 def test_ecmwf_probe_uses_rust_webp_marker_contract() -> None:

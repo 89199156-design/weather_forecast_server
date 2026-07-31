@@ -12,6 +12,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from ecmwf_contract import (
+    GUST_SUPPORT_MAX_FORECAST_HOUR,
     PRESSURE_LEVELS_HPA,
     PRESSURE_PROBE_PARAMS,
     SOIL_PROBE_FIELDS,
@@ -88,8 +89,9 @@ def validate(
     }
     required_surface = surface_probe_params_for_horizon(max_forecast_hour)
     missing_surface = sorted(required_surface - surface)
-    missing_soil = sorted(SOIL_PROBE_FIELDS - soil)
-    missing_pressure = sorted(
+    gust_support_only = max_forecast_hour == GUST_SUPPORT_MAX_FORECAST_HOUR
+    missing_soil = [] if gust_support_only else sorted(SOIL_PROBE_FIELDS - soil)
+    missing_pressure = [] if gust_support_only else sorted(
         (param, level)
         for param in PRESSURE_PROBE_PARAMS
         for level in PRESSURE_LEVELS_HPA
@@ -107,8 +109,8 @@ def validate(
         "max_forecast_hour": max_forecast_hour,
         "index_records": len(records),
         "required_surface_params": len(required_surface),
-        "required_soil_fields": len(SOIL_PROBE_FIELDS),
-        "required_pressure_fields": len(PRESSURE_PROBE_PARAMS)
+        "required_soil_fields": 0 if gust_support_only else len(SOIL_PROBE_FIELDS),
+        "required_pressure_fields": 0 if gust_support_only else len(PRESSURE_PROBE_PARAMS)
         * len(PRESSURE_LEVELS_HPA),
     }
 
