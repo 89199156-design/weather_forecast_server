@@ -61,9 +61,12 @@ def test_build_script_uses_root_context_and_new_repository_paths_only():
     assert "satellite" not in script.lower()
 
 
-def test_singapore_internal_http_deploy_script_is_removed():
+def test_singapore_duplicate_and_isolated_deployment_paths_are_removed():
     assert not (ROOT / "scripts" / "deploy_singapore_candidate.sh").exists()
     assert not (ROOT / "scripts" / "run_native_om_shadow_validation.sh").exists()
+    assert not (ROOT / "scripts" / "install_ecmwf_api_service.sh").exists()
+    assert not (ROOT / "scripts" / "run_ecmwf_om_production_cycle.sh").exists()
+    assert not (ROOT / "scripts" / "build_openmeteo_ecmwf_layers.sh").exists()
 
 
 def test_validation_candidates_can_use_remote_inventory_without_local_data(tmp_path):
@@ -1452,8 +1455,7 @@ def test_openmeteo_tasks_do_not_use_file_locks():
         ROOT / "scripts" / "run_cams_ftp_production_cycle.sh",
         ROOT / "scripts" / "run_cams_ads_scheduled_cycle.sh",
         ROOT / "scripts" / "run_ecmwf_probe_and_cycle.sh",
-        ROOT / "scripts" / "run_ecmwf_om_production_cycle.sh",
-        ROOT / "scripts" / "build_openmeteo_ecmwf_layers.sh",
+        ROOT / "scripts" / "run_ecmwf_native_production_cycle.sh",
     )
 
     for path in scripts:

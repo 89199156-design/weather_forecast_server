@@ -568,7 +568,7 @@ def test_ecmwf_static_asset_is_verified_and_reused(
 
 
 def test_ecmwf_pipeline_uses_panel_state_without_batch_lock() -> None:
-    cycle = (SCRIPTS / "run_ecmwf_om_production_cycle.sh").read_text(
+    cycle = (SCRIPTS / "run_ecmwf_native_production_cycle.sh").read_text(
         encoding="utf-8"
     )
     probe_cycle = (SCRIPTS / "run_ecmwf_probe_and_cycle.sh").read_text(
@@ -583,22 +583,18 @@ def test_ecmwf_pipeline_uses_panel_state_without_batch_lock() -> None:
         assert "LOCK_FILE" not in source
         assert "/tmp/weather_openmeteo_production.lock" not in source
         assert "WEATHER_1PANEL_VERIFIED_TASK" in source
-    assert 'python3 - "$CURRENT_MARKER" "$RUN" "$SOURCE_REVISION"' in cycle
+    assert '"$CURRENT_MARKER" "$RUN" "$EXPECTED_COVERAGE_ID"' in cycle
     assert (
         'git -c safe.directory="$APP_DIR" -C "$APP_DIR" rev-parse HEAD'
         in cycle
     )
-    assert 'payload.get("source_revision") == sys.argv[3]' in cycle
-    assert 'payload.get("coverage_id") == expected_coverage_id' in cycle
+    assert 'payload.get("coverage_id") == sys.argv[3]' in cycle
     assert 'variables="$FALLBACK_VARIABLES"' not in cycle
-    assert '--only-variables "$RAW_VARIABLES"' in cycle
+    assert '--only-variables "$RUN_VARIABLES"' in cycle
     assert "--lookback-hours" not in cycle
     assert "--latest-ready" in probe_cycle
     assert "date -u -d" not in probe_cycle
-    native_cycle = (
-        SCRIPTS / "run_ecmwf_native_production_cycle.sh"
-    ).read_text(encoding="utf-8")
-    assert '--max-forecast-hour "$max_hour"' in native_cycle
+    assert '--max-forecast-hour "$max_hour"' in cycle
     assert "scripts/ensure_ecmwf_static_asset.py" in cycle
     assert (
         "WEATHER_ECMWF_OFFICIAL_HSURF=/app/static/ecmwf_ifs025/HSURF.om"
@@ -609,38 +605,7 @@ def test_ecmwf_pipeline_uses_panel_state_without_batch_lock() -> None:
     assert "VALUES (CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?, 'shell', ?, ?, ?, 'Disable')" in installer
 
 
-def test_ecmwf_api_mounts_model_and_dem_below_writable_data_tmpfs() -> None:
-    installer = (SCRIPTS / "install_ecmwf_api_service.sh").read_text(
-        encoding="utf-8"
-    )
-
-    data_tmpfs = "--tmpfs /app/data:rw,noexec,nosuid,size=1m"
-    model_mount = (
-        "--volume $ECMWF_ROOT/current/ecmwf_ifs025:"
-        "/app/data/ecmwf_ifs025:ro"
-    )
-    dem_mount = "--volume $DEM_ROOT:/app/data/copernicus_dem90:ro"
-    assert data_tmpfs in installer
-    assert model_mount in installer
-    assert dem_mount in installer
-    assert "$ECMWF_ROOT/current:/app/data:ro" not in installer
-    assert installer.index(data_tmpfs) < installer.index(model_mount)
-    assert installer.index(model_mount) < installer.index(dem_mount)
-    assert 'RELEASE_MARKER="$ECMWF_ROOT/groups/ecmwf/current/ready_for_processing.json"' in installer
-    assert (
-        'git -c safe.directory="$APP_DIR" -C "$APP_DIR" rev-parse HEAD'
-        in installer
-    )
-    assert 'printf \'%s\\n\' "$SOURCE_REVISION" >"$INSTALL_ROOT/source-revision"' in installer
-    assert (
-        'printf \'%s\\n\' "$DATA_SOURCE_REVISION" '
-        '>"$INSTALL_ROOT/data-source-revision"'
-    ) in installer
-    assert "--source-revision $DATA_SOURCE_REVISION" in installer
-    assert "--source-revision $SOURCE_REVISION" not in installer
-
-
-def test_ecmwf_image_is_isolated_and_records_exact_provenance() -> None:
+def test_ecmwf_image_uses_clean_source_and_records_exact_provenance() -> None:
     dockerfile = (
         ROOT / "docker" / "openmeteo-ecmwf.Dockerfile"
     ).read_text(encoding="utf-8")
@@ -718,31 +683,6 @@ def test_ecmwf_webp_api_and_catalog_contract() -> None:
     assert len(catalog["products"]["ecmwf"]["layers"]) == 18
 
 
-def test_ecmwf_webp_publisher_has_no_test_batch_lock() -> None:
-    script = (SCRIPTS / "build_openmeteo_ecmwf_layers.sh").read_text(
-        encoding="utf-8"
-    )
-
-    assert "flock" not in script
-    assert "LOCK_FILE" not in script
-    assert "/tmp/" not in script
-    assert '[[ "${RUN:8:2}" != "00" && "${RUN:8:2}" != "12" ]]' in script
-    assert "HH=00 or 12" in script
-    assert "--scope ecmwf" in script
-    assert 'FRAME_COUNT="${WEATHER_OPENMETEO_ECMWF_LAYER_FRAME_COUNT:-121}"' in script
-    assert "start_hour=$RUN_HOUR&end_hour=$RUN_HOUR" in script
-    assert 'run=$RUN_HOUR' not in script
-    assert '--run "$RUN_HOUR"' not in script
-    assert "--api-host-header" not in script
-    assert 'header "Host:' not in script
-    assert 'DATA_RELEASE_MARKER="$APP_DIR/data/ecmwf/groups/ecmwf/current/ready_for_processing.json"' in script
-    assert "latest_complete_run" in script
-    assert "ecmwf_ifs025_[0-9]{10}_[a-f0-9]{12}" in script
-    assert '"layer_count": 18' in script
-    assert '"width") != 597' in script
-    assert '"height") != 495' in script
-
-
 def test_ecmwf_proxy_route_is_managed_and_has_no_test_lock() -> None:
     script = (SCRIPTS / "install_ecmwf_proxy_route.sh").read_text(
         encoding="utf-8"
@@ -752,11 +692,13 @@ def test_ecmwf_proxy_route_is_managed_and_has_no_test_lock() -> None:
     assert "location ^~ /v1/ecmwf" in script
     assert "location = /v1/gfs" in script
     assert "location = /v1/cams" in script
-    assert "proxy_pass http://127.0.0.1:{port}" in script
     assert "proxy_pass http://127.0.0.1:{native_port}" in script
+    assert script.count("proxy_pass http://127.0.0.1:{native_port}") == 3
     assert "00.default.conf" in script
     assert "install(default_path" in script
-    assert "proxy_set_header Host api.open-meteo.com;" in script
+    assert "proxy_set_header Host api.open-meteo.com;" not in script
+    assert "WEATHER_ECMWF_API_PORT" not in script
+    assert "18081" not in script
     assert "openresty -t" in script
     assert "openresty -s reload" in script
     assert "wait_for_route" in script

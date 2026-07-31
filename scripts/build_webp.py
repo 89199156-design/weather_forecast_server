@@ -24,7 +24,7 @@ DEFAULT_CAMS_API_BASE_URL = os.environ.get(
 )
 DEFAULT_ECMWF_API_BASE_URL = os.environ.get(
     "WEATHER_OPENMETEO_ECMWF_API_URL",
-    "http://127.0.0.1:18081/v1/ecmwf",
+    "http://127.0.0.1:8088/v1/ecmwf",
 )
 DEFAULT_API_BASE_URL = os.environ.get("WEATHER_OPENMETEO_API_URL", DEFAULT_GFS_API_BASE_URL)
 DEFAULT_GFS_OUTPUT_DIR = os.environ.get(

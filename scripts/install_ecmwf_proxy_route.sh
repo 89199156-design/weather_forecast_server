@@ -8,7 +8,6 @@ load_weather_env
 CONFIG_PATH="${WEATHER_ECMWF_OPENRESTY_SITE_CONFIG:-/opt/1panel/apps/openresty/openresty/conf/conf.d/weather.xiaoztech.com.conf}"
 DEFAULT_CONFIG_PATH="${WEATHER_OPENRESTY_DEFAULT_CONFIG:-/opt/1panel/apps/openresty/openresty/conf/conf.d/00.default.conf}"
 CONTAINER="${WEATHER_ECMWF_OPENRESTY_CONTAINER:-1Panel-openresty-XU4Q}"
-PORT="${WEATHER_ECMWF_API_PORT:-18081}"
 NATIVE_PORT="${WEATHER_OM_API_PORT:-8088}"
 BEGIN_MARKER="    # BEGIN weather-forecast ECMWF API (managed)"
 END_MARKER="    # END weather-forecast ECMWF API (managed)"
@@ -16,26 +15,24 @@ END_MARKER="    # END weather-forecast ECMWF API (managed)"
 [[ "$(id -u)" -eq 0 ]] || { printf '%s\n' "Run as root" >&2; exit 2; }
 [[ -f "$CONFIG_PATH" ]] || { printf '%s\n' "Missing OpenResty site config: $CONFIG_PATH" >&2; exit 1; }
 [[ -f "$DEFAULT_CONFIG_PATH" ]] || { printf '%s\n' "Missing OpenResty default config: $DEFAULT_CONFIG_PATH" >&2; exit 1; }
-[[ "$PORT" =~ ^[0-9]+$ ]] || { printf '%s\n' "Invalid ECMWF API port" >&2; exit 2; }
 [[ "$NATIVE_PORT" =~ ^[0-9]+$ ]] || { printf '%s\n' "Invalid native API port" >&2; exit 2; }
 
-python3 - "$CONFIG_PATH" "$DEFAULT_CONFIG_PATH" "$PORT" "$NATIVE_PORT" "$BEGIN_MARKER" "$END_MARKER" <<'PY'
+python3 - "$CONFIG_PATH" "$DEFAULT_CONFIG_PATH" "$NATIVE_PORT" "$BEGIN_MARKER" "$END_MARKER" <<'PY'
 import os
 from pathlib import Path
 import sys
 
 site_path = Path(sys.argv[1])
 default_path = Path(sys.argv[2])
-port = int(sys.argv[3])
-native_port = int(sys.argv[4])
-begin = sys.argv[5]
-end = sys.argv[6]
+native_port = int(sys.argv[3])
+begin = sys.argv[4]
+end = sys.argv[5]
 block = "\n".join(
     (
         begin,
         "    location ^~ /v1/ecmwf {",
-        f"        proxy_pass http://127.0.0.1:{port};",
-        "        proxy_set_header Host api.open-meteo.com;",
+        f"        proxy_pass http://127.0.0.1:{native_port};",
+        "        proxy_set_header Host $host;",
         "        proxy_set_header X-Real-IP $remote_addr;",
         "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
         "        proxy_http_version 1.1;",
@@ -117,4 +114,4 @@ wait_for_route \
 wait_for_route \
   "http://127.0.0.1/v1/cams?latitude=31.23&longitude=121.47&hourly=pm2_5&forecast_hours=1"
 printf '%s\n' \
-  "OpenResty model API routes ready paths=/v1/gfs,/v1/ecmwf,/v1/cams upstreams=127.0.0.1:$NATIVE_PORT,127.0.0.1:$PORT"
+  "OpenResty model API routes ready paths=/v1/gfs,/v1/ecmwf,/v1/cams upstream=127.0.0.1:$NATIVE_PORT"
