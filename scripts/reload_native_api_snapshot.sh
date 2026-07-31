@@ -17,6 +17,7 @@ PRODUCER_ROOT="${WEATHER_OM_PRODUCER_ROOT:-$APP_DIR/data/om_producer}"
 API_SERVICE="${WEATHER_OM_API_SERVICE:-weather-om-api.service}"
 TIMEOUT_SECONDS="${WEATHER_OM_API_RELOAD_CONFIRM_TIMEOUT_SECONDS:-60}"
 SUCCESS_EVENT="published new immutable OM API snapshot"
+IDENTITY_URL="${WEATHER_OM_API_IDENTITY_URL:-http://127.0.0.1:8088/v1/data-identity}"
 if ! [[ "$TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
   printf '%s\n' "WEATHER_OM_API_RELOAD_CONFIRM_TIMEOUT_SECONDS must be positive" >&2
   exit 2
@@ -70,9 +71,37 @@ else
   confirmed=false
 fi
 set -o pipefail
-if [[ "$confirmed" != "true" ]]; then
-  printf '%s\n' "API reload was not confirmed for group=$GROUP coverage=$COVERAGE_ID" >&2
+identity_payload="$(mktemp)"
+cleanup_identity_payload() {
+  rm -f -- "$identity_payload"
+}
+trap cleanup_identity_payload EXIT
+if ! curl --fail --silent --show-error \
+  --connect-timeout 5 \
+  --max-time 15 \
+  "$IDENTITY_URL" \
+  > "$identity_payload"; then
+  printf '%s\n' "Could not query API data identity: $IDENTITY_URL" >&2
   exit 1
+fi
+python3 - "$identity_payload" "$GROUP" "$COVERAGE_ID" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+group = sys.argv[2]
+coverage_id = sys.argv[3]
+identity = payload.get(group)
+if not isinstance(identity, dict) or identity.get("coverage_id") != coverage_id:
+    raise SystemExit(
+        f"API data identity does not match requested reload: "
+        f"group={group} coverage={coverage_id}"
+    )
+PY
+if [[ "$confirmed" != "true" ]]; then
+  printf '%s\n' \
+    "API snapshot was already loaded; exact data identity confirmed for group=$GROUP coverage=$COVERAGE_ID"
 fi
 
 python3 - "$PRODUCER_ROOT" "$GROUP" "$COVERAGE_ID" <<'PY'
@@ -104,5 +133,8 @@ temporary.write_text(
 )
 os.replace(temporary, path)
 PY
+rm -f -- "$identity_payload"
+identity_payload=""
+trap - EXIT
 
 echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [NATIVE_API] applied group=$GROUP coverage=$COVERAGE_ID"
