@@ -4,6 +4,17 @@ set -euo pipefail
 APP_DIR="${WEATHER_FORECAST_APP_DIR:-/opt/1panel/apps/weather_forecast_server}"
 source "$APP_DIR/scripts/openmeteo_runtime_common.sh"
 load_weather_env
+WEATHER_OPENMETEO_HTTP_CACHE_DIR="/app/data/http_cache/gfs-probability"
+WEATHER_OPENMETEO_HTTP_CACHE_ENABLED="${WEATHER_GFS_HTTP_CACHE_ENABLED:-false}"
+export WEATHER_OPENMETEO_HTTP_CACHE_DIR
+export WEATHER_OPENMETEO_HTTP_CACHE_ENABLED
+unset HTTP_CACHE
+openmeteo_set_runtime_defaults
+write_sanitized_env_file
+cleanup_sensitive_artifacts() {
+  rm -f -- "${SANITIZED_ENV_FILE:-}"
+}
+trap cleanup_sensitive_artifacts EXIT
 
 RUN="${1:-${WEATHER_GFS_RUN:-}}"
 if [[ ! "$RUN" =~ ^[0-9]{10}$ || ! "${RUN:8:2}" =~ ^(00|06|12|18)$ ]]; then

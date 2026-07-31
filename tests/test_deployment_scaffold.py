@@ -274,10 +274,23 @@ def test_split_downloaders_source_env_before_runtime_defaults():
     scripts = [
         (ROOT / "scripts" / "download_openmeteo_gfs_data.sh").read_text(encoding="utf-8"),
         (ROOT / "scripts" / "download_openmeteo_cams_data.sh").read_text(encoding="utf-8"),
+        (ROOT / "scripts" / "download_gfs_probability_data.sh").read_text(encoding="utf-8"),
     ]
 
     for script in scripts:
         assert script.index("load_weather_env") < script.index("openmeteo_set_runtime_defaults")
+
+
+def test_gfs_probability_downloader_initializes_isolated_runtime():
+    script = (ROOT / "scripts" / "download_gfs_probability_data.sh").read_text(encoding="utf-8")
+
+    defaults_index = script.index("openmeteo_set_runtime_defaults")
+    env_file_index = script.index("write_sanitized_env_file")
+    run_index = script.index("run_openmeteo download-gfs")
+    assert defaults_index < env_file_index < run_index
+    assert 'WEATHER_OPENMETEO_HTTP_CACHE_DIR="/app/data/http_cache/gfs-probability"' in script
+    assert "unset HTTP_CACHE" in script
+    assert "trap cleanup_sensitive_artifacts EXIT" in script
 
 
 def test_runtime_data_download_combines_all_gfs025_upper_levels_per_frame():
