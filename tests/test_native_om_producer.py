@@ -109,14 +109,26 @@ def make_staging(output_root: Path, run: str) -> Path:
         "ncep_gefs025": list(range(3, 241, 3)),
         "ncep_gefs05": [*range(3, 240, 3), *range(240, 385, 6)],
     }
-    for probability_index, probability_run in enumerate(plan.source_runs[-3:]):
+    probability_baseline = (
+        datetime.strptime(plan.source_runs[0], "%Y%m%d%H").replace(
+            tzinfo=timezone.utc
+        )
+        - timedelta(hours=6)
+    ).strftime("%Y%m%d%H")
+    probability_source_runs = [probability_baseline, *plan.source_runs]
+    probability_horizons = {
+        domain: [latest, 3, 3, 3, latest, latest]
+        for domain, latest in (("ncep_gefs025", 240), ("ncep_gefs05", 384))
+    }
+    for probability_index, probability_run in enumerate(probability_source_runs):
         probability_base = datetime.strptime(probability_run, "%Y%m%d%H").replace(
             tzinfo=timezone.utc
         )
         for domain, latest_forecast_hours in probability_schedules.items():
+            horizon = probability_horizons[domain][probability_index]
             forecast_hours = (
-                [3, 6]
-                if probability_index < len(plan.source_runs[-3:]) - 1
+                list(range(3, horizon + 1, 3))
+                if horizon < 240
                 else latest_forecast_hours
             )
             run_dir = (
@@ -444,11 +456,18 @@ class NativeOmProducerTests(unittest.TestCase):
             )
             self.assertEqual(
                 ready["products"]["ncep_gefs025"]["source_runs"],
-                ["2026071212", "2026071218", "2026071300"],
+                [
+                    "2026071118",
+                    "2026071200",
+                    "2026071206",
+                    "2026071212",
+                    "2026071218",
+                    "2026071300",
+                ],
             )
             self.assertEqual(
                 ready["products"]["ncep_gefs05"]["source_run_max_forecast_hours"],
-                [6, 6, 384],
+                [384, 3, 3, 3, 384, 384],
             )
             current = output_root / "current" / "gfs"
             self.assertTrue(current.is_symlink())

@@ -24,7 +24,7 @@ GFS_PROBABILITY_DOMAINS = {
     "ncep_gefs025": 240,
     "ncep_gefs05": 384,
 }
-GFS_PROBABILITY_SUPPORT_HORIZON = 6
+GFS_PROBABILITY_SUPPORT_HORIZON = 3
 DEFAULT_GFS013_REQUIRED = "temperature_2m,surface_temperature,cloud_cover,cloud_cover_low,cloud_cover_mid,cloud_cover_high,relative_humidity_2m,precipitation,wind_v_component_10m,wind_u_component_10m,snow_depth,showers,snowfall_water_equivalent,uv_index,uv_index_clear_sky,boundary_layer_height,shortwave_radiation,latent_heat_flux,sensible_heat_flux,diffuse_radiation,total_column_integrated_water_vapour,soil_temperature_0_to_10cm,soil_temperature_10_to_40cm,soil_temperature_40_to_100cm,soil_temperature_100_to_200cm,soil_moisture_0_to_10cm,soil_moisture_10_to_40cm,soil_moisture_40_to_100cm,soil_moisture_100_to_200cm"
 DEFAULT_GFS025_REQUIRED = "pressure_msl,categorical_freezing_rain,temperature_80m,temperature_100m,wind_v_component_80m,wind_u_component_80m,wind_v_component_100m,wind_u_component_100m,wind_gusts_10m,freezing_level_height,cape,lifted_index,convective_inhibition,visibility"
 DEFAULT_PRESSURE_LEVELS = "1000,975,950,925,900,850,800,750,700,650,600,550,500,450,400,350,300,250,200,150,100,50"
@@ -580,6 +580,7 @@ def product_contract(
     coverage_id: str,
     domain_grids: dict[str, Any],
     probability_source_runs: list[str],
+    probability_source_horizons: dict[str, list[int]],
 ) -> dict[str, Any]:
     return {
         "gfs013_surface": {
@@ -602,10 +603,8 @@ def product_contract(
             "runtime_domain": "ncep_gefs025",
             "grid": domain_grids["ncep_gefs025"],
             "source_runs": probability_source_runs,
-            "source_run_max_forecast_hours": [
-                GFS_PROBABILITY_SUPPORT_HORIZON,
-                GFS_PROBABILITY_SUPPORT_HORIZON,
-                GFS_PROBABILITY_DOMAINS["ncep_gefs025"],
+            "source_run_max_forecast_hours": probability_source_horizons[
+                "ncep_gefs025"
             ],
         },
         "ncep_gefs05": {
@@ -613,10 +612,8 @@ def product_contract(
             "runtime_domain": "ncep_gefs05",
             "grid": domain_grids["ncep_gefs05"],
             "source_runs": probability_source_runs,
-            "source_run_max_forecast_hours": [
-                GFS_PROBABILITY_SUPPORT_HORIZON,
-                GFS_PROBABILITY_SUPPORT_HORIZON,
-                GFS_PROBABILITY_DOMAINS["ncep_gefs05"],
+            "source_run_max_forecast_hours": probability_source_horizons[
+                "ncep_gefs05"
             ],
         },
     }
@@ -629,7 +626,20 @@ def publish_gfs_coverage(args: argparse.Namespace) -> dict[str, Any]:
     if not staging.is_dir():
         raise ValueError(f"staging directory does not exist: {staging}")
     source_runs, source_run_max_forecast_hours = validate_gfs_window(args)
-    probability_source_runs = source_runs[-(args.full_run_count + 1) :]
+    probability_baseline = (
+        datetime.strptime(source_runs[0], "%Y%m%d%H").replace(tzinfo=UTC)
+        - timedelta(hours=6)
+    ).strftime("%Y%m%d%H")
+    probability_source_runs = [probability_baseline, *source_runs]
+    probability_short_run_count = len(source_runs) - args.full_run_count
+    probability_source_horizons = {
+        domain: [
+            latest_horizon,
+            *([GFS_PROBABILITY_SUPPORT_HORIZON] * probability_short_run_count),
+            *([latest_horizon] * args.full_run_count),
+        ]
+        for domain, latest_horizon in GFS_PROBABILITY_DOMAINS.items()
+    }
     if args.keep_coverages < 1:
         raise ValueError("keep_coverages must be positive")
     if args.public_hours < args.min_public_hours:
@@ -663,12 +673,8 @@ def publish_gfs_coverage(args: argparse.Namespace) -> dict[str, Any]:
         getattr(args, "top_lat", 58.0),
     )
     for probability_index, probability_run in enumerate(probability_source_runs):
-        for domain, latest_horizon in GFS_PROBABILITY_DOMAINS.items():
-            horizon = (
-                GFS_PROBABILITY_SUPPORT_HORIZON
-                if probability_index < len(probability_source_runs) - 1
-                else latest_horizon
-            )
+        for domain in GFS_PROBABILITY_DOMAINS:
+            horizon = probability_source_horizons[domain][probability_index]
             validate_probability_run(
                 staging,
                 domain,
@@ -762,6 +768,7 @@ def publish_gfs_coverage(args: argparse.Namespace) -> dict[str, Any]:
             coverage_id,
             domain_grids,
             probability_source_runs,
+            probability_source_horizons,
         ),
         "domain_grids": domain_grids,
         "static_sources": static_sources,
