@@ -24,6 +24,12 @@ def test_ecmwf_public_window_starts_at_local_midnight() -> None:
     assert local_day_start_utc(now, 8).isoformat() == "2026-07-31T16:00:00+00:00"
 
 
+def test_ecmwf_publisher_records_local_day_contract() -> None:
+    source = (SCRIPTS / "publish_ecmwf_native_coverage.py").read_text(encoding="utf-8")
+
+    assert '"local_utc_offset_hours"' in source
+
+
 def test_ecmwf_ensemble_plan_keeps_five_consecutive_cycles() -> None:
     plan = ensemble_source_run_plan("2026073000")
 

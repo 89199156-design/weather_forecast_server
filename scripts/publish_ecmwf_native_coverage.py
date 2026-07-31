@@ -383,6 +383,7 @@ def publish(args: argparse.Namespace) -> dict[str, Any]:
         "gust_support_run_count": GUST_SUPPORT_RUN_RETENTION,
         "gust_support_max_forecast_hour": GUST_SUPPORT_MAX_FORECAST_HOUR,
         "public_start_utc": public_start,
+        "local_utc_offset_hours": int(getattr(args, "local_utc_offset_hours", 8)),
         "products": products,
         "domain_grids": {MODEL: grid, ENSEMBLE_MODEL: grid},
         "producer_image": args.image,
