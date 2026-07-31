@@ -31,6 +31,7 @@ from om_v3_metadata import read_array_dimensions
 
 ENSEMBLE_MODEL = "ecmwf_ifs025_ensemble"
 PROBABILITY_VARIABLE = "precipitation_probability"
+WIND_GUST_VARIABLE = "wind_gusts_10m"
 UTC = timezone.utc
 
 
@@ -141,9 +142,16 @@ def validate_run(
         if not file_path.is_file() or file_path.stat().st_size <= 0:
             raise ValueError(f"missing ECMWF native file: {file_path}")
         dimensions = read_array_dimensions(file_path)
-        expected_time_count = len(expected_times)
+        if domain == MODEL and variable == WIND_GUST_VARIABLE:
+            expected_time_count = sum(
+                hour > 0 and (hour <= 90 or hour >= 150)
+                for hour in expected_forecast_hours(run, horizon)
+            )
+        else:
+            expected_time_count = len(expected_times)
         if (
             domain == MODEL
+            and variable != WIND_GUST_VARIABLE
             and variable in RAW_VARIABLES_OMIT_HOUR_ZERO
             and expected_times[0] == reference
         ):

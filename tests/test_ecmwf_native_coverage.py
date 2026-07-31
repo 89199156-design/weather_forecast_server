@@ -166,6 +166,51 @@ def test_ecmwf_validator_accounts_for_undefined_hour_zero_frames(
     )
 
 
+def test_ecmwf_validator_accepts_sparse_long_run_gust_frames(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    run = "2026073012"
+    run_root = (
+        tmp_path
+        / "data_run"
+        / "ecmwf_ifs025"
+        / "2026"
+        / "07"
+        / "30"
+        / "1200Z"
+    )
+    run_root.mkdir(parents=True)
+    variables = {"temperature_2m", "wind_gusts_10m"}
+    for variable in variables:
+        (run_root / f"{variable}.om").write_bytes(b"om")
+    reference = publisher.parse_run(run)
+    hours = expected_forecast_hours(run, 360)
+    (run_root / "meta.json").write_text(
+        json.dumps(
+            {
+                "reference_time": reference.isoformat(),
+                "valid_times": [
+                    (reference + publisher.timedelta(hours=hour)).isoformat()
+                    for hour in hours
+                ],
+                "variables": sorted(variables),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def dimensions(path: Path) -> tuple[int, ...]:
+        return (
+            (249, 297, 66)
+            if Path(path).stem == "wind_gusts_10m"
+            else (249, 297, 85)
+        )
+
+    monkeypatch.setattr(publisher, "read_array_dimensions", dimensions)
+    publisher.validate_run(tmp_path, "ecmwf_ifs025", run, 360, variables)
+
+
 def test_ecmwf_validator_does_not_relax_hour_zero_for_instant_fields(
     tmp_path: Path,
     monkeypatch,
