@@ -604,6 +604,7 @@ def product_contract(
             "source_runs": probability_source_runs,
             "source_run_max_forecast_hours": [
                 GFS_PROBABILITY_SUPPORT_HORIZON,
+                GFS_PROBABILITY_SUPPORT_HORIZON,
                 GFS_PROBABILITY_DOMAINS["ncep_gefs025"],
             ],
         },
@@ -613,6 +614,7 @@ def product_contract(
             "grid": domain_grids["ncep_gefs05"],
             "source_runs": probability_source_runs,
             "source_run_max_forecast_hours": [
+                GFS_PROBABILITY_SUPPORT_HORIZON,
                 GFS_PROBABILITY_SUPPORT_HORIZON,
                 GFS_PROBABILITY_DOMAINS["ncep_gefs05"],
             ],
@@ -627,7 +629,7 @@ def publish_gfs_coverage(args: argparse.Namespace) -> dict[str, Any]:
     if not staging.is_dir():
         raise ValueError(f"staging directory does not exist: {staging}")
     source_runs, source_run_max_forecast_hours = validate_gfs_window(args)
-    probability_source_runs = source_runs[-args.full_run_count :]
+    probability_source_runs = source_runs[-(args.full_run_count + 1) :]
     if args.keep_coverages < 1:
         raise ValueError("keep_coverages must be positive")
     if args.public_hours < args.min_public_hours:
@@ -664,7 +666,7 @@ def publish_gfs_coverage(args: argparse.Namespace) -> dict[str, Any]:
         for domain, latest_horizon in GFS_PROBABILITY_DOMAINS.items():
             horizon = (
                 GFS_PROBABILITY_SUPPORT_HORIZON
-                if probability_index == 0
+                if probability_index < len(probability_source_runs) - 1
                 else latest_horizon
             )
             validate_probability_run(
