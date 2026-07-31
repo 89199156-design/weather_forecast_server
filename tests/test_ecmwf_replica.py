@@ -27,7 +27,7 @@ import repair_ecmwf_static_release as static_repair
 def test_pinned_ecmwf_contract_is_complete_and_deterministic() -> None:
     assert (
         ecmwf_contract.OPENMETEO_UPSTREAM_COMMIT
-        == "b743cbc9a7fab3f8f7dda85968fb770eee48b9ec"
+        == "4efb9c49fb4a3718ed385fb22580d2e0fc56bdb2"
     )
     assert ecmwf_contract.MODEL == "ecmwf_ifs025"
     assert ecmwf_contract.PUBLIC_BOUNDS == (70.0, 140.0, 0.0, 58.0)
@@ -356,7 +356,7 @@ def test_release_publisher_requires_full_inventory_and_publishes_atomically(
         root=root,
         staging=staging,
         run="2026072300",
-        image="weather-forecast-ecmwf:ifs025-test",
+        image="weather-forecast-openmeteo:native-test",
         patch_sha256="a" * 64,
         source_revision="b" * 40,
     )
@@ -442,7 +442,7 @@ def test_static_repair_publishes_revisioned_hardlinked_release(
         root=root,
         staging=source,
         run="2026072300",
-        image="weather-forecast-ecmwf:ifs025-old",
+        image="weather-forecast-openmeteo:native-old",
         patch_sha256="a" * 64,
         source_revision=source_revision,
     )
@@ -454,7 +454,7 @@ def test_static_repair_publishes_revisioned_hardlinked_release(
         root=root,
         run="2026072300",
         regional_hsurf=regional_hsurf,
-        image="weather-forecast-ecmwf:ifs025-new",
+        image="weather-forecast-openmeteo:native-new",
         patch_sha256="c" * 64,
         source_revision="d" * 40,
     )
@@ -480,27 +480,21 @@ def test_static_repair_publishes_revisioned_hardlinked_release(
     assert original_variable.stat().st_ino == repaired_variable.stat().st_ino
 
 
-def test_regional_patch_applies_to_exact_locked_upstream() -> None:
-    upstream = ROOT / "vendor" / "open-meteo-ecmwf"
-    patch = ROOT / "vendor" / "patches" / "open-meteo-ecmwf-regional.patch"
-    revision = subprocess.check_output(
-        ["git", "-C", str(upstream), "rev-parse", "HEAD"],
-        text=True,
-    ).strip()
-    assert revision == ecmwf_contract.OPENMETEO_UPSTREAM_COMMIT
-    completed = subprocess.run(
-        ["git", "-C", str(upstream), "apply", "--check", str(patch)],
-        text=True,
-        capture_output=True,
-        check=False,
+def test_regional_ecmwf_boundary_is_in_the_unified_swift_tree() -> None:
+    unified = ROOT / "vendor" / "open-meteo" / "Sources" / "App"
+    source = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (
+            unified / "Ecmwf" / "DownloadEcmwfCommand.swift",
+            unified / "Ecmwf" / "EcmwfDomain.swift",
+            unified / "Ecmwf" / "EcmwfRegionalGrid.swift",
+            unified / "Ecmwf" / "EcmwfVariable.swift",
+            unified / "Helper" / "FullRunsVariables.swift",
+        )
     )
-    assert completed.returncode == 0, completed.stderr
-    numstat = subprocess.check_output(
-        ["git", "-C", str(upstream), "apply", "--numstat", str(patch)],
-        text=True,
-    )
-    assert "Sources/App/Ecmwf/EcmwfRegionalGrid.swift" in numstat
-    source = patch.read_text(encoding="utf-8")
+    assert not (ROOT / "vendor" / "open-meteo-ecmwf").exists()
+    assert not (ROOT / "docker" / "openmeteo-ecmwf.Dockerfile").exists()
+    assert not (ROOT / "scripts" / "build_openmeteo_ecmwf_image.sh").exists()
     assert "WEATHER_ECMWF_REGIONAL_GRID" in source
     assert "cropToRuntimeGrid" in source
     assert "cropOfficialSurfaceElevation" in source
@@ -512,7 +506,8 @@ def test_regional_patch_applies_to_exact_locked_upstream() -> None:
     )
     assert (
         "fileprivate static let pressureLevelsToKeep = "
-        "[1000, 925, 850, 700, 600, 500, 400, 300, 250, 200, 150, 100, 50, 10]"
+        "[1000, 975, 950, 925, 900, 850, 800, 750, 700, 650, 600, 550, "
+        "500, 450, 400, 350, 300, 250, 200, 150, 100, 50, 10]"
         in source
     )
     assert '"10fg3"' not in source
@@ -526,10 +521,8 @@ def test_regional_patch_applies_to_exact_locked_upstream() -> None:
         in source
     )
     assert (
-        '             let shortName = message.get(attribute: "shortName")!\n'
-        "+            var grib2d = GribArray2D("
-        "nx: domain.sourceGrid.nx, ny: domain.sourceGrid.ny)\n"
-        "             try grib2d.load(message: message)"
+        "var grib2d = GribArray2D("
+        "nx: domain.sourceGrid.nx, ny: domain.sourceGrid.ny)"
     ) in source
 
 
@@ -607,41 +600,21 @@ def test_ecmwf_pipeline_uses_panel_state_without_batch_lock() -> None:
     assert "VALUES (CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?, 'shell', ?, ?, ?, 'Disable')" in installer
 
 
-def test_ecmwf_image_uses_clean_source_and_records_exact_provenance() -> None:
-    dockerfile = (
-        ROOT / "docker" / "openmeteo-ecmwf.Dockerfile"
-    ).read_text(encoding="utf-8")
-    build = (SCRIPTS / "build_openmeteo_ecmwf_image.sh").read_text(
+def test_ecmwf_uses_unified_swift_image_and_records_exact_provenance() -> None:
+    dockerfile = (ROOT / "docker" / "openmeteo-engine.Dockerfile").read_text(
         encoding="utf-8"
     )
+    build = (SCRIPTS / "build_openmeteo_image.sh").read_text(encoding="utf-8")
 
-    assert "COPY vendor/open-meteo-ecmwf/" in dockerfile
-    assert "vendor/open-meteo/" not in dockerfile
+    assert "COPY vendor/open-meteo" in dockerfile
     assert "docker-container-build:latest" not in dockerfile
     assert "docker-container-run:latest" not in dockerfile
     assert "sha256:e0ef0354d44c4a9330eabe68be5b29cf303ca654444db4ae76f2b601ec161e6f" in dockerfile
     assert "sha256:7e6ee634cc774abdcf1875dc632229d51368a2b32e4714fed880c41bd7155aff" in dockerfile
-    assert "git apply --check /build/open-meteo-regional.patch" in dockerfile
-    assert "test ! -d .git" in dockerfile
-    assert "rm -f -- .git" in dockerfile
-    assert "io.weather-forecast.component=ecmwf-native-engine" in dockerfile
-    assert "io.weather-forecast.openmeteo-upstream-commit" in dockerfile
-    assert "io.weather-forecast.ecmwf-patch-sha256" in dockerfile
-    assert ecmwf_contract.OPENMETEO_UPSTREAM_COMMIT in build
-    assert (
-        'git -c safe.directory="$UPSTREAM_DIR" -C "$UPSTREAM_DIR" apply --check'
-        in build
-    )
-    assert (
-        'git -c safe.directory="$REPO_ROOT" -C "$REPO_ROOT" log -1 --format=%H'
-        in build
-    )
-    for path in (
-        "docker/openmeteo-ecmwf.Dockerfile",
-        "vendor/patches/open-meteo-ecmwf-regional.patch",
-        "vendor/open-meteo-ecmwf",
-    ):
-        assert path in build
+    assert "io.weather-forecast.swift-source-id" in dockerfile
+    assert "docker/openmeteo-engine.Dockerfile" in build
+    assert "vendor/open-meteo" in build
+    assert 'IMAGE_TAG="native-$SOURCE_ID"' in build
 
 
 def test_ecmwf_webp_uses_shared_product_grid_and_18_layers() -> None:

@@ -45,6 +45,15 @@ struct DownloadEcmwfCommand: AsyncCommand {
         
         @Flag(name: "download-full-grib-file", help: "Skip GRIB inventory and process entire file")
         var downloadFullGribFile: Bool
+
+        @Flag(name: "skip-timeseries")
+        var skipTimeseries: Bool
+
+        @Flag(name: "skip-full-run")
+        var skipFullRun: Bool
+
+        @Flag(name: "probability-full-run-only")
+        var probabilityFullRunOnly: Bool
     }
 
     var help: String {
@@ -86,9 +95,30 @@ struct DownloadEcmwfCommand: AsyncCommand {
         if !isWave {
             try await downloadEcmwfElevation(application: context.application, domain: domain, base: base, run: run)
         }
-        let generateFullRun = domain.countEnsembleMember == 1
+        let generateFullRun = domain.countEnsembleMember == 1 && !signature.skipFullRun
         let handles = isWave ? try await downloadEcmwfWave(application: context.application, domain: domain, base: base, run: run, variables: waveVariables, concurrent: nConcurrent, maxForecastHour: signature.maxForecastHour, uploadS3Bucket: signature.uploadS3Bucket, downloadFullGribFile: signature.downloadFullGribFile) : try await downloadEcmwf(application: context.application, domain: domain, base: base, run: run, variables: variables, concurrent: nConcurrent, maxForecastHour: signature.maxForecastHour, uploadS3Bucket: signature.uploadS3Bucket, downloadFullGribFile: signature.downloadFullGribFile)
-        try await GenericVariableHandle.convert(application: context.application, domain: domain, createNetcdf: signature.createNetcdf, run: run, handles: handles, concurrent: nConcurrent, writeUpdateJson: true, uploadS3Bucket: signature.uploadS3Bucket, uploadS3OnlyProbabilities: signature.uploadS3OnlyProbabilities, generateFullRun: generateFullRun)
+        if signature.probabilityFullRunOnly {
+            guard domain.countEnsembleMember > 1 && !isWave else {
+                fatalError("probability-full-run-only requires an ECMWF ensemble domain")
+            }
+            let probabilityHandles = handles.filter {
+                $0.variable.omFileName.file == "precipitation_probability"
+            }
+            guard !probabilityHandles.isEmpty else {
+                fatalError("ensemble download produced no precipitation_probability handles")
+            }
+            try await GenericVariableHandle.generateFullRunData(
+                logger: logger,
+                domain: domain,
+                run: run,
+                handles: probabilityHandles,
+                concurrent: nConcurrent,
+                compression: .pfor_delta2d_int16,
+                skipMeta: false
+            )
+            return
+        }
+        try await GenericVariableHandle.convert(application: context.application, domain: domain, createNetcdf: signature.createNetcdf, run: run, handles: handles, concurrent: nConcurrent, writeUpdateJson: true, uploadS3Bucket: signature.uploadS3Bucket, uploadS3OnlyProbabilities: signature.uploadS3OnlyProbabilities, generateFullRun: generateFullRun, generateTimeSeries: !signature.skipTimeseries)
     }
 
     /// Download elevation file
@@ -98,10 +128,24 @@ struct DownloadEcmwfCommand: AsyncCommand {
         if FileManager.default.fileExists(atPath: surfaceElevationFileOm.getFilePath()) {
             return
         }
+        if let officialPath = EcmwfRegionalSourceConfig.officialSurfaceElevationPath {
+            logger.info("Installing pinned Open-Meteo surface-height grid")
+            let officialReader = try await OmFileReader(file: officialPath)
+                .expectArray(of: Float.self)
+            let officialElevation = try await officialReader.read()
+            let regionalElevation = domain.cropOfficialSurfaceElevation(
+                officialElevation
+            )
+            try surfaceElevationFileOm.createDirectory()
+            try regionalElevation.writeOmFile2D(
+                file: surfaceElevationFileOm.getFilePath(),
+                grid: domain.grid
+            )
+            return
+        }
         let curl = Curl(logger: logger, client: application.dedicatedHttpClient)
 
         var generateElevationFileData: (lsm: [Float]?, surfacePressure: [Float]?, sealevelPressure: [Float]?, temperature_2m: [Float]?) = (nil, nil, nil, nil)
-        var grib2d = GribArray2D(nx: domain.grid.nx, ny: domain.grid.ny)
 
         logger.info("Downloading height and elevation data")
         let url = domain.getUrl(base: base, run: run, hour: 0)[0]
@@ -113,8 +157,10 @@ struct DownloadEcmwfCommand: AsyncCommand {
             return entry.levtype == .sfc && ["lsm", "2t", "sp", "msl"].contains(entry.param)
         }) {
             let shortName = message.get(attribute: "shortName")!
+            var grib2d = GribArray2D(nx: domain.sourceGrid.nx, ny: domain.sourceGrid.ny)
             try grib2d.load(message: message)
             grib2d.array.flipLatitude()
+            grib2d.array = domain.cropToRuntimeGrid(grib2d.array)
 
             switch shortName {
             case "lsm":
@@ -170,6 +216,11 @@ struct DownloadEcmwfCommand: AsyncCommand {
         var forecastHours = domain.getDownloadForecastSteps(run: run.hour)
         if let maxForecastHour {
             forecastHours = forecastHours.filter({ $0 <= maxForecastHour })
+        }
+        if variables == [.wind_gusts_10m] {
+            forecastHours = forecastHours.filter {
+                $0 > 0 && ($0 <= 90 || $0 >= 150)
+            }
         }
         let timestamps = forecastHours.map { run.add(hours: $0) }
         let deaverager = GribDeaverager()
@@ -247,7 +298,7 @@ struct DownloadEcmwfCommand: AsyncCommand {
                     }
                     
                     // logger.info("Processing \(variable)")
-                    var grib2d = GribArray2D(nx: domain.grid.nx, ny: domain.grid.ny)
+                    var grib2d = GribArray2D(nx: domain.sourceGrid.nx, ny: domain.sourceGrid.ny)
                     try grib2d.load(message: message)
                     if (domain == .aifs025_single || domain == .aifs025_ensemble) && run >= Timestamp(2026, 5, 12, 6, 0) && run < Timestamp(2026,5,13,6) {
                         // AIFSv2 shifts data by 180° longitude
@@ -255,6 +306,7 @@ struct DownloadEcmwfCommand: AsyncCommand {
                     } else {
                         grib2d.array.flipLatitude()
                     }
+                    grib2d.array = domain.cropToRuntimeGrid(grib2d.array)
                     
                     // try message.debugGrid(grid: domain.grid, flipLatidude: false, shift180Longitude: false)
                     // fatalError()

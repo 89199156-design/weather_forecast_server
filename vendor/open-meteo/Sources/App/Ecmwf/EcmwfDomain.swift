@@ -123,12 +123,16 @@ enum EcmwfDomain: String, GenericDomain {
     }
 
     var grid: any Gridable {
-        switch self {
-        case .ifs04, .ifs04_ensemble:
-            return RegularGrid(nx: 900, ny: 451, latMin: -90, lonMin: -180, dx: 360 / 900, dy: 180 / 450)
-        case .ifs025, .ifs025_ensemble, .aifs025, .wam025, .wam025_ensemble, .aifs025_single, .aifs025_ensemble, .ifs025_ensemble_mean, .wam025_ensemble_mean, .aifs025_ensemble_mean:
-            return RegularGrid(nx: 1440, ny: 721, latMin: -90, lonMin: -180, dx: 360 / 1440, dy: 180 / (721 - 1))
+        guard let slice = regionalSlice else {
+            return sourceGrid
         }
+        return EcmwfRegionalRegularGrid(
+            base: sourceGrid,
+            x0: slice.x0,
+            y0: slice.y0,
+            nx: slice.nx,
+            ny: slice.ny
+        )
     }
 
     var countEnsembleMember: Int {

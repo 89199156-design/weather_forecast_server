@@ -104,21 +104,11 @@ upstream commit or one of the explicitly allowed product-source boundaries
 above. Reader and API semantics must never be silently mixed or compensated in
 the Rust adapter.
 
-## Isolated ECMWF IFS 0.25° Engine
+## ECMWF IFS 0.25° in the Unified Engine
 
-- Submodule: `vendor/open-meteo-ecmwf`
-- Upstream: `https://github.com/open-meteo/open-meteo`
-- Commit: `b743cbc9a7fab3f8f7dda85968fb770eee48b9ec`
-- Patch: `vendor/patches/open-meteo-ecmwf-regional.patch`
-- Image: `docker/openmeteo-ecmwf.Dockerfile`
-
-This second, isolated engine is used only for the Singapore ECMWF deterministic
-IFS 0.25° product. The commit is the same official source behavior proven by
-the frozen Shanghai 2026-07-23 strict comparison. It is intentionally separate
-from the older GFS/CAMS engine so ECMWF work cannot change their already
-validated source semantics.
-
-The project patch changes only the product-source/storage boundary:
+ECMWF uses the same `vendor/open-meteo` source tree, Dockerfile and immutable
+Swift image as GFS and CAMS. Its project changes remain limited to the
+product-source/storage boundary:
 
 - preserve the global ECMWF 0.25° lattice for GRIB decoding;
 - crop decoded fields to a configured native-grid rectangle before conversion;
@@ -127,5 +117,5 @@ The project patch changes only the product-source/storage boundary:
   the ordinary fast time-series database used by `/v1/ecmwf`.
 
 No reader, interpolation, derived-variable, daily aggregation, weather-code,
-or JSON precision formula is replaced. The build records the upstream commit,
-patch SHA-256, and combined source identity as immutable image labels.
+or JSON precision formula is replaced. The build records one combined Swift
+source identity as an immutable image label for all three models.

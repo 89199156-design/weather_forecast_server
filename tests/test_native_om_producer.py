@@ -879,10 +879,11 @@ class NativeOmProducerTests(unittest.TestCase):
             / "Helper"
             / "FullRunsVariables.swift"
         ).read_text(encoding="utf-8")
-        expected = "[1000, 975, 950, 925, 900, 850, 800, 750, 700, 650, 600, 550, 500, 450, 400, 350, 300, 250, 200, 150, 100, 50]"
+        shanghai_profile = "1000, 975, 950, 925, 900, 850, 800, 750, 700, 650, 600, 550, 500, 450, 400, 350, 300, 250, 200, 150, 100, 50"
+        expected = f"[{shanghai_profile}, 10]"
 
         self.assertIn(expected, source)
-        self.assertIn(expected[1:-1], (ROOT / "config" / "singapore.example.env").read_text(encoding="utf-8").replace(",", ", "))
+        self.assertIn(shanghai_profile, (ROOT / "config" / "singapore.example.env").read_text(encoding="utf-8").replace(",", ", "))
 
     def test_swift_production_image_uses_immutable_source_identity(self):
         source = (ROOT / "scripts" / "build_openmeteo_image.sh").read_text(encoding="utf-8")

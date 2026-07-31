@@ -267,8 +267,8 @@ def publish(args: argparse.Namespace) -> dict[str, Any]:
     expected_parent = (root / "staging").resolve()
     if staging.parent != expected_parent or not staging.is_dir():
         raise ValueError("ECMWF native staging is missing or outside its managed root")
-    if not re.fullmatch(r"[a-f0-9]{64}", args.patch_sha256):
-        raise ValueError("ECMWF patch SHA-256 is invalid")
+    if not re.fullmatch(r"[a-f0-9]{12}", args.swift_source_id):
+        raise ValueError("unified Swift source identity is invalid")
     if not re.fullmatch(r"[a-f0-9]{40}", args.source_revision):
         raise ValueError("source revision must be a full lowercase Git commit")
 
@@ -362,7 +362,7 @@ def publish(args: argparse.Namespace) -> dict[str, Any]:
         "domain_grids": {MODEL: grid, ENSEMBLE_MODEL: grid},
         "producer_image": args.image,
         "openmeteo_upstream_commit": OPENMETEO_UPSTREAM_COMMIT,
-        "regional_patch_sha256": args.patch_sha256,
+        "swift_source_id": args.swift_source_id,
         "source_revision": args.source_revision,
         "files": files,
         "bytes": bytes_total,
@@ -390,7 +390,7 @@ def main() -> int:
     parser.add_argument("--staging", required=True)
     parser.add_argument("--run", required=True)
     parser.add_argument("--image", required=True)
-    parser.add_argument("--patch-sha256", required=True)
+    parser.add_argument("--swift-source-id", required=True)
     parser.add_argument("--source-revision", required=True)
     parser.add_argument("--keep-coverages", type=int, default=2)
     args = parser.parse_args()

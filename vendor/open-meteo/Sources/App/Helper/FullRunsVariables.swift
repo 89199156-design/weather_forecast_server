@@ -36,6 +36,5 @@ enum FullRunsVariables {
     /// Pressure levels to keep
     /// Keep the same pressure profile required by the Shanghai OM products.
     /// This is storage selection only; values and interpolation remain upstream.
-    fileprivate static let pressureLevelsToKeep = [1000, 975, 950, 925, 900, 850, 800, 750, 700, 650, 600, 550, 500, 450, 400, 350, 300, 250, 200, 150, 100, 50]
+    fileprivate static let pressureLevelsToKeep = [1000, 975, 950, 925, 900, 850, 800, 750, 700, 650, 600, 550, 500, 450, 400, 350, 300, 250, 200, 150, 100, 50, 10]
 }
-

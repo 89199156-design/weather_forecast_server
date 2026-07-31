@@ -196,11 +196,11 @@ retained windows belong to OM/API and do not increase WebP file counts.
 
 ## ECMWF IFS 0.25° Replica
 
-The ECMWF producer is isolated from the already validated GFS/CAMS imports. Its image uses
-the exact Open-Meteo commit and container digests recorded in
-[`vendor/UPSTREAM_LOCKS.md`](vendor/UPSTREAM_LOCKS.md), then applies only the
-auditable regional storage patch. The native source is ECMWF Open Data; this
-pipeline does not download Open-Meteo's prepared `.om` bucket.
+ECMWF, GFS and CAMS are produced by the same pinned Swift/Open-Meteo image.
+The ECMWF regional storage boundary is compiled into the unified source tree
+recorded in [`vendor/UPSTREAM_LOCKS.md`](vendor/UPSTREAM_LOCKS.md); there is no
+second ECMWF source checkout, image or runtime. The native source is ECMWF Open
+Data, and the pipeline does not download Open-Meteo's prepared `.om` bucket.
 
 The production sequence is:
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-OPENMETEO_UPSTREAM_COMMIT = "b743cbc9a7fab3f8f7dda85968fb770eee48b9ec"
+OPENMETEO_UPSTREAM_COMMIT = "4efb9c49fb4a3718ed385fb22580d2e0fc56bdb2"
 MODEL = "ecmwf_ifs025"
 DOMAIN = "ifs025"
 PUBLIC_BOUNDS = (70.0, 140.0, 0.0, 58.0)

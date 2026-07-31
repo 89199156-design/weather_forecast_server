@@ -21,47 +21,38 @@ ECMWF_STATIC_ROOT="${WEATHER_ECMWF_STATIC_ROOT:-$APP_DIR/data/static}"
 STAGING_DIR="$ECMWF_ROOT/staging/ecmwf_native_$RUN"
 CURRENT_MARKER="$ECMWF_ROOT/groups/ecmwf/current/ready_for_processing.json"
 LOG_DIR="${WEATHER_OPENMETEO_BUILD_LOG_DIR:-/opt/1panel/apps/weather/logs}"
-IMAGE_NAME="${WEATHER_ECMWF_OPENMETEO_IMAGE:-weather-forecast-ecmwf}"
-IMAGE_TAG="${WEATHER_ECMWF_OPENMETEO_TAG:-}"
+IMAGE_NAME="${WEATHER_OPENMETEO_IMAGE:-weather-forecast-openmeteo}"
+IMAGE_TAG="${WEATHER_OPENMETEO_TAG:-}"
 MINIMUM_DATA_START_FREE_BYTES="${WEATHER_ECMWF_MINIMUM_START_FREE_BYTES:-10737418240}"
 MINIMUM_DATA_RUNTIME_FREE_BYTES="${WEATHER_ECMWF_MINIMUM_RUNTIME_FREE_BYTES:-6442450944}"
 MINIMUM_SYSTEM_FREE_BYTES="${WEATHER_SYSTEM_MINIMUM_FREE_BYTES:-10737418240}"
 KEEP_COVERAGES="${WEATHER_ECMWF_KEEP_NATIVE_COVERAGES:-2}"
 SOURCE_REVISION="$(git -c safe.directory="$APP_DIR" -C "$APP_DIR" rev-parse HEAD)"
-IMAGE_SOURCE_REVISION="$(git -c safe.directory="$APP_DIR" -C "$APP_DIR" log -1 --format=%H -- \
-  docker/openmeteo-ecmwf.Dockerfile \
-  vendor/patches/open-meteo-ecmwf-regional.patch \
-  vendor/open-meteo-ecmwf)"
-[[ -n "$IMAGE_SOURCE_REVISION" ]] || {
-  printf '%s\n' "Unable to resolve ECMWF image source revision" >&2
+SWIFT_SOURCE_ID="$({
+  git -c safe.directory="$APP_DIR" -C "$APP_DIR" rev-parse HEAD:docker/openmeteo-engine.Dockerfile
+  git -c safe.directory="$APP_DIR" -C "$APP_DIR" rev-parse HEAD:vendor/open-meteo
+  git -c safe.directory="$APP_DIR" -C "$APP_DIR" diff --binary -- docker/openmeteo-engine.Dockerfile vendor/open-meteo
+} | sha256sum | cut -c1-12)"
+[[ -n "$SWIFT_SOURCE_ID" ]] || {
+  printf '%s\n' "Unable to resolve unified Swift image source identity" >&2
   exit 1
 }
-PATCH_PATH="$APP_DIR/vendor/patches/open-meteo-ecmwf-regional.patch"
 PRODUCER_ROOT="${WEATHER_OM_PRODUCER_ROOT:-$APP_DIR/data/om_producer}"
 API_MARKER="$PRODUCER_ROOT/groups/ecmwf/current/ready_for_processing.json"
 WEBP_RUNNER="${WEATHER_OM_WEBP_RUNNER:-/opt/1panel/apps/weather_om_webp/scripts/run_scope.sh}"
 WEBP_OUTPUT_ROOT="${WEATHER_OM_WEBP_DATA_ROOT:-/opt/1panel/apps/weather_om_webp/data}"
 EXPECTED_COVERAGE_ID="ecmwf_native_${RUN}_${SOURCE_REVISION:0:12}"
 
-[[ -n "$IMAGE_TAG" ]] || { printf '%s\n' "WEATHER_ECMWF_OPENMETEO_TAG is required" >&2; exit 2; }
-[[ -f "$PATCH_PATH" ]] || { printf '%s\n' "Missing ECMWF regional source patch" >&2; exit 1; }
-PATCH_SHA256="$(sha256sum "$PATCH_PATH" | awk '{print $1}')"
+[[ -n "$IMAGE_TAG" ]] || { printf '%s\n' "WEATHER_OPENMETEO_TAG is required" >&2; exit 2; }
 IMAGE_REF="$IMAGE_NAME:$IMAGE_TAG"
 IMAGE_LABELS="$(docker image inspect "$IMAGE_REF" --format '{{json .Config.Labels}}')"
 PYTHONPATH="$APP_DIR/scripts${PYTHONPATH:+:$PYTHONPATH}" python3 - \
-  "$IMAGE_LABELS" "$PATCH_SHA256" "$IMAGE_SOURCE_REVISION" <<'PY'
+  "$IMAGE_LABELS" "$SWIFT_SOURCE_ID" <<'PY'
 import json
 import sys
 
-from ecmwf_contract import OPENMETEO_UPSTREAM_COMMIT
-
 labels = json.loads(sys.argv[1]) or {}
-expected = {
-    "io.weather-forecast.component": "ecmwf-native-engine",
-    "io.weather-forecast.openmeteo-upstream-commit": OPENMETEO_UPSTREAM_COMMIT,
-    "io.weather-forecast.ecmwf-patch-sha256": sys.argv[2],
-    "io.weather-forecast.ecmwf-source-id": sys.argv[3],
-}
+expected = {"io.weather-forecast.swift-source-id": sys.argv[2]}
 mismatches = {
     key: {"expected": value, "actual": labels.get(key)}
     for key, value in expected.items()
@@ -202,18 +193,18 @@ PY
 )"
       cp -al -- "$current_coverage" "$STAGING_DIR"
       rm -f -- "$STAGING_DIR/coverage.json"
-      previous_patch_sha256="$(python3 - "$CURRENT_MARKER" <<'PY'
+      previous_swift_source_id="$(python3 - "$CURRENT_MARKER" <<'PY'
 import json
 import sys
-print(json.load(open(sys.argv[1], encoding="utf-8")).get("regional_patch_sha256") or "")
+print(json.load(open(sys.argv[1], encoding="utf-8")).get("swift_source_id") or "")
 PY
 )"
-      if [[ "$previous_patch_sha256" != "$PATCH_SHA256" ]]; then
+      if [[ "$previous_swift_source_id" != "$SWIFT_SOURCE_ID" ]]; then
         remove_scoped_path \
           "$STAGING_DIR/data_run/ecmwf_ifs025" \
           "$STAGING_DIR/data_run"
         printf '%s\n' \
-          "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [ECMWF_NATIVE] deterministic OM will be rebuilt because producer patch changed"
+          "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [ECMWF_NATIVE] deterministic OM will be rebuilt because the unified Swift engine changed"
       fi
     fi
   else
@@ -311,7 +302,7 @@ PY
       --staging "$STAGING_DIR" \
       --run "$RUN" \
       --image "$IMAGE_REF" \
-      --patch-sha256 "$PATCH_SHA256" \
+      --swift-source-id "$SWIFT_SOURCE_ID" \
       --source-revision "$SOURCE_REVISION" \
       --keep-coverages "$KEEP_COVERAGES"
   fi

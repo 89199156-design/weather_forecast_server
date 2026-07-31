@@ -287,7 +287,7 @@ enum EcmwfVariable: String, CaseIterable, Hashable, EcmwfVariableDownloadable, G
         }
     }
 
-    static let pressure_levels = [1000, 925, 850, 700, 600, 500, 400, 300, 250, 200, 150, 100, 50]
+    static let pressure_levels = [1000, 925, 850, 700, 600, 500, 400, 300, 250, 200, 150, 100, 50, 10]
 
     var omFileName: (file: String, level: Int) {
         return (nameInFiles, 0)
