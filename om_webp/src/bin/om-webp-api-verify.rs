@@ -128,14 +128,10 @@ const GFS_LAYERS: &[LayerSpec] = &[
     scalar("t2m", "temperature_2m"),
     scalar("d2m", "dew_point_2m"),
     scalar("r2", "relative_humidity_2m"),
-    LayerSpec {
-        name: "wind",
-        variable: "wind_u_component_10m",
-        variable_v: Some("wind_v_component_10m"),
-        multiplier: 1.0,
-        encoding: Encoding::Wind,
-        derive: Derive::None,
-    },
+    // The packed wind layer stores raw U/V components, while the public API
+    // intentionally exposes only rounded wind speed and direction. Verify
+    // packed wind through om-grid-verify's native point path instead of
+    // requesting private component variables from the public HTTP API.
     scalar("tp", "precipitation"),
     scaled("snod", "snow_depth", 1000.0),
     scalar("gust", "wind_gusts_10m"),
@@ -571,4 +567,19 @@ fn derive_value(value: f32, derive: Derive) -> f32 {
 
 fn round6(value: f64) -> f64 {
     (value * 1_000_000.0).round() / 1_000_000.0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn http_verifier_does_not_request_private_wind_components() {
+        for layer in GFS_LAYERS {
+            assert_ne!(layer.variable, "wind_u_component_10m");
+            assert_ne!(layer.variable, "wind_v_component_10m");
+            assert_ne!(layer.variable_v, Some("wind_u_component_10m"));
+            assert_ne!(layer.variable_v, Some("wind_v_component_10m"));
+        }
+    }
 }
