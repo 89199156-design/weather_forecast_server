@@ -1,15 +1,17 @@
 # Singapore native OM migration runbook
 
 This runbook is for the Singapore node only. Shanghai is a read-only parity
-baseline. During the current development phase, Singapore is validated in the
-real production paths and ports because no client traffic is present. Published
-snapshots and the previous immutable API/WebP binary releases remain available
-for rollback.
+baseline. Singapore is built, published and validated only through its real
+production paths, services and ports. No test image, test branch, candidate
+service, shadow API or alternate data root is used. Published snapshots and the
+previous immutable API/WebP binary releases remain available for rollback.
 
 ## Invariants
 
 - OM is published below the real Singapore producer root.
 - API and WebP validation uses the real Singapore services and paths.
+- The server contains only the production Git branch and production runtime
+  artifacts; validation never creates a candidate or shadow deployment.
 - The previous Singapore API/WebP release targets are preserved until the new
   binaries pass health and parity gates.
 - GFS requires 16 GiB free before starting and 6 GiB before each source-run

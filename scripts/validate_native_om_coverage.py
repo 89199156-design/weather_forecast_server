@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate a published native Open-Meteo GFS coverage through a shadow API."""
+"""Validate published native GFS data through the production Rust API."""
 
 from __future__ import annotations
 

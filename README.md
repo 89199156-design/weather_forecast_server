@@ -101,7 +101,7 @@ the matching 1Panel task. Start or retry production from the corresponding
 1Panel -> weather_cams_ecpds_probe_cycle
 ```
 
-Build the patched Swift importer as a candidate image with:
+Build the patched Swift importer as an immutable production image with:
 
 ```bash
 bash scripts/build_openmeteo_image.sh
@@ -109,10 +109,8 @@ export WEATHER_OPENMETEO_TAG=native-REPLACE_WITH_PRINTED_SOURCE_ID
 ```
 
 The default tag is derived from the actual Git revision plus local Docker/vendor
-source diff and starts with `native-`. It does not update `latest`; setting
-`WEATHER_OPENMETEO_TAG_LATEST=true` is an explicit production action. This
-prevents a candidate build from overwriting the image used by the running
-Singapore container.
+source diff and starts with `native-`. The production task records and deploys
+that exact immutable tag; it does not use a mutable `latest` tag.
 
 The default output root is `data/om_producer`:
 
@@ -240,21 +238,12 @@ that both servers expose the same source runs and horizons. It then compares
 one point at a time over every hourly and daily value and stops at the first
 difference; a point is never advanced until GFS, ECMWF and CAMS all pass.
 
-After a coverage is generated, validate it without replacing the production
-API:
-
-```bash
-bash scripts/run_native_om_shadow_validation.sh gfs
-bash scripts/run_native_om_shadow_validation.sh cams
-```
-
-This starts an ephemeral read-only container on `127.0.0.1:18081`, using the
-exact image reference of the running production API. It verifies the marker,
-immutable coverage pointer and retained run metadata. GFS checks both domains,
-local-day midnight, latest run, 120/121/122/123h boundaries, and the 384h
-endpoint. CAMS checks its three complete runs, local-day midnight, latest run,
-and 120h endpoint. The script then stops the container and refuses to replace
-any pre-existing shadow container.
+After a coverage is atomically published, validate its marker, immutable
+coverage pointer, retained run metadata and API output through the running
+production Rust API. GFS checks both domains, local-day midnight, latest run,
+120/121/122/123h boundaries and the 384h endpoint. CAMS checks its three
+complete runs, local-day midnight, latest run and the 120h endpoint. No shadow
+container, candidate service or alternate API port is created.
 
 The final parity gate compares the Shanghai service with the running Singapore
 service using exactly 2,000 reproducible random points inside

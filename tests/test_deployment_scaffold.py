@@ -63,6 +63,7 @@ def test_build_script_uses_root_context_and_new_repository_paths_only():
 
 def test_singapore_internal_http_deploy_script_is_removed():
     assert not (ROOT / "scripts" / "deploy_singapore_candidate.sh").exists()
+    assert not (ROOT / "scripts" / "run_native_om_shadow_validation.sh").exists()
 
 
 def test_validation_candidates_can_use_remote_inventory_without_local_data(tmp_path):

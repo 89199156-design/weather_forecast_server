@@ -884,7 +884,7 @@ class NativeOmProducerTests(unittest.TestCase):
         self.assertIn(expected, source)
         self.assertIn(expected[1:-1], (ROOT / "config" / "singapore.example.env").read_text(encoding="utf-8").replace(",", ", "))
 
-    def test_swift_candidate_image_uses_source_identity_without_overwriting_latest(self):
+    def test_swift_production_image_uses_immutable_source_identity(self):
         source = (ROOT / "scripts" / "build_openmeteo_image.sh").read_text(encoding="utf-8")
 
         self.assertIn('IMAGE_TAG="native-$SOURCE_ID"', source)

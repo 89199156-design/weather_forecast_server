@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate a three-run native CAMS coverage through a shadow API."""
+"""Validate published three-run CAMS data through the production Rust API."""
 
 from __future__ import annotations
 

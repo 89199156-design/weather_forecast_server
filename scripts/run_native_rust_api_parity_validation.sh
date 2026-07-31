@@ -73,11 +73,11 @@ fi
 python3 "$APP_DIR/scripts/validate_native_om_coverage.py" \
   --producer-root "$PRODUCER_ROOT" \
   --api-base-url "$SINGAPORE_URL" \
-  --output-report "$REPORT_ROOT/gfs_native_candidate.json"
+  --output-report "$REPORT_ROOT/gfs_native_production.json"
 python3 "$APP_DIR/scripts/validate_native_cams_coverage.py" \
   --producer-root "$PRODUCER_ROOT" \
   --api-base-url "$SINGAPORE_URL" \
-  --output-report "$REPORT_ROOT/cams_native_candidate.json"
+  --output-report "$REPORT_ROOT/cams_native_production.json"
 python3 "$APP_DIR/scripts/compare_model_run_identities.py" inventory \
   --data-root "$PRODUCER_ROOT" \
   --process-pid "$API_PID" \

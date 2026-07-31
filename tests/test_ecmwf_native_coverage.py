@@ -223,8 +223,8 @@ def test_ecmwf_cycle_recovers_webp_without_republishing_immutable_om() -> None:
     assert 'REUSE_PUBLISHED=false' in source
     assert 'reuse published immutable OM' in source
     assert 'if [[ "$REUSE_PUBLISHED" != "true" ]]; then' in source
-    assert 'WEATHER_ECMWF_DEFER_CONSUMERS:-false' in source
-    assert 'Rust consumers intentionally deferred for first migration run' in source
+    assert 'WEATHER_ECMWF_DEFER_CONSUMERS' not in source
+    assert 'intentionally deferred' not in source
     assert '"$CURRENT_MARKER" -ef "$API_MARKER"' in source
     assert 'bash "$WEBP_RUNNER" ecmwf' in source
     assert 'reload_native_api_snapshot.sh" \\\n    ecmwf "$EXPECTED_COVERAGE_ID"' in source
@@ -233,6 +233,9 @@ def test_ecmwf_cycle_recovers_webp_without_republishing_immutable_om() -> None:
     assert "ECMWF native image provenance mismatch" in source
     assert 'raw_variables_for_horizon(int(sys.argv[1]))' in source
     assert '--only-variables "$RUN_VARIABLES"' in source
+    assert 'previous_patch_sha256' in source
+    assert 'deterministic OM will be rebuilt because producer patch changed' in source
+    assert '"$STAGING_DIR/data_run/ecmwf_ifs025"' in source
 
 
 def test_ecmwf_probe_uses_rust_webp_marker_contract() -> None:

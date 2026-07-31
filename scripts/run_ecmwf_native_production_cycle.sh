@@ -194,6 +194,19 @@ PY
 )"
       cp -al -- "$current_coverage" "$STAGING_DIR"
       rm -f -- "$STAGING_DIR/coverage.json"
+      previous_patch_sha256="$(python3 - "$CURRENT_MARKER" <<'PY'
+import json
+import sys
+print(json.load(open(sys.argv[1], encoding="utf-8")).get("regional_patch_sha256") or "")
+PY
+)"
+      if [[ "$previous_patch_sha256" != "$PATCH_SHA256" ]]; then
+        remove_scoped_path \
+          "$STAGING_DIR/data_run/ecmwf_ifs025" \
+          "$STAGING_DIR/data_run"
+        printf '%s\n' \
+          "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [ECMWF_NATIVE] deterministic OM will be rebuilt because producer patch changed"
+      fi
     fi
   else
     mkdir -p "$STAGING_DIR"
@@ -293,12 +306,6 @@ PY
       --patch-sha256 "$PATCH_SHA256" \
       --source-revision "$SOURCE_REVISION" \
       --keep-coverages "$KEEP_COVERAGES"
-  fi
-
-  if is_truthy "${WEATHER_ECMWF_DEFER_CONSUMERS:-false}"; then
-    printf '%s\n' \
-      "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [ECMWF_NATIVE] OM published; Rust consumers intentionally deferred for first migration run coverage=$EXPECTED_COVERAGE_ID"
-    exit 0
   fi
 
   if [[ ! -f "$API_MARKER" ]] || [[ ! "$CURRENT_MARKER" -ef "$API_MARKER" ]]; then
