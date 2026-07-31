@@ -200,9 +200,13 @@ PY
   }
   validate_staged_gfs_probabilities() {
     local probability_run="$1"
+    local gefs025_horizon="$2"
+    local gefs05_horizon="$3"
     PYTHONPATH="$APP_DIR/scripts${PYTHONPATH:+:$PYTHONPATH}" python3 - \
       "$STAGING_DIR" \
       "$probability_run" \
+      "$gefs025_horizon" \
+      "$gefs05_horizon" \
       "$GFS_STORAGE_LEFT_LON" \
       "$GFS_STORAGE_RIGHT_LON" \
       "$GFS_STORAGE_BOTTOM_LAT" \
@@ -212,14 +216,17 @@ import sys
 
 from native_grid_contract import gfs_domain_grids
 from publish_native_om_coverage import (
-    GFS_PROBABILITY_DOMAINS,
     validate_probability_run,
 )
 
 staging = Path(sys.argv[1])
 run = sys.argv[2]
-grids = gfs_domain_grids(*(float(value) for value in sys.argv[3:7]))
-for domain, horizon in GFS_PROBABILITY_DOMAINS.items():
+horizons = {
+    "ncep_gefs025": int(sys.argv[3]),
+    "ncep_gefs05": int(sys.argv[4]),
+}
+grids = gfs_domain_grids(*(float(value) for value in sys.argv[5:9]))
+for domain, horizon in horizons.items():
     validate_probability_run(staging, domain, run, horizon, grids[domain])
 PY
   }
@@ -329,14 +336,30 @@ PY
     "${PLANNED_SOURCE_RUNS[$((${#PLANNED_SOURCE_RUNS[@]} - 2))]}"
     "${PLANNED_SOURCE_RUNS[$((${#PLANNED_SOURCE_RUNS[@]} - 1))]}"
   )
-  for PROBABILITY_RUN in "${PROBABILITY_SOURCE_RUNS[@]}"; do
-    if validate_staged_gfs_probabilities "$PROBABILITY_RUN"; then
+  for PROBABILITY_INDEX in "${!PROBABILITY_SOURCE_RUNS[@]}"; do
+    PROBABILITY_RUN="${PROBABILITY_SOURCE_RUNS[$PROBABILITY_INDEX]}"
+    if (( PROBABILITY_INDEX == 0 )); then
+      PROBABILITY_GEFS025_HORIZON=6
+      PROBABILITY_GEFS05_HORIZON=6
+      PROBABILITY_DOWNLOAD_ARGS=("$PROBABILITY_RUN" 6)
+    else
+      PROBABILITY_GEFS025_HORIZON=240
+      PROBABILITY_GEFS05_HORIZON=384
+      PROBABILITY_DOWNLOAD_ARGS=("$PROBABILITY_RUN")
+    fi
+    if validate_staged_gfs_probabilities \
+      "$PROBABILITY_RUN" \
+      "$PROBABILITY_GEFS025_HORIZON" \
+      "$PROBABILITY_GEFS05_HORIZON"; then
       echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_GFS_OM] reuse validated probability run=$PROBABILITY_RUN"
     else
       require_free_bytes "$MINIMUM_RUNTIME_FREE_BYTES" "probability-$PROBABILITY_RUN"
       WEATHER_GFS_RUN="$PROBABILITY_RUN" \
-        bash scripts/download_gfs_probability_data.sh "$PROBABILITY_RUN"
-      validate_staged_gfs_probabilities "$PROBABILITY_RUN"
+        bash scripts/download_gfs_probability_data.sh "${PROBABILITY_DOWNLOAD_ARGS[@]}"
+      validate_staged_gfs_probabilities \
+        "$PROBABILITY_RUN" \
+        "$PROBABILITY_GEFS025_HORIZON" \
+        "$PROBABILITY_GEFS05_HORIZON"
     fi
   done
   python3 scripts/validate_openmeteo_latest_run.py \

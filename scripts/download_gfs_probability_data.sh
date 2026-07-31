@@ -21,6 +21,14 @@ if [[ ! "$RUN" =~ ^[0-9]{10}$ || ! "${RUN:8:2}" =~ ^(00|06|12|18)$ ]]; then
   printf '%s\n' "Usage: download_gfs_probability_data.sh YYYYMMDD{00|06|12|18}" >&2
   exit 2
 fi
+SUPPORT_MAX_HOUR="${2:-}"
+if [[ -n "$SUPPORT_MAX_HOUR" ]] \
+  && [[ ! "$SUPPORT_MAX_HOUR" =~ ^[0-9]+$ \
+    || "$SUPPORT_MAX_HOUR" -lt 3 \
+    || $((SUPPORT_MAX_HOUR % 3)) -ne 0 ]]; then
+  printf '%s\n' "GFS probability support horizon must be a positive 3-hour multiple" >&2
+  exit 2
+fi
 
 DATA_DIR="${WEATHER_OPENMETEO_DATA_DIR:?WEATHER_OPENMETEO_DATA_DIR is required}"
 export WEATHER_GFS_DOWNLOAD_MODE="${WEATHER_GFS_DOWNLOAD_MODE:-nomads-region}"
@@ -49,6 +57,9 @@ download_probability_domain() {
   local source_domain="$1"
   local runtime_domain="$2"
   local max_hour="$3"
+  if [[ -n "$SUPPORT_MAX_HOUR" && "$SUPPORT_MAX_HOUR" -lt "$max_hour" ]]; then
+    max_hour="$SUPPORT_MAX_HOUR"
+  fi
 
   remove_scoped_runtime_domain "$runtime_domain"
   cleanup_download_work_dirs "$DATA_DIR/download-$runtime_domain"
