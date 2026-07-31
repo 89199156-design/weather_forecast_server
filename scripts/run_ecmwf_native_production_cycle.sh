@@ -213,12 +213,16 @@ import sys
 print(json.load(open(sys.argv[1], encoding="utf-8")).get("swift_source_id") or "")
 PY
 )"
-      if [[ "$previous_swift_source_id" != "$SWIFT_SOURCE_ID" ]]; then
+      if [[ -n "$previous_swift_source_id" \
+        && "$previous_swift_source_id" != "$SWIFT_SOURCE_ID" ]]; then
         remove_scoped_path \
           "$STAGING_DIR/data_run/ecmwf_ifs025" \
           "$STAGING_DIR/data_run"
         printf '%s\n' \
           "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [ECMWF_NATIVE] deterministic OM will be rebuilt because the unified Swift engine changed"
+      elif [[ -z "$previous_swift_source_id" ]]; then
+        printf '%s\n' \
+          "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [ECMWF_NATIVE] legacy deterministic OM will be retained only after full native validation"
       fi
     fi
   else

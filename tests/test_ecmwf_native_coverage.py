@@ -288,6 +288,8 @@ def test_ecmwf_cycle_recovers_webp_without_republishing_immutable_om() -> None:
     assert 'raw_variables_for_horizon(int(sys.argv[1]))' in source
     assert '--only-variables "$RUN_VARIABLES"' in source
     assert 'previous_swift_source_id' in source
+    assert '[[ -n "$previous_swift_source_id"' in source
+    assert "legacy deterministic OM will be retained only after full native validation" in source
     assert 'deterministic OM will be rebuilt because the unified Swift engine changed' in source
     assert '"$STAGING_DIR/data_run/ecmwf_ifs025"' in source
 
