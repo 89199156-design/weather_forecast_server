@@ -117,7 +117,7 @@ def make_staging(output_root: Path, run: str) -> Path:
     ).strftime("%Y%m%d%H")
     probability_source_runs = [probability_baseline, *plan.source_runs]
     probability_horizons = {
-        domain: [latest, 3, 3, 3, latest, latest]
+        domain: [24, 3, 3, 3, 6, latest]
         for domain, latest in (("ncep_gefs025", 240), ("ncep_gefs05", 384))
     }
     for probability_index, probability_run in enumerate(probability_source_runs):
@@ -467,7 +467,7 @@ class NativeOmProducerTests(unittest.TestCase):
             )
             self.assertEqual(
                 ready["products"]["ncep_gefs05"]["source_run_max_forecast_hours"],
-                [384, 3, 3, 3, 384, 384],
+                [24, 3, 3, 3, 6, 384],
             )
             current = output_root / "current" / "gfs"
             self.assertTrue(current.is_symlink())

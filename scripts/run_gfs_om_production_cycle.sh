@@ -333,20 +333,29 @@ PY
 
   restore_latest_metadata "$RUN"
   PROBABILITY_BASELINE_RUN="$(python3 -c 'from datetime import datetime, timedelta, timezone; import sys; print((datetime.strptime(sys.argv[1], "%Y%m%d%H").replace(tzinfo=timezone.utc) - timedelta(hours=6)).strftime("%Y%m%d%H"))' "${PLANNED_SOURCE_RUNS[0]}")"
+  PROBABILITY_BASELINE_HORIZON="$(python3 -c 'from datetime import datetime, timezone; import sys; start=datetime.strptime(sys.argv[1], "%Y%m%d%H").replace(tzinfo=timezone.utc); end=datetime.strptime(sys.argv[2], "%Y%m%d%H").replace(tzinfo=timezone.utc); print(int((end-start).total_seconds()//3600))' "$PROBABILITY_BASELINE_RUN" "${PLANNED_SOURCE_RUNS[$SHORT_RUN_COUNT]}")"
   PROBABILITY_SOURCE_RUNS=(
     "$PROBABILITY_BASELINE_RUN"
     "${PLANNED_SOURCE_RUNS[@]}"
   )
   for PROBABILITY_INDEX in "${!PROBABILITY_SOURCE_RUNS[@]}"; do
     PROBABILITY_RUN="${PROBABILITY_SOURCE_RUNS[$PROBABILITY_INDEX]}"
-    if (( PROBABILITY_INDEX == 0 || PROBABILITY_INDEX > SHORT_RUN_COUNT )); then
-      PROBABILITY_GEFS025_HORIZON=240
-      PROBABILITY_GEFS05_HORIZON=384
-      PROBABILITY_DOWNLOAD_ARGS=("$PROBABILITY_RUN")
-    else
+    if (( PROBABILITY_INDEX == 0 )); then
+      PROBABILITY_GEFS025_HORIZON="$PROBABILITY_BASELINE_HORIZON"
+      PROBABILITY_GEFS05_HORIZON="$PROBABILITY_BASELINE_HORIZON"
+      PROBABILITY_DOWNLOAD_ARGS=("$PROBABILITY_RUN" "$PROBABILITY_BASELINE_HORIZON")
+    elif (( PROBABILITY_INDEX <= SHORT_RUN_COUNT )); then
       PROBABILITY_GEFS025_HORIZON=3
       PROBABILITY_GEFS05_HORIZON=3
       PROBABILITY_DOWNLOAD_ARGS=("$PROBABILITY_RUN" 3)
+    elif (( PROBABILITY_INDEX < ${#PROBABILITY_SOURCE_RUNS[@]} - 1 )); then
+      PROBABILITY_GEFS025_HORIZON=6
+      PROBABILITY_GEFS05_HORIZON=6
+      PROBABILITY_DOWNLOAD_ARGS=("$PROBABILITY_RUN" 6)
+    else
+      PROBABILITY_GEFS025_HORIZON=240
+      PROBABILITY_GEFS05_HORIZON=384
+      PROBABILITY_DOWNLOAD_ARGS=("$PROBABILITY_RUN")
     fi
     if validate_staged_gfs_probabilities \
       "$PROBABILITY_RUN" \

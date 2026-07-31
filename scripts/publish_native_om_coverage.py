@@ -632,11 +632,30 @@ def publish_gfs_coverage(args: argparse.Namespace) -> dict[str, Any]:
     ).strftime("%Y%m%d%H")
     probability_source_runs = [probability_baseline, *source_runs]
     probability_short_run_count = len(source_runs) - args.full_run_count
+    parsed_probability_runs = [
+        datetime.strptime(run, "%Y%m%d%H").replace(tzinfo=UTC)
+        for run in probability_source_runs
+    ]
+    probability_baseline_horizon = int(
+        (
+            parsed_probability_runs[probability_short_run_count + 1]
+            - parsed_probability_runs[0]
+        ).total_seconds()
+        // 3600
+    )
+    probability_complete_horizons = [
+        int((following - current).total_seconds() // 3600)
+        for current, following in zip(
+            parsed_probability_runs[-args.full_run_count : -1],
+            parsed_probability_runs[-args.full_run_count + 1 :],
+        )
+    ]
     probability_source_horizons = {
         domain: [
-            latest_horizon,
+            probability_baseline_horizon,
             *([GFS_PROBABILITY_SUPPORT_HORIZON] * probability_short_run_count),
-            *([latest_horizon] * args.full_run_count),
+            *probability_complete_horizons,
+            latest_horizon,
         ]
         for domain, latest_horizon in GFS_PROBABILITY_DOMAINS.items()
     }
