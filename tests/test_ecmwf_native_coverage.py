@@ -30,6 +30,28 @@ def test_ecmwf_publisher_records_local_day_contract() -> None:
     assert '"local_utc_offset_hours"' in source
 
 
+def test_ecmwf_inherited_provenance_is_limited_to_gust_support() -> None:
+    payload = {
+        "2026072800": {
+            "status": "legacy-retained-unverified",
+            "inherited_from_coverage": "ecmwf_native_2026073100_legacy",
+        }
+    }
+
+    assert publisher.inherited_gust_provenance(
+        json.dumps(payload), {"2026072800"}
+    ) == payload
+
+    try:
+        publisher.inherited_gust_provenance(
+            json.dumps(payload), {"2026072812"}
+        )
+    except ValueError as exc:
+        assert "non-gust runs" in str(exc)
+    else:
+        raise AssertionError("non-gust inherited provenance was accepted")
+
+
 def test_ecmwf_ensemble_plan_keeps_five_consecutive_cycles() -> None:
     plan = ensemble_source_run_plan("2026073000")
 
@@ -294,10 +316,12 @@ def test_ecmwf_cycle_recovers_webp_without_republishing_immutable_om() -> None:
     assert 'raw_variables_for_horizon(int(sys.argv[1]))' in source
     assert '--only-variables "$RUN_VARIABLES"' in source
     assert 'previous_swift_source_id' in source
-    assert '[[ -n "$previous_swift_source_id"' in source
-    assert "legacy deterministic OM will be retained only after full native validation" in source
-    assert 'deterministic OM will be rebuilt because the unified Swift engine changed' in source
-    assert '"$STAGING_DIR/data_run/ecmwf_ifs025"' in source
+    assert 'previous_native_contract' in source
+    assert 'NATIVE_PRODUCER_CONTRACT=2' in source
+    assert 'legacy deterministic OM will be retained only after full native validation' not in source
+    assert 'retained legacy data is limited to audited gust-support runs' in source
+    assert '"$STAGING_DIR/data_run/ecmwf_ifs025_ensemble"' in source
+    assert '--inherited-gust-provenance-json "$INHERITED_GUST_PROVENANCE_JSON"' in source
 
 
 def test_ecmwf_probe_uses_rust_webp_marker_contract() -> None:

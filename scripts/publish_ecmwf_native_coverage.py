@@ -32,6 +32,7 @@ from om_v3_metadata import read_array_dimensions
 ENSEMBLE_MODEL = "ecmwf_ifs025_ensemble"
 PROBABILITY_VARIABLE = "precipitation_probability"
 WIND_GUST_VARIABLE = "wind_gusts_10m"
+NATIVE_PRODUCER_CONTRACT = 2
 UTC = timezone.utc
 
 
@@ -278,6 +279,24 @@ def grid_contract() -> dict[str, Any]:
     }
 
 
+def inherited_gust_provenance(value: str, allowed_runs: set[str]) -> dict[str, Any]:
+    payload = json.loads(value or "{}")
+    if not isinstance(payload, dict):
+        raise ValueError("inherited ECMWF gust provenance must be an object")
+    unexpected = sorted(set(payload) - allowed_runs)
+    if unexpected:
+        raise ValueError(
+            "inherited ECMWF provenance contains non-gust runs: "
+            + ",".join(unexpected)
+        )
+    for run, provenance in payload.items():
+        if not re.fullmatch(r"[0-9]{10}", run) or not isinstance(provenance, dict):
+            raise ValueError("inherited ECMWF gust provenance is invalid")
+        if not str(provenance.get("status") or ""):
+            raise ValueError(f"inherited ECMWF gust provenance has no status: {run}")
+    return payload
+
+
 def publish(args: argparse.Namespace) -> dict[str, Any]:
     root = Path(args.root).resolve()
     staging = Path(args.staging).resolve()
@@ -340,6 +359,26 @@ def publish(args: argparse.Namespace) -> dict[str, Any]:
         else "short-history"
         for source_run, horizon in deterministic_plan
     ]
+    gust_support_runs = {
+        source_run
+        for source_run, role in zip(deterministic_runs, deterministic_roles)
+        if role == "gust-support"
+    }
+    inherited_provenance = inherited_gust_provenance(
+        str(getattr(args, "inherited_gust_provenance_json", "{}")),
+        gust_support_runs,
+    )
+    current_provenance = {
+        "status": "current",
+        "source_revision": args.source_revision,
+        "swift_source_id": args.swift_source_id,
+        "openmeteo_upstream_commit": OPENMETEO_UPSTREAM_COMMIT,
+        "producer_image": args.image,
+    }
+    deterministic_run_provenance = {
+        source_run: inherited_provenance.get(source_run, current_provenance)
+        for source_run in deterministic_runs
+    }
     ensemble_runs = [item[0] for item in ensemble_plan]
     ensemble_horizons = [item[1] for item in ensemble_plan]
     grid = grid_contract()
@@ -368,6 +407,7 @@ def publish(args: argparse.Namespace) -> dict[str, Any]:
     }
     marker: dict[str, Any] = {
         "version": 1,
+        "native_producer_contract": NATIVE_PRODUCER_CONTRACT,
         "status": "complete",
         "runtime_format": "openmeteo-native-v1",
         "group": "ecmwf",
@@ -378,6 +418,7 @@ def publish(args: argparse.Namespace) -> dict[str, Any]:
         "source_runs": deterministic_runs,
         "source_run_max_forecast_hours": deterministic_horizons,
         "source_run_roles": deterministic_roles,
+        "deterministic_run_provenance": deterministic_run_provenance,
         "short_run_count": SHORT_RUN_RETENTION,
         "full_run_count": COMPLETE_RUN_RETENTION,
         "gust_support_run_count": GUST_SUPPORT_RUN_RETENTION,
@@ -390,6 +431,9 @@ def publish(args: argparse.Namespace) -> dict[str, Any]:
         "openmeteo_upstream_commit": OPENMETEO_UPSTREAM_COMMIT,
         "swift_source_id": args.swift_source_id,
         "source_revision": args.source_revision,
+        "ensemble_run_provenance": {
+            source_run: current_provenance for source_run in ensemble_runs
+        },
         "files": files,
         "bytes": bytes_total,
         "generated_at": generated_at,
@@ -418,6 +462,7 @@ def main() -> int:
     parser.add_argument("--image", required=True)
     parser.add_argument("--swift-source-id", required=True)
     parser.add_argument("--source-revision", required=True)
+    parser.add_argument("--inherited-gust-provenance-json", default="{}")
     parser.add_argument("--public-start-utc")
     parser.add_argument("--local-utc-offset-hours", type=int, default=8)
     parser.add_argument("--keep-coverages", type=int, default=2)

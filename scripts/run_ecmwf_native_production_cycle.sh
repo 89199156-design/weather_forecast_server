@@ -56,6 +56,8 @@ API_MARKER="$PRODUCER_ROOT/groups/ecmwf/current/ready_for_processing.json"
 WEBP_RUNNER="${WEATHER_OM_WEBP_RUNNER:-/opt/1panel/apps/weather_om_webp/scripts/run_scope.sh}"
 WEBP_OUTPUT_ROOT="${WEATHER_OM_WEBP_DATA_ROOT:-/opt/1panel/apps/weather_om_webp/data}"
 EXPECTED_COVERAGE_ID="ecmwf_native_${RUN}_${SOURCE_REVISION:0:12}"
+NATIVE_PRODUCER_CONTRACT=2
+INHERITED_GUST_PROVENANCE_JSON='{}'
 
 [[ -n "$IMAGE_TAG" ]] || { printf '%s\n' "WEATHER_OPENMETEO_TAG is required" >&2; exit 2; }
 IMAGE_REF="$IMAGE_NAME:$IMAGE_TAG"
@@ -160,7 +162,8 @@ export WEATHER_ECMWF_STORAGE_TOP_LAT="${WEATHER_ECMWF_STORAGE_TOP_LAT:-60}"
   cd "$APP_DIR"
   REUSE_PUBLISHED=false
   if [[ -f "$CURRENT_MARKER" ]] && python3 - \
-    "$CURRENT_MARKER" "$RUN" "$EXPECTED_COVERAGE_ID" <<'PY'
+    "$CURRENT_MARKER" "$RUN" "$EXPECTED_COVERAGE_ID" \
+    "$SWIFT_SOURCE_ID" "$NATIVE_PRODUCER_CONTRACT" <<'PY'
 import json
 import sys
 payload = json.load(open(sys.argv[1], encoding="utf-8"))
@@ -170,6 +173,8 @@ raise SystemExit(
     and payload.get("runtime_format") == "openmeteo-native-v1"
     and payload.get("latest_complete_run") == sys.argv[2]
     and payload.get("coverage_id") == sys.argv[3]
+    and payload.get("swift_source_id") == sys.argv[4]
+    and payload.get("native_producer_contract") == int(sys.argv[5])
     and {"ecmwf_ifs025", "ecmwf_ifs025_ensemble"} <= set(products)
     else 1
 )
@@ -207,22 +212,67 @@ PY
 )"
       cp -al -- "$current_coverage" "$STAGING_DIR"
       rm -f -- "$STAGING_DIR/coverage.json"
-      previous_swift_source_id="$(python3 - "$CURRENT_MARKER" <<'PY'
+      INHERITED_GUST_PROVENANCE_JSON="$(python3 - "$CURRENT_MARKER" <<'PY'
 import json
 import sys
-print(json.load(open(sys.argv[1], encoding="utf-8")).get("swift_source_id") or "")
+payload = json.load(open(sys.argv[1], encoding="utf-8"))
+recorded = payload.get("deterministic_run_provenance") or {}
+output = {}
+for run, role in zip(
+    payload.get("source_runs") or [], payload.get("source_run_roles") or []
+):
+    if role != "gust-support":
+        continue
+    if isinstance(recorded.get(run), dict):
+        output[run] = recorded[run]
+    else:
+        output[run] = {
+            "status": "legacy-retained-unverified",
+            "inherited_from_coverage": payload.get("coverage_id"),
+            "source_revision": payload.get("source_revision"),
+            "swift_source_id": payload.get("swift_source_id"),
+            "openmeteo_upstream_commit": payload.get("openmeteo_upstream_commit"),
+            "producer_image": payload.get("producer_image"),
+        }
+print(json.dumps(output, separators=(",", ":"), sort_keys=True))
 PY
 )"
-      if [[ -n "$previous_swift_source_id" \
-        && "$previous_swift_source_id" != "$SWIFT_SOURCE_ID" ]]; then
+      read -r previous_swift_source_id previous_native_contract < <(python3 - \
+        "$CURRENT_MARKER" <<'PY'
+import json
+import sys
+payload = json.load(open(sys.argv[1], encoding="utf-8"))
+print(
+    str(payload.get("swift_source_id") or "missing"),
+    str(payload.get("native_producer_contract") or "missing"),
+)
+PY
+)
+      if [[ "$previous_swift_source_id" != "$SWIFT_SOURCE_ID" \
+        || "$previous_native_contract" != "$NATIVE_PRODUCER_CONTRACT" ]]; then
+        while IFS='|' read -r inherited_run inherited_role; do
+          [[ "$inherited_role" == "gust-support" ]] && continue
+          remove_scoped_path \
+            "$STAGING_DIR/data_run/ecmwf_ifs025/${inherited_run:0:4}/${inherited_run:4:2}/${inherited_run:6:2}/${inherited_run:8:2}00Z" \
+            "$STAGING_DIR/data_run/ecmwf_ifs025/${inherited_run:0:4}/${inherited_run:4:2}/${inherited_run:6:2}"
+        done < <(python3 - "$CURRENT_MARKER" <<'PY'
+import json
+import re
+import sys
+payload = json.load(open(sys.argv[1], encoding="utf-8"))
+for run, role in zip(
+    payload.get("source_runs") or [], payload.get("source_run_roles") or []
+):
+    if not re.fullmatch(r"[0-9]{10}", str(run)):
+        raise SystemExit("invalid inherited ECMWF source run")
+    print(f"{run}|{role}")
+PY
+)
         remove_scoped_path \
-          "$STAGING_DIR/data_run/ecmwf_ifs025" \
+          "$STAGING_DIR/data_run/ecmwf_ifs025_ensemble" \
           "$STAGING_DIR/data_run"
         printf '%s\n' \
-          "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [ECMWF_NATIVE] deterministic OM will be rebuilt because the unified Swift engine changed"
-      elif [[ -z "$previous_swift_source_id" ]]; then
-        printf '%s\n' \
-          "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [ECMWF_NATIVE] legacy deterministic OM will be retained only after full native validation"
+          "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [ECMWF_NATIVE] current/full deterministic and ensemble OM will be rebuilt; retained legacy data is limited to audited gust-support runs"
       fi
     fi
   else
@@ -322,6 +372,7 @@ PY
       --image "$IMAGE_REF" \
       --swift-source-id "$SWIFT_SOURCE_ID" \
       --source-revision "$SOURCE_REVISION" \
+      --inherited-gust-provenance-json "$INHERITED_GUST_PROVENANCE_JSON" \
       --public-start-utc "$PUBLIC_START_UTC" \
       --local-utc-offset-hours "$LOCAL_UTC_OFFSET_HOURS" \
       --keep-coverages "$KEEP_COVERAGES"
