@@ -323,6 +323,7 @@ def validate_api_payload(
     variables: list[str],
     hours: list[tuple[str, datetime]],
     source_run_references: set[datetime] | None = None,
+    probability_start: datetime | None = None,
 ) -> dict[str, Any]:
     responses = payload if isinstance(payload, list) else [payload]
     failures: list[dict[str, Any]] = []
@@ -377,7 +378,7 @@ def validate_api_payload(
                     represented_points.append(point_index)
                 if value_is_finite(value):
                     finite_points.append(point_index)
-            expected_missing = (
+            expected_source_hour_zero = (
                 not finite_points
                 and bool(points)
                 and len(represented_points) == len(points)
@@ -385,15 +386,29 @@ def validate_api_payload(
                 and requested in source_run_reference_hours
                 and variable in GFS_SKIP_HOUR_ZERO
             )
+            expected_probability_lead = (
+                not finite_points
+                and bool(points)
+                and len(represented_points) == len(points)
+                and all(value is None for value in values)
+                and variable == "precipitation_probability"
+                and probability_start is not None
+                and hour < probability_start
+            )
+            expected_missing = expected_source_hour_zero or expected_probability_lead
             evidence[label]["variables"][variable] = {
                 "finite_points": finite_points,
                 "represented_points": represented_points,
                 "values": values,
                 "expected_missing": expected_missing,
             }
-            if expected_missing:
+            if expected_source_hour_zero:
                 evidence[label]["variables"][variable]["expected_missing_reason"] = (
                     "official_gfs_skip_hour_zero_at_source_run_reference"
+                )
+            elif expected_probability_lead:
+                evidence[label]["variables"][variable]["expected_missing_reason"] = (
+                    "gefs_probability_starts_at_latest_run_plus_3h"
                 )
             elif not finite_points:
                 failures.append(
@@ -472,6 +487,7 @@ def main() -> int:
             source_run_references={
                 parse_compact_run(str(run)) for run in contract["source_runs"]
             },
+            probability_start=contract["latest"] + timedelta(hours=3),
         )
         report = {
             "passed": api_result["passed"],

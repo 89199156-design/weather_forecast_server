@@ -287,6 +287,46 @@ class ValidateNativeOmCoverageTests(unittest.TestCase):
             ]
         )
 
+    def test_accepts_probability_missing_before_latest_ensemble_first_frame(self):
+        latest = datetime(2026, 7, 13, 0, tzinfo=timezone.utc)
+        result = validate_api_payload(
+            [{"hourly": {"time": [iso_hour(latest)], "precipitation_probability": [None]}}],
+            points=[(31.2304, 121.4737)],
+            variables=["precipitation_probability"],
+            hours=[("latest_run", latest)],
+            probability_start=latest + timedelta(hours=3),
+        )
+
+        self.assertTrue(result["passed"])
+        evidence = result["critical_hours"]["latest_run"]["variables"][
+            "precipitation_probability"
+        ]
+        self.assertTrue(evidence["expected_missing"])
+        self.assertEqual(
+            evidence["expected_missing_reason"],
+            "gefs_probability_starts_at_latest_run_plus_3h",
+        )
+
+    def test_rejects_probability_missing_at_first_ensemble_frame(self):
+        first_frame = datetime(2026, 7, 13, 3, tzinfo=timezone.utc)
+        result = validate_api_payload(
+            [
+                {
+                    "hourly": {
+                        "time": [iso_hour(first_frame)],
+                        "precipitation_probability": [None],
+                    }
+                }
+            ],
+            points=[(31.2304, 121.4737)],
+            variables=["precipitation_probability"],
+            hours=[("first_probability_frame", first_frame)],
+            probability_start=first_frame,
+        )
+
+        self.assertFalse(result["passed"])
+        self.assertEqual(result["failures"][0]["reason"], "all_null_or_non_finite")
+
 
 if __name__ == "__main__":
     unittest.main()
