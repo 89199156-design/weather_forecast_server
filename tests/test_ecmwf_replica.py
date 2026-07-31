@@ -517,6 +517,8 @@ def test_regional_patch_applies_to_exact_locked_upstream() -> None:
     )
     assert '"10fg3"' not in source
     assert '"10fg6"' not in source
+    assert "if variables == [.wind_gusts_10m]" in source
+    assert "$0 > 0 && ($0 <= 90 || $0 >= 150)" in source
     assert "estimatedNumberOfGridCells" in source
     assert '@Flag(name: "skip-full-run")' in source
     assert (

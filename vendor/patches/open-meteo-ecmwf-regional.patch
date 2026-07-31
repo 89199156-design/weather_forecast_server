@@ -82,7 +82,21 @@ index 02af0fba..49828c66 100644
  
              switch shortName {
              case "lsm":
-@@ -250,7 +293,7 @@ struct DownloadEcmwfCommand: AsyncCommand {
+@@ -170,8 +213,13 @@ struct DownloadEcmwfCommand: AsyncCommand {
+         defer { Process.alarm(seconds: 0) }
+ 
+         var forecastHours = domain.getDownloadForecastSteps(run: run.hour)
+         if let maxForecastHour {
+             forecastHours = forecastHours.filter({ $0 <= maxForecastHour })
+         }
++        if variables == [.wind_gusts_10m] {
++            forecastHours = forecastHours.filter {
++                $0 > 0 && ($0 <= 90 || $0 >= 150)
++            }
++        }
+         let timestamps = forecastHours.map { run.add(hours: $0) }
+         let deaverager = GribDeaverager()
+@@ -250,7 +298,7 @@ struct DownloadEcmwfCommand: AsyncCommand {
                      }
                      
                      // logger.info("Processing \(variable)")
