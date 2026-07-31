@@ -439,7 +439,7 @@ def test_gfs_repair_mode_can_refresh_reused_surface_runs_without_gfs025():
     assert '--coverage-revision "$COVERAGE_REVISION"' in cycle
     assert 'merge_native_run_metadata.py' in cycle
     assert '! is_truthy "$FORCE_REUSED_DOWNLOAD"' in cycle
-    assert 'WEATHER_OM_GFS_SAME_RUN_COVERAGE_REVISION:-three-short-two-full-v1' in cycle
+    assert 'WEATHER_OM_GFS_SAME_RUN_COVERAGE_REVISION:-three-short-two-full-v2' in cycle
     assert 'validate_staged_gfs_run "$SOURCE_RUN" "$SOURCE_MAX_FORECAST_HOUR"' in cycle
     assert 'restore_latest_metadata "$RUN"' in cycle
 
