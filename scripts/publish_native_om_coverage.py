@@ -578,7 +578,7 @@ def retain_coverages_before_reload(
 def product_contract(
     coverage_id: str,
     domain_grids: dict[str, Any],
-    latest_run: str,
+    probability_source_runs: list[str],
 ) -> dict[str, Any]:
     return {
         "gfs013_surface": {
@@ -600,19 +600,19 @@ def product_contract(
             "coverage_id": coverage_id,
             "runtime_domain": "ncep_gefs025",
             "grid": domain_grids["ncep_gefs025"],
-            "source_runs": [latest_run],
+            "source_runs": probability_source_runs,
             "source_run_max_forecast_hours": [
                 GFS_PROBABILITY_DOMAINS["ncep_gefs025"]
-            ],
+            ] * len(probability_source_runs),
         },
         "ncep_gefs05": {
             "coverage_id": coverage_id,
             "runtime_domain": "ncep_gefs05",
             "grid": domain_grids["ncep_gefs05"],
-            "source_runs": [latest_run],
+            "source_runs": probability_source_runs,
             "source_run_max_forecast_hours": [
                 GFS_PROBABILITY_DOMAINS["ncep_gefs05"]
-            ],
+            ] * len(probability_source_runs),
         },
     }
 
@@ -624,6 +624,7 @@ def publish_gfs_coverage(args: argparse.Namespace) -> dict[str, Any]:
     if not staging.is_dir():
         raise ValueError(f"staging directory does not exist: {staging}")
     source_runs, source_run_max_forecast_hours = validate_gfs_window(args)
+    probability_source_runs = source_runs[-args.full_run_count :]
     if args.keep_coverages < 1:
         raise ValueError("keep_coverages must be positive")
     if args.public_hours < args.min_public_hours:
@@ -656,14 +657,15 @@ def publish_gfs_coverage(args: argparse.Namespace) -> dict[str, Any]:
         getattr(args, "bottom_lat", 0.0),
         getattr(args, "top_lat", 58.0),
     )
-    for domain, horizon in GFS_PROBABILITY_DOMAINS.items():
-        validate_probability_run(
-            staging,
-            domain,
-            args.latest_run,
-            horizon,
-            domain_grids[domain],
-        )
+    for probability_run in probability_source_runs:
+        for domain, horizon in GFS_PROBABILITY_DOMAINS.items():
+            validate_probability_run(
+                staging,
+                domain,
+                probability_run,
+                horizon,
+                domain_grids[domain],
+            )
     static_sources = {
         "copernicus_dem90": validate_dem_static(
             staging,
@@ -746,7 +748,11 @@ def publish_gfs_coverage(args: argparse.Namespace) -> dict[str, Any]:
         "public_end_utc": args.public_end_utc,
         "public_hours": args.public_hours,
         "coverage_path": coverage_relative.as_posix(),
-        "products": product_contract(coverage_id, domain_grids, args.latest_run),
+        "products": product_contract(
+            coverage_id,
+            domain_grids,
+            probability_source_runs,
+        ),
         "domain_grids": domain_grids,
         "static_sources": static_sources,
         "files": files,

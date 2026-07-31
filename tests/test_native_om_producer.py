@@ -109,36 +109,43 @@ def make_staging(output_root: Path, run: str) -> Path:
         "ncep_gefs025": list(range(3, 241, 3)),
         "ncep_gefs05": [*range(3, 240, 3), *range(240, 385, 6)],
     }
-    latest_base = datetime.strptime(run, "%Y%m%d%H").replace(tzinfo=timezone.utc)
-    for domain, forecast_hours in probability_schedules.items():
-        run_dir = (
-            staging
-            / "data_run"
-            / domain
-            / latest_base.strftime("%Y/%m/%d/%H00Z")
+    for probability_run in plan.source_runs[-2:]:
+        probability_base = datetime.strptime(probability_run, "%Y%m%d%H").replace(
+            tzinfo=timezone.utc
         )
-        run_dir.mkdir(parents=True, exist_ok=True)
-        write_fake_om(
-            run_dir / "precipitation_probability.om",
-            (233 if domain == "ncep_gefs025" else 117,
-             281 if domain == "ncep_gefs025" else 141,
-             len(forecast_hours)),
-        )
-        (run_dir / "meta.json").write_text(
-            json.dumps(
-                {
-                    "reference_time": latest_base.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                    "valid_times": [
-                        (latest_base + timedelta(hours=hour)).strftime(
-                            "%Y-%m-%dT%H:%MZ"
-                        )
-                        for hour in forecast_hours
-                    ],
-                    "variables": ["precipitation_probability"],
-                }
-            ),
-            encoding="utf-8",
-        )
+        for domain, forecast_hours in probability_schedules.items():
+            run_dir = (
+                staging
+                / "data_run"
+                / domain
+                / probability_base.strftime("%Y/%m/%d/%H00Z")
+            )
+            run_dir.mkdir(parents=True, exist_ok=True)
+            write_fake_om(
+                run_dir / "precipitation_probability.om",
+                (
+                    233 if domain == "ncep_gefs025" else 117,
+                    281 if domain == "ncep_gefs025" else 141,
+                    len(forecast_hours),
+                ),
+            )
+            (run_dir / "meta.json").write_text(
+                json.dumps(
+                    {
+                        "reference_time": probability_base.strftime(
+                            "%Y-%m-%dT%H:%M:%SZ"
+                        ),
+                        "valid_times": [
+                            (probability_base + timedelta(hours=hour)).strftime(
+                                "%Y-%m-%dT%H:%MZ"
+                            )
+                            for hour in forecast_hours
+                        ],
+                        "variables": ["precipitation_probability"],
+                    }
+                ),
+                encoding="utf-8",
+            )
     return staging
 
 
@@ -429,6 +436,14 @@ class NativeOmProducerTests(unittest.TestCase):
             self.assertEqual(
                 ready["products"]["gfs013_surface"]["grid"],
                 ready["domain_grids"]["ncep_gfs013"],
+            )
+            self.assertEqual(
+                ready["products"]["ncep_gefs025"]["source_runs"],
+                ["2026071218", "2026071300"],
+            )
+            self.assertEqual(
+                ready["products"]["ncep_gefs05"]["source_run_max_forecast_hours"],
+                [384, 384],
             )
             current = output_root / "current" / "gfs"
             self.assertTrue(current.is_symlink())

@@ -199,9 +199,10 @@ except (OSError, ValueError, json.JSONDecodeError) as exc:
 PY
   }
   validate_staged_gfs_probabilities() {
+    local probability_run="$1"
     PYTHONPATH="$APP_DIR/scripts${PYTHONPATH:+:$PYTHONPATH}" python3 - \
       "$STAGING_DIR" \
-      "$RUN" \
+      "$probability_run" \
       "$GFS_STORAGE_LEFT_LON" \
       "$GFS_STORAGE_RIGHT_LON" \
       "$GFS_STORAGE_BOTTOM_LAT" \
@@ -324,13 +325,20 @@ PY
   fi
 
   restore_latest_metadata "$RUN"
-  if validate_staged_gfs_probabilities; then
-    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_GFS_OM] reuse validated probability run=$RUN"
-  else
-    require_free_bytes "$MINIMUM_RUNTIME_FREE_BYTES" probability
-    WEATHER_GFS_RUN="$RUN" bash scripts/download_gfs_probability_data.sh "$RUN"
-    validate_staged_gfs_probabilities
-  fi
+  PROBABILITY_SOURCE_RUNS=(
+    "${PLANNED_SOURCE_RUNS[$((${#PLANNED_SOURCE_RUNS[@]} - 2))]}"
+    "${PLANNED_SOURCE_RUNS[$((${#PLANNED_SOURCE_RUNS[@]} - 1))]}"
+  )
+  for PROBABILITY_RUN in "${PROBABILITY_SOURCE_RUNS[@]}"; do
+    if validate_staged_gfs_probabilities "$PROBABILITY_RUN"; then
+      echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_GFS_OM] reuse validated probability run=$PROBABILITY_RUN"
+    else
+      require_free_bytes "$MINIMUM_RUNTIME_FREE_BYTES" "probability-$PROBABILITY_RUN"
+      WEATHER_GFS_RUN="$PROBABILITY_RUN" \
+        bash scripts/download_gfs_probability_data.sh "$PROBABILITY_RUN"
+      validate_staged_gfs_probabilities "$PROBABILITY_RUN"
+    fi
+  done
   python3 scripts/validate_openmeteo_latest_run.py \
     --data-dir "$STAGING_DIR" \
     --run "$RUN" \
@@ -361,7 +369,7 @@ PY
   python3 scripts/prune_native_om_runs.py \
     --data-dir "$STAGING_DIR" \
     --domains ncep_gefs025,ncep_gefs05 \
-    --retained-runs "$RUN"
+    --retained-runs "$(IFS=,; echo "${PROBABILITY_SOURCE_RUNS[*]}")"
 
   COVERAGE_REVISION_ARGS=()
   if [[ -n "$COVERAGE_REVISION" ]]; then
