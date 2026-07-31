@@ -69,12 +69,6 @@ struct LayerManifest {
 }
 
 #[derive(Debug, Clone, Copy)]
-enum Encoding {
-    Scalar,
-    Wind,
-}
-
-#[derive(Debug, Clone, Copy)]
 enum Derive {
     None,
     PrecipPhase,
@@ -85,9 +79,7 @@ enum Derive {
 struct LayerSpec {
     name: &'static str,
     variable: &'static str,
-    variable_v: Option<&'static str>,
     multiplier: f32,
-    encoding: Encoding,
     derive: Derive,
 }
 
@@ -159,9 +151,7 @@ const fn scaled(name: &'static str, variable: &'static str, multiplier: f32) -> 
     LayerSpec {
         name,
         variable,
-        variable_v: None,
         multiplier,
-        encoding: Encoding::Scalar,
         derive: Derive::None,
     }
 }
@@ -170,9 +160,7 @@ const fn derived(name: &'static str, derive: Derive) -> LayerSpec {
     LayerSpec {
         name,
         variable: "weather_code",
-        variable_v: None,
         multiplier: 1.0,
-        encoding: Encoding::Scalar,
         derive,
     }
 }
@@ -408,11 +396,6 @@ fn fetch_api(
         if !variables.contains(&layer.variable) {
             variables.push(layer.variable);
         }
-        if let Some(variable) = layer.variable_v {
-            if !variables.contains(&variable) {
-                variables.push(variable);
-            }
-        }
     }
     let latitude = samples
         .iter()
@@ -470,17 +453,11 @@ fn compare_layer(
     for (sample, response) in samples.iter().zip(responses) {
         let actual = image.get_pixel(sample.x as u32, sample.y as u32).0;
         let first = api_value(response, layer.variable)?;
-        let expected = match layer.encoding {
-            Encoding::Scalar => encode_scalar(
-                first.map(|value| derive_value(value, layer.derive) * layer.multiplier),
-                manifest.vmin,
-                manifest.scale,
-            ),
-            Encoding::Wind => encode_wind(
-                first,
-                api_value(response, layer.variable_v.expect("wind v"))?,
-            ),
-        };
+        let expected = encode_scalar(
+            first.map(|value| derive_value(value, layer.derive) * layer.multiplier),
+            manifest.vmin,
+            manifest.scale,
+        );
         if actual != expected {
             bail!(
                 "pixel mismatch scope={} layer={} timestamp={} flat_index={} x={} y={} lat={} lon={} api_value={:?} actual={:?} expected={:?}",
@@ -525,31 +502,6 @@ fn encode_scalar(value: Option<f32>, vmin: f32, scale: f32) -> [u8; 4] {
     [(encoded >> 8) as u8, encoded as u8, 0, 255]
 }
 
-fn encode_wind(u: Option<f32>, v: Option<f32>) -> [u8; 4] {
-    let (Some(u), Some(v)) = (u, v) else {
-        return [0, 0, 0, 0];
-    };
-    let speed = (u * u + v * v).sqrt();
-    if !u.is_finite()
-        || !v.is_finite()
-        || speed > 150.0
-        || !(-100.0..=100.0).contains(&u)
-        || !(-100.0..=100.0).contains(&v)
-    {
-        return [0, 0, 0, 0];
-    }
-    let eu = (u / 0.1).round().clamp(-1000.0, 3095.0) as i32 + 1000;
-    let ev = (v / 0.1).round().clamp(-1000.0, 3095.0) as i32 + 1000;
-    let u12 = eu as u16;
-    let v12 = ev as u16;
-    [
-        (u12 >> 4) as u8,
-        (((u12 & 0x0f) << 4) | (v12 >> 8)) as u8,
-        v12 as u8,
-        255,
-    ]
-}
-
 fn derive_value(value: f32, derive: Derive) -> f32 {
     let code = value.round() as i32;
     match derive {
@@ -578,8 +530,6 @@ mod tests {
         for layer in GFS_LAYERS {
             assert_ne!(layer.variable, "wind_u_component_10m");
             assert_ne!(layer.variable, "wind_v_component_10m");
-            assert_ne!(layer.variable_v, Some("wind_u_component_10m"));
-            assert_ne!(layer.variable_v, Some("wind_v_component_10m"));
         }
     }
 }
