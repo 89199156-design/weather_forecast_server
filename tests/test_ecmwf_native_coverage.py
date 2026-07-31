@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from pathlib import Path
 import json
 import sys
@@ -12,8 +13,15 @@ from publish_ecmwf_native_coverage import (
     ensemble_source_run_plan,
     expected_forecast_hours,
     grid_contract,
+    local_day_start_utc,
 )
 import publish_ecmwf_native_coverage as publisher
+
+
+def test_ecmwf_public_window_starts_at_local_midnight() -> None:
+    now = datetime(2026, 7, 31, 20, 0, tzinfo=timezone.utc)
+
+    assert local_day_start_utc(now, 8).isoformat() == "2026-07-31T16:00:00+00:00"
 
 
 def test_ecmwf_ensemble_plan_keeps_five_consecutive_cycles() -> None:

@@ -35,6 +35,23 @@ WIND_GUST_VARIABLE = "wind_gusts_10m"
 UTC = timezone.utc
 
 
+def local_day_start_utc(now: datetime, utc_offset_hours: int) -> datetime:
+    if now.tzinfo is None:
+        raise ValueError("ECMWF public-start reference time must be timezone-aware")
+    offset = timedelta(hours=utc_offset_hours)
+    local_now = now.astimezone(UTC) + offset
+    local_midnight = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+    return local_midnight - offset
+
+
+def parse_public_start(value: str) -> datetime:
+    normalized = value.strip().replace("Z", "+00:00")
+    parsed = datetime.fromisoformat(normalized)
+    if parsed.tzinfo is None:
+        raise ValueError("ECMWF public start must include a UTC offset")
+    return parsed.astimezone(UTC)
+
+
 def atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.tmp.{os.getpid()}")
@@ -326,7 +343,15 @@ def publish(args: argparse.Namespace) -> dict[str, Any]:
     ensemble_runs = [item[0] for item in ensemble_plan]
     ensemble_horizons = [item[1] for item in ensemble_plan]
     grid = grid_contract()
-    public_start = parse_run(args.run).strftime("%Y-%m-%dT%H:%M:%SZ")
+    public_start_value = getattr(args, "public_start_utc", None)
+    public_start = (
+        parse_public_start(public_start_value)
+        if public_start_value
+        else local_day_start_utc(
+            datetime.now(UTC),
+            int(getattr(args, "local_utc_offset_hours", 8)),
+        )
+    ).strftime("%Y-%m-%dT%H:%M:%SZ")
     products = {
         MODEL: {
             "coverage_id": coverage_id,
@@ -392,6 +417,8 @@ def main() -> int:
     parser.add_argument("--image", required=True)
     parser.add_argument("--swift-source-id", required=True)
     parser.add_argument("--source-revision", required=True)
+    parser.add_argument("--public-start-utc")
+    parser.add_argument("--local-utc-offset-hours", type=int, default=8)
     parser.add_argument("--keep-coverages", type=int, default=2)
     args = parser.parse_args()
     try:

@@ -28,6 +28,20 @@ MINIMUM_DATA_RUNTIME_FREE_BYTES="${WEATHER_ECMWF_MINIMUM_RUNTIME_FREE_BYTES:-644
 MINIMUM_SYSTEM_FREE_BYTES="${WEATHER_SYSTEM_MINIMUM_FREE_BYTES:-10737418240}"
 KEEP_COVERAGES="${WEATHER_ECMWF_KEEP_NATIVE_COVERAGES:-2}"
 SOURCE_REVISION="$(git -c safe.directory="$APP_DIR" -C "$APP_DIR" rev-parse HEAD)"
+LOCAL_UTC_OFFSET_HOURS="${WEATHER_ECMWF_LOCAL_UTC_OFFSET_HOURS:-8}"
+PUBLIC_START_UTC="$(PYTHONPATH="$APP_DIR/scripts" python3 - "$LOCAL_UTC_OFFSET_HOURS" <<'PY'
+from datetime import datetime, timezone
+import sys
+
+from publish_ecmwf_native_coverage import local_day_start_utc
+
+print(
+    local_day_start_utc(datetime.now(timezone.utc), int(sys.argv[1])).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+)
+PY
+)"
 SWIFT_SOURCE_ID="$({
   git -c safe.directory="$APP_DIR" -C "$APP_DIR" rev-parse HEAD:docker/openmeteo-engine.Dockerfile
   git -c safe.directory="$APP_DIR" -C "$APP_DIR" rev-parse HEAD:vendor/open-meteo
@@ -304,6 +318,8 @@ PY
       --image "$IMAGE_REF" \
       --swift-source-id "$SWIFT_SOURCE_ID" \
       --source-revision "$SOURCE_REVISION" \
+      --public-start-utc "$PUBLIC_START_UTC" \
+      --local-utc-offset-hours "$LOCAL_UTC_OFFSET_HOURS" \
       --keep-coverages "$KEEP_COVERAGES"
   fi
 
