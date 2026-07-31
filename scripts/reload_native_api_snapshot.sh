@@ -17,11 +17,29 @@ PRODUCER_ROOT="${WEATHER_OM_PRODUCER_ROOT:-$APP_DIR/data/om_producer}"
 API_SERVICE="${WEATHER_OM_API_SERVICE:-weather-om-api.service}"
 TIMEOUT_SECONDS="${WEATHER_OM_API_RELOAD_CONFIRM_TIMEOUT_SECONDS:-60}"
 SUCCESS_EVENT="published new immutable OM API snapshot"
-SUCCESS_IDENTITY="| $GROUP=$COVERAGE_ID |"
 if ! [[ "$TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
   printf '%s\n' "WEATHER_OM_API_RELOAD_CONFIRM_TIMEOUT_SECONDS must be positive" >&2
   exit 2
 fi
+python3 - "$PRODUCER_ROOT" "$GROUP" "$COVERAGE_ID" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1])
+group = sys.argv[2]
+coverage_id = sys.argv[3]
+marker = root / "groups" / group / "current" / "ready_for_processing.json"
+payload = json.loads(marker.read_text(encoding="utf-8"))
+if (
+    payload.get("status") != "complete"
+    or payload.get("coverage_id") != coverage_id
+):
+    raise SystemExit(
+        f"native ready marker does not match requested reload: "
+        f"group={group} coverage={coverage_id}"
+    )
+PY
 if ! systemctl is-active --quiet "$API_SERVICE"; then
   printf '%s\n' "Rust API service is not active: $API_SERVICE" >&2
   exit 1
@@ -43,8 +61,8 @@ if timeout --signal=TERM "${TIMEOUT_SECONDS}s" \
     --follow \
     --no-pager \
     --output=cat \
-  | awk -v event="$SUCCESS_EVENT" -v identity="$SUCCESS_IDENTITY" '
-      index($0, event) && index($0, identity) { found = 1; exit }
+  | awk -v event="$SUCCESS_EVENT" '
+      index($0, event) { found = 1; exit }
       END { exit found ? 0 : 1 }
     ' >/dev/null; then
   confirmed=true

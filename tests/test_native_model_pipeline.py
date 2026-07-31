@@ -49,6 +49,8 @@ class NativeModelPipelineTests(unittest.TestCase):
         self.assertIn('--after-cursor="$cursor"', reload_helper)
         self.assertIn("--follow", reload_helper)
         self.assertIn('if [[ "$confirmed" != "true" ]]', reload_helper)
+        self.assertIn('payload.get("coverage_id") != coverage_id', reload_helper)
+        self.assertNotIn("SUCCESS_IDENTITY", reload_helper)
 
     def test_installer_retires_legacy_five_minute_webp_jobs(self):
         installer = (ROOT / "scripts" / "install_openmeteo_cron.sh").read_text(
