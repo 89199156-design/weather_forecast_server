@@ -474,6 +474,14 @@ def test_regional_patch_applies_to_exact_locked_upstream() -> None:
         "[1000, 925, 850, 700, 600, 500, 400, 300, 250, 200, 150, 100, 50, 10]"
         in source
     )
+    assert (
+        '["max_i10fg", "10fg3", "10fg6"].contains(entry.param)'
+        in source
+    )
+    assert (
+        '["max_i10fg", "10fg3", "10fg6"].contains(shortName)'
+        in source
+    )
     assert "estimatedNumberOfGridCells" in source
     assert '@Flag(name: "skip-full-run")' in source
     assert (

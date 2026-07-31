@@ -82,6 +82,15 @@ index 02af0fba..49828c66 100644
  
              switch shortName {
              case "lsm":
+@@ -204,7 +247,7 @@ struct DownloadEcmwfCommand: AsyncCommand {
+             for url in urls {
+                 try await curl.downloadEcmwfIndexed(url: url, concurrent: max(2, concurrent), downloadFullGribFile: downloadFullGribFile, isIncluded: { entry in
+                     return variables.contains(where: { variable in
+-                        if entry.param == "max_i10fg" && variable == .wind_gusts_10m {
++                        if ["max_i10fg", "10fg3", "10fg6"].contains(entry.param) && variable == .wind_gusts_10m {
+                             return true
+                         }
+                         if ["mx2t6", "max_2t", "mx2t3"].contains(entry.param) && variable == .temperature_2m_max {
 @@ -250,7 +293,7 @@ struct DownloadEcmwfCommand: AsyncCommand {
                      }
                      
@@ -112,6 +121,15 @@ index c25fb0c7..fb17acd4 100644
  
      var omFileName: (file: String, level: Int) {
          return (nameInFiles, 0)
+@@ -524,7 +524,7 @@ enum EcmwfVariable: String, CaseIterable, Hashable, EcmwfVariableDownloadable,
+             if variable == .total_column_integrated_water_vapour && shortName == "tcwv" {
+                 return true
+             }
+-            if shortName == "max_i10fg" && variable == .wind_gusts_10m {
++            if ["max_i10fg", "10fg3", "10fg6"].contains(shortName) && variable == .wind_gusts_10m {
+                 return true
+             }
+             if ["mx2t6", "max_2t", "mx2t3"].contains(shortName) && variable == .temperature_2m_max {
 diff --git a/Sources/App/Helper/FullRunsVariables.swift b/Sources/App/Helper/FullRunsVariables.swift
 index 012f57fc..da23b813 100644
 --- a/Sources/App/Helper/FullRunsVariables.swift
