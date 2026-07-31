@@ -275,6 +275,8 @@ def test_ecmwf_cycle_recovers_webp_without_republishing_immutable_om() -> None:
     assert 'reload_native_api_snapshot.sh" \\\n    ecmwf "$EXPECTED_COVERAGE_ID"' in source
     assert '"io.weather-forecast.ecmwf-patch-sha256": sys.argv[2]' in source
     assert '"io.weather-forecast.ecmwf-source-id": sys.argv[3]' in source
+    assert '"$IMAGE_LABELS" "$PATCH_SHA256" "$IMAGE_SOURCE_REVISION"' in source
+    assert 'EXPECTED_COVERAGE_ID="ecmwf_native_${RUN}_${SOURCE_REVISION:0:12}"' in source
     assert "ECMWF native image provenance mismatch" in source
     assert 'raw_variables_for_horizon(int(sys.argv[1]))' in source
     assert '--only-variables "$RUN_VARIABLES"' in source

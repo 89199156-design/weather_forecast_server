@@ -28,6 +28,14 @@ MINIMUM_DATA_RUNTIME_FREE_BYTES="${WEATHER_ECMWF_MINIMUM_RUNTIME_FREE_BYTES:-644
 MINIMUM_SYSTEM_FREE_BYTES="${WEATHER_SYSTEM_MINIMUM_FREE_BYTES:-10737418240}"
 KEEP_COVERAGES="${WEATHER_ECMWF_KEEP_NATIVE_COVERAGES:-2}"
 SOURCE_REVISION="$(git -c safe.directory="$APP_DIR" -C "$APP_DIR" rev-parse HEAD)"
+IMAGE_SOURCE_REVISION="$(git -c safe.directory="$APP_DIR" -C "$APP_DIR" log -1 --format=%H -- \
+  docker/openmeteo-ecmwf.Dockerfile \
+  vendor/patches/open-meteo-ecmwf-regional.patch \
+  vendor/open-meteo-ecmwf)"
+[[ -n "$IMAGE_SOURCE_REVISION" ]] || {
+  printf '%s\n' "Unable to resolve ECMWF image source revision" >&2
+  exit 1
+}
 PATCH_PATH="$APP_DIR/vendor/patches/open-meteo-ecmwf-regional.patch"
 PRODUCER_ROOT="${WEATHER_OM_PRODUCER_ROOT:-$APP_DIR/data/om_producer}"
 API_MARKER="$PRODUCER_ROOT/groups/ecmwf/current/ready_for_processing.json"
@@ -41,7 +49,7 @@ PATCH_SHA256="$(sha256sum "$PATCH_PATH" | awk '{print $1}')"
 IMAGE_REF="$IMAGE_NAME:$IMAGE_TAG"
 IMAGE_LABELS="$(docker image inspect "$IMAGE_REF" --format '{{json .Config.Labels}}')"
 PYTHONPATH="$APP_DIR/scripts${PYTHONPATH:+:$PYTHONPATH}" python3 - \
-  "$IMAGE_LABELS" "$PATCH_SHA256" "$SOURCE_REVISION" <<'PY'
+  "$IMAGE_LABELS" "$PATCH_SHA256" "$IMAGE_SOURCE_REVISION" <<'PY'
 import json
 import sys
 

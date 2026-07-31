@@ -632,7 +632,16 @@ def test_ecmwf_image_uses_clean_source_and_records_exact_provenance() -> None:
         'git -c safe.directory="$UPSTREAM_DIR" -C "$UPSTREAM_DIR" apply --check'
         in build
     )
-    assert 'git -c safe.directory="$REPO_ROOT" -C "$REPO_ROOT" rev-parse HEAD' in build
+    assert (
+        'git -c safe.directory="$REPO_ROOT" -C "$REPO_ROOT" log -1 --format=%H'
+        in build
+    )
+    for path in (
+        "docker/openmeteo-ecmwf.Dockerfile",
+        "vendor/patches/open-meteo-ecmwf-regional.patch",
+        "vendor/open-meteo-ecmwf",
+    ):
+        assert path in build
 
 
 def test_ecmwf_webp_uses_shared_product_grid_and_18_layers() -> None:

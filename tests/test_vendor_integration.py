@@ -214,15 +214,18 @@ def test_cds_ads_queue_state_is_fail_closed_and_post_is_never_retried():
     assert 'environment["WEATHER_CDS_JOB_TIMEOUT_HOURS"]' in cds
 
 
-def test_ecmwf_image_is_labeled_with_the_exact_weather_source_revision():
+def test_ecmwf_image_is_labeled_with_the_exact_engine_source_revision():
     script = (ROOT / "scripts" / "build_openmeteo_ecmwf_image.sh").read_text(
         encoding="utf-8"
     )
 
-    assert 'SOURCE_ID="$(git -C "$REPO_ROOT" rev-parse HEAD)"' in script
+    assert 'log -1 --format=%H' in script
+    assert "docker/openmeteo-ecmwf.Dockerfile" in script
+    assert "vendor/patches/open-meteo-ecmwf-regional.patch" in script
+    assert "vendor/open-meteo-ecmwf" in script
     assert 'IMAGE_TAG="${WEATHER_ECMWF_OPENMETEO_TAG:-ifs025-${SOURCE_ID:0:12}}"' in script
     assert '--build-arg "ECMWF_SOURCE_ID=$SOURCE_ID"' in script
-    assert 'git -C "$REPO_ROOT" diff --quiet -- "$DOCKERFILE" "$PATCH_PATH"' in script
+    assert 'git -c safe.directory="$REPO_ROOT" -C "$REPO_ROOT" diff --quiet' in script
 
 
 def test_openmeteo_raw_download_is_the_default_runtime_data_mode():

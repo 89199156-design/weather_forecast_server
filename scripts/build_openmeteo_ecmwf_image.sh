@@ -24,7 +24,11 @@ git -c safe.directory="$UPSTREAM_DIR" -C "$UPSTREAM_DIR" apply --check "$PATCH_P
 PATCH_SHA256="$(sha256sum "$PATCH_PATH" | awk '{print $1}')"
 git -c safe.directory="$REPO_ROOT" -C "$REPO_ROOT" diff --quiet -- "$DOCKERFILE" "$PATCH_PATH"
 git -c safe.directory="$REPO_ROOT" -C "$REPO_ROOT" diff --cached --quiet -- "$DOCKERFILE" "$PATCH_PATH"
-SOURCE_ID="$(git -c safe.directory="$REPO_ROOT" -C "$REPO_ROOT" rev-parse HEAD)"
+SOURCE_ID="$(git -c safe.directory="$REPO_ROOT" -C "$REPO_ROOT" log -1 --format=%H -- \
+  docker/openmeteo-ecmwf.Dockerfile \
+  vendor/patches/open-meteo-ecmwf-regional.patch \
+  vendor/open-meteo-ecmwf)"
+[[ -n "$SOURCE_ID" ]] || { printf '%s\n' "Unable to resolve ECMWF image source revision" >&2; exit 1; }
 IMAGE_TAG="${WEATHER_ECMWF_OPENMETEO_TAG:-ifs025-${SOURCE_ID:0:12}}"
 
 docker build \
