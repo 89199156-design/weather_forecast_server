@@ -330,5 +330,8 @@ def test_ecmwf_probe_uses_rust_webp_marker_contract() -> None:
     )
 
     assert 'current/ecmwf_ifs025.json' in source
+    assert 'EXPECTED_COVERAGE_ID="ecmwf_native_${RUN}_${SOURCE_REVISION:0:12}"' in source
+    assert 'payload.get("coverage_id") == sys.argv[4]' in source
+    assert 'payload.get("native_producer_contract") == 2' in source
     assert 'webp.get("scope") == "ecmwf_ifs025"' in source
     assert 'len(webp.get("layers") or []) == 18' in source
