@@ -111,10 +111,12 @@ def require_variables(payload: dict[str, Any], required: set[str], domain: str, 
         )
 
 
-def validate_dem_static(staging: Path, lat_min: int, lat_max: int) -> dict[str, Any]:
+def validate_dem_static(dem_root: Path, lat_min: int, lat_max: int) -> dict[str, Any]:
     if lat_min > lat_max or lat_min < -90 or lat_max > 89:
         raise ValueError("invalid Copernicus DEM90 latitude chunk range")
-    static_root = staging / "copernicus_dem90" / "static"
+    if not dem_root.is_absolute():
+        raise ValueError("Copernicus DEM90 root must be absolute")
+    static_root = dem_root / "copernicus_dem90" / "static"
     missing = [
         latitude
         for latitude in range(lat_min, lat_max + 1)
@@ -129,6 +131,8 @@ def validate_dem_static(staging: Path, lat_min: int, lat_max: int) -> dict[str, 
     return {
         "source": "copernicus_dem90",
         "runtime_path": "copernicus_dem90/static",
+        "storage": "external_env",
+        "environment": "OM_DEM_ROOT",
         "latitude_chunk_min": lat_min,
         "latitude_chunk_max": lat_max,
         "file_count": lat_max - lat_min + 1,
@@ -701,9 +705,13 @@ def publish_gfs_coverage(args: argparse.Namespace) -> dict[str, Any]:
                 horizon,
                 domain_grids[domain],
             )
+    packaged_dem = staging / "copernicus_dem90"
+    if packaged_dem.exists() or packaged_dem.is_symlink():
+        raise ValueError("GFS coverage must not package shared Copernicus DEM90 data")
+    dem_root = Path(str(getattr(args, "dem_root", "")))
     static_sources = {
         "copernicus_dem90": validate_dem_static(
-            staging,
+            dem_root,
             int(getattr(args, "required_dem_lat_min", DEFAULT_DEM_LAT_MIN)),
             int(getattr(args, "required_dem_lat_max", DEFAULT_DEM_LAT_MAX)),
         )
@@ -834,6 +842,11 @@ def main() -> int:
     parser.add_argument("--min-public-hours", type=int, default=300)
     parser.add_argument("--keep-coverages", type=int, default=2)
     parser.add_argument("--coverage-revision")
+    parser.add_argument(
+        "--dem-root",
+        default=os.environ.get("WEATHER_OM_DEM_ROOT", ""),
+        required="WEATHER_OM_DEM_ROOT" not in os.environ,
+    )
     parser.add_argument("--required-gfs013-variables", default=os.environ.get("WEATHER_GFS013_REQUIRED_DATA_RUN_VARIABLES", DEFAULT_GFS013_REQUIRED))
     parser.add_argument("--required-gfs025-variables", default=os.environ.get("WEATHER_GFS025_REQUIRED_DATA_RUN_VARIABLES", DEFAULT_GFS025_REQUIRED))
     parser.add_argument("--required-pressure-levels", default=os.environ.get("WEATHER_GFS_UPPER_LEVELS", DEFAULT_PRESSURE_LEVELS))

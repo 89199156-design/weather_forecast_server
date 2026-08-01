@@ -15,6 +15,7 @@ if [[ -z "$RUN" ]]; then
 fi
 LOG_DIR="${WEATHER_OPENMETEO_BUILD_LOG_DIR:-/opt/1panel/apps/weather/logs}"
 PRODUCER_ROOT="${WEATHER_OM_PRODUCER_ROOT:-$APP_DIR/data/om_producer}"
+DEM_ROOT="${WEATHER_OM_DEM_ROOT:-$APP_DIR/data/point}"
 RESUME_STAGING="${WEATHER_OM_GFS_RESUME_STAGING:-}"
 FORCE_REUSED_DOWNLOAD="${WEATHER_OM_GFS_FORCE_REUSED_DOWNLOAD:-false}"
 REPAIR_SURFACE_ONLY="${WEATHER_OM_GFS_REPAIR_SURFACE_ONLY:-false}"
@@ -89,6 +90,13 @@ fi
 
 mkdir -p "$LOG_DIR" "$PRODUCER_ROOT/staging"
 
+if [[ "$DEM_ROOT" != /* || ! -d "$DEM_ROOT/copernicus_dem90/static" ]]; then
+  printf '%s\n' "GFS shared DEM root is unavailable or not absolute: $DEM_ROOT" >&2
+  exit 2
+fi
+export WEATHER_OM_DEM_ROOT="$DEM_ROOT"
+export WEATHER_OPENMETEO_DEM_ROOT="$DEM_ROOT"
+
 {
   export WEATHER_OPENMETEO_TASK_SCOPE=gfs
   if ! is_truthy "${WEATHER_TASK_CLEANUP_DONE:-false}"; then
@@ -148,9 +156,9 @@ mkdir -p "$LOG_DIR" "$PRODUCER_ROOT/staging"
     COVERAGE_REVISION="$SAME_RUN_COVERAGE_REVISION"
   fi
 
-  ACTIVE_DATA_DIR="${WEATHER_OPENMETEO_DATA_DIR:-$APP_DIR/data/point}"
-  if [[ ! -d "$STAGING_DIR/copernicus_dem90" && -d "$ACTIVE_DATA_DIR/copernicus_dem90" ]]; then
-    cp -al "$ACTIVE_DATA_DIR/copernicus_dem90" "$STAGING_DIR/"
+  if [[ -e "$STAGING_DIR/copernicus_dem90" || -L "$STAGING_DIR/copernicus_dem90" ]]; then
+    printf '%s\n' "GFS staging unexpectedly contains packaged DEM data" >&2
+    exit 2
   fi
   prepare_openmeteo_staging_permissions "$STAGING_DIR"
 
@@ -413,6 +421,7 @@ PY
     --group gfs \
     --staging-dir "$STAGING_DIR" \
     --output-root "$PRODUCER_ROOT" \
+    --dem-root "$DEM_ROOT" \
     --latest-run "$RUN" \
     --source-runs "$SOURCE_RUNS" \
     --full-run-count "$FULL_RUN_COUNT" \

@@ -32,9 +32,15 @@ previous immutable API/WebP binary releases remain available for rollback.
 - A source run already present in its complete group marker is a no-op. The
   same GFS/CAMS run must not be regenerated merely because another
   high-frequency tick occurred.
-- GFS keeps five runs: three strict `f000...f005` histories followed by the
+- GFS keeps five runs: three strict `f000...f005` histories (six hourly frames
+  per run, so consecutive six-hour cycles join without a gap) followed by the
   previous and latest complete official `f000...f384` runs. No older `f006`
   value is mixed into the next run's `f000`.
+- Copernicus DEM90 is a single host-level static dataset selected by
+  `WEATHER_OM_DEM_ROOT` for the producer and `OM_DEM_ROOT` for the Rust API.
+  Swift sees that shared directory through a read-only nested container mount,
+  while publication records an external static-source contract. Neither GFS
+  staging nor an immutable GFS coverage packages a second DEM copy.
 - ECMWF publishes one native OM coverage containing eight deterministic source
   runs: five bounded older-cycle wind-gust-only support runs, the previous
   complete 00Z/12Z run, the adjacent six-hour short run, and the target
@@ -152,7 +158,7 @@ budget.
 The GFS cycle validates every seeded run against its assigned role before
 reuse. During a healthy rollover it reuses two short runs and the old latest
 complete run, reduces the former previous-complete run to strict
-`f000...f005`, and downloads the new latest complete run. It therefore performs
+`f000...f005` (six hourly frames), and downloads the new latest complete run. It therefore performs
 two downloads; a cold start downloads all five missing roles. It restores both
 domain `latest.json` files after any history repair,
 validates every required surface and 22-level pressure file, and removes

@@ -7,6 +7,7 @@ import argparse
 from datetime import datetime, timedelta, timezone
 import json
 import math
+import os
 from pathlib import Path, PurePosixPath
 import sys
 from typing import Any
@@ -95,7 +96,11 @@ def resolve_scoped_coverage(producer_root: Path, relative_value: Any) -> Path:
     return coverage
 
 
-def validate_coverage_contract(producer_root: Path, min_public_hours: int = 300) -> dict[str, Any]:
+def validate_coverage_contract(
+    producer_root: Path,
+    min_public_hours: int = 300,
+    dem_root: Path | None = None,
+) -> dict[str, Any]:
     producer_root = producer_root.resolve(strict=True)
     marker_path = producer_root / "groups" / "gfs" / "current" / "ready_for_processing.json"
     if not marker_path.is_file():
@@ -177,9 +182,23 @@ def validate_coverage_contract(producer_root: Path, min_public_hours: int = 300)
     expected_dem_files = dem_lat_max - dem_lat_min + 1
     if dem.get("file_count") != expected_dem_files:
         raise ValueError("Copernicus DEM90 file_count does not match its latitude range")
-    dem_root = coverage / "copernicus_dem90" / "static"
+    storage = dem.get("storage")
+    if storage is None:
+        runtime_root = coverage
+    elif storage == "external_env" and dem.get("environment") == "OM_DEM_ROOT":
+        if dem_root is None:
+            configured = os.environ.get("WEATHER_OM_DEM_ROOT") or os.environ.get("OM_DEM_ROOT")
+            if not configured:
+                raise ValueError("external Copernicus DEM90 requires --dem-root")
+            dem_root = Path(configured)
+        if not dem_root.is_absolute():
+            raise ValueError("external Copernicus DEM90 root must be absolute")
+        runtime_root = dem_root
+    else:
+        raise ValueError("coverage has an unsupported Copernicus DEM90 storage contract")
+    dem_static_root = runtime_root / "copernicus_dem90" / "static"
     for latitude in range(dem_lat_min, dem_lat_max + 1):
-        path = dem_root / f"lat_{latitude}.om"
+        path = dem_static_root / f"lat_{latitude}.om"
         if not path.is_file() or path.stat().st_size <= 0:
             raise ValueError(f"missing Copernicus DEM90 latitude chunk: {latitude}")
 
@@ -456,6 +475,7 @@ def build_api_url(
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--producer-root", required=True)
+    parser.add_argument("--dem-root")
     parser.add_argument("--api-base-url", required=True)
     parser.add_argument("--point", action="append", type=parse_point)
     parser.add_argument("--variables", default=",".join(DEFAULT_VARIABLES))
@@ -466,7 +486,11 @@ def main() -> int:
 
     report: dict[str, Any] = {"passed": False, "failures": []}
     try:
-        contract = validate_coverage_contract(Path(args.producer_root), args.min_public_hours)
+        contract = validate_coverage_contract(
+            Path(args.producer_root),
+            args.min_public_hours,
+            Path(args.dem_root) if args.dem_root else None,
+        )
         points = list(args.point or DEFAULT_POINTS)
         variables = [item.strip() for item in args.variables.split(",") if item.strip()]
         if not variables:

@@ -54,7 +54,7 @@ def load_publisher_module():
 
 def make_staging(output_root: Path, run: str) -> Path:
     staging = output_root / "staging" / f"gfs_{run}_test"
-    dem = staging / "copernicus_dem90" / "static" / "lat_0.om"
+    dem = output_root / "dem" / "copernicus_dem90" / "static" / "lat_0.om"
     dem.parent.mkdir(parents=True, exist_ok=True)
     dem.write_bytes(b"dem")
     reference = f"{run[0:4]}-{run[4:6]}-{run[6:8]}T{run[8:10]}:00:00Z"
@@ -197,6 +197,7 @@ def publisher_args(output_root: Path, staging: Path, run: str) -> argparse.Names
         required_pressure_variables="",
         required_dem_lat_min=0,
         required_dem_lat_max=0,
+        dem_root=str(output_root / "dem"),
     )
 
 
@@ -444,6 +445,11 @@ class NativeOmProducerTests(unittest.TestCase):
             self.assertEqual(
                 ready["coverage_path"], "coverages/gfs/gfs_native_2026071300"
             )
+            self.assertEqual(
+                ready["static_sources"]["copernicus_dem90"]["storage"],
+                "external_env",
+            )
+            self.assertFalse((coverage / "copernicus_dem90").exists())
             self.assertEqual(
                 ready["products"]["gfs_pressure_profile"]["runtime_domain"],
                 "ncep_gfs025",
@@ -849,6 +855,16 @@ class NativeOmProducerTests(unittest.TestCase):
         self.assertIn('--full-run-count "$FULL_RUN_COUNT"', producer)
         self.assertIn("prune_native_om_runs.py", producer)
         self.assertIn("publish_native_om_coverage.py", producer)
+        self.assertIn('DEM_ROOT="${WEATHER_OM_DEM_ROOT:-$APP_DIR/data/point}"', producer)
+        self.assertIn('export WEATHER_OPENMETEO_DEM_ROOT="$DEM_ROOT"', producer)
+        self.assertIn("GFS staging unexpectedly contains packaged DEM data", producer)
+        self.assertIn('--dem-root "$DEM_ROOT"', producer)
+        self.assertNotIn('cp -al "$ACTIVE_DATA_DIR/copernicus_dem90"', producer)
+        self.assertNotIn('ln -s "$DEM_ROOT/copernicus_dem90"', producer)
+        self.assertIn(
+            '--volume "$WEATHER_OPENMETEO_DEM_ROOT/copernicus_dem90:/app/data/copernicus_dem90:ro"',
+            (ROOT / "scripts" / "openmeteo_runtime_common.sh").read_text(encoding="utf-8"),
+        )
         self.assertNotIn("build_openmeteo_gfs_layers.sh", producer)
         self.assertNotIn("build_webp.py", producer)
         self.assertNotIn("run_openmeteo_api_server.sh", producer)

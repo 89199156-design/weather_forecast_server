@@ -3,6 +3,7 @@ set -euo pipefail
 
 APP_DIR="${WEATHER_FORECAST_APP_DIR:-/opt/1panel/apps/weather_forecast_server}"
 PRODUCER_ROOT="${WEATHER_OM_PRODUCER_ROOT:-$APP_DIR/data/om_producer}"
+DEM_ROOT="${WEATHER_OM_DEM_ROOT:-$APP_DIR/data/point}"
 SHANGHAI_URL="${WEATHER_SHANGHAI_OM_API_URL:-}"
 SINGAPORE_URL="${WEATHER_SINGAPORE_OM_API_URL:-http://127.0.0.1:8088}"
 API_PID="${WEATHER_OM_API_PID:-}"
@@ -72,6 +73,7 @@ fi
 
 python3 "$APP_DIR/scripts/validate_native_om_coverage.py" \
   --producer-root "$PRODUCER_ROOT" \
+  --dem-root "$DEM_ROOT" \
   --api-base-url "$SINGAPORE_URL" \
   --output-report "$REPORT_ROOT/gfs_native_production.json"
 python3 "$APP_DIR/scripts/validate_native_cams_coverage.py" \

@@ -123,6 +123,34 @@ class ValidateNativeOmCoverageTests(unittest.TestCase):
             self.assertEqual(contract["public_hours"], 408)
             self.assertEqual(len(critical_hours(contract)), 8)
 
+    def test_accepts_shared_external_dem_without_packaging_it_in_coverage(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "producer"
+            coverage = make_coverage(root)
+            dem_root = root / "dem"
+            external_dem = dem_root / "copernicus_dem90" / "static" / "lat_0.om"
+            external_dem.parent.mkdir(parents=True)
+            (coverage / "copernicus_dem90" / "static" / "lat_0.om").replace(external_dem)
+            (coverage / "copernicus_dem90" / "static").rmdir()
+            (coverage / "copernicus_dem90").rmdir()
+
+            manifest_path = coverage / "coverage.json"
+            marker_path = root / "groups/gfs/current/ready_for_processing.json"
+            for path in (manifest_path, marker_path):
+                payload = json.loads(path.read_text(encoding="utf-8"))
+                payload["static_sources"]["copernicus_dem90"].update(
+                    {"storage": "external_env", "environment": "OM_DEM_ROOT"}
+                )
+                files, bytes_total = coverage_data_stats(coverage)
+                payload["files"] = files
+                payload["bytes"] = bytes_total
+                write_json(path, payload)
+
+            contract = validate_coverage_contract(root, dem_root=dem_root)
+
+            self.assertEqual(contract["coverage_path"], str(coverage.resolve()))
+            self.assertFalse((coverage / "copernicus_dem90").exists())
+
     def test_rejects_current_pointer_that_does_not_match_marker(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "producer"

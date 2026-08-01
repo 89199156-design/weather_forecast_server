@@ -784,7 +784,9 @@ def test_runtime_data_download_requires_dem_source_for_openmeteo_parity():
     assert 'lat_${lat}.om' in script
     assert "compgen -G" not in script
     assert "require_dem_source" in script
-    assert "copernicus_dem90/static/lat_*.om" in script
+    assert "dem_static_directory" in script
+    assert 'WEATHER_OPENMETEO_DEM_ROOT:-$DATA_DIR' in script
+    assert '--volume "$WEATHER_OPENMETEO_DEM_ROOT/copernicus_dem90:/app/data/copernicus_dem90:ro"' in script
     assert "WEATHER_REQUIRE_DEM_SOURCE" in script
 
 

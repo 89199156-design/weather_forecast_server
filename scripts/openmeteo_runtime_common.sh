@@ -148,6 +148,7 @@ run_openmeteo() {
   local task_scope="${WEATHER_OPENMETEO_TASK_SCOPE:-}"
   local task_args=()
   local static_args=()
+  local dem_args=()
   if [[ -n "$task_scope" ]]; then
     if [[ ! "$task_scope" =~ ^[a-z][a-z0-9_-]{0,31}$ ]]; then
       printf '%s\n' "Invalid WEATHER_OPENMETEO_TASK_SCOPE=$task_scope" >&2
@@ -170,6 +171,17 @@ run_openmeteo() {
       --volume "$WEATHER_OPENMETEO_STATIC_ROOT:/app/static:ro"
     )
   fi
+  if [[ -n "${WEATHER_OPENMETEO_DEM_ROOT:-}" ]]; then
+    if [[ "${WEATHER_OPENMETEO_DEM_ROOT:0:1}" != "/" \
+      || ! -d "$WEATHER_OPENMETEO_DEM_ROOT/copernicus_dem90/static" ]]; then
+      printf '%s\n' \
+        "WEATHER_OPENMETEO_DEM_ROOT must be an existing absolute DEM root" >&2
+      return 2
+    fi
+    dem_args=(
+      --volume "$WEATHER_OPENMETEO_DEM_ROOT/copernicus_dem90:/app/data/copernicus_dem90:ro"
+    )
+  fi
   docker run --rm \
     "${task_args[@]}" \
     "${static_args[@]}" \
@@ -178,6 +190,7 @@ run_openmeteo() {
     --blkio-weight "$OPENMETEO_BLKIO_WEIGHT" \
     --env-file "$SANITIZED_ENV_FILE" \
     --volume "$DATA_DIR:/app/data" \
+    "${dem_args[@]}" \
     "$IMAGE_NAME:$IMAGE_TAG" \
     "$@"
 }
@@ -322,13 +335,24 @@ dem_region_lat_bounds() {
   printf '%s %s\n' "$lat_start" "$lat_end"
 }
 
+dem_static_directory() {
+  local root="${WEATHER_OPENMETEO_DEM_ROOT:-$DATA_DIR}"
+  if [[ "$root" != /* ]]; then
+    printf '%s\n' "DEM root must be absolute: $root" >&2
+    return 2
+  fi
+  printf '%s/copernicus_dem90/static\n' "${root%/}"
+}
+
 has_local_dem_static_files() {
   local lat_start
   local lat_end
   local lat
+  local dem_dir
+  dem_dir="$(dem_static_directory)" || return
   read -r lat_start lat_end < <(dem_region_lat_bounds)
   for lat in $(seq "$lat_start" "$lat_end"); do
-    if [[ ! -s "$DATA_DIR/copernicus_dem90/static/lat_${lat}.om" ]]; then
+    if [[ ! -s "$dem_dir/lat_${lat}.om" ]]; then
       return 1
     fi
   done
@@ -354,7 +378,8 @@ preseed_dem_region_static_files() {
   local lat_end
   read -r lat_start lat_end < <(dem_region_lat_bounds)
 
-  local dem_dir="$DATA_DIR/copernicus_dem90/static"
+  local dem_dir
+  dem_dir="$(dem_static_directory)"
   mkdir -p "$dem_dir"
 
   local active=0
@@ -391,8 +416,10 @@ require_dem_source() {
     return
   fi
 
+  local dem_dir
+  dem_dir="$(dem_static_directory)" || return
   printf '%s\n' \
-    "Missing Copernicus DEM90 source. Set WEATHER_DEM_PRESEED_BASE_URL to a project-owned DEM mirror, or pre-seed $DATA_DIR/copernicus_dem90/static/lat_*.om." >&2
+    "Missing Copernicus DEM90 source. Set WEATHER_DEM_PRESEED_BASE_URL to a project-owned DEM mirror, or pre-seed $dem_dir/lat_*.om." >&2
   exit 2
 }
 

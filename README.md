@@ -72,7 +72,7 @@ Already published source runs are hard-linked into staging. In a normal cycle,
 the first two short runs and the previous newest complete run are reused after
 their exact role-specific metadata and OM frame dimensions validate. The run
 that rolls from the previous-complete position into the third short position is
-re-imported at `0...5h`, and the new latest complete run is imported through
+re-imported at `f000...f005` (six hourly frames), and the new latest complete run is imported through
 `f384`: exactly two downloads in the healthy rollover case. A cold start or a
 gap imports every missing or invalid member with its required horizon. This relies on the upstream
 full-run writer opening the run file with `overwrite: true` and a temporary
@@ -164,7 +164,7 @@ of the three-run window. CAMS ADS independently retains three consecutive daily
 00 UTC greenhouse runs. Before publication, the producers delete `data_run` run
 directories outside their retained window and remove `download-*` plus
 `http_cache`. GFS publication additionally proves from every `meta.json` and
-OM file that the three historical runs contain exactly `0...5h` and both complete runs
+OM file that the three historical runs contain exactly `f000...f005` (six hourly frames) and both complete runs
 contain the official `0...384h` schedule; CAMS proves all three runs
 contain `0...120h`.
 
@@ -356,9 +356,12 @@ No legacy layer scheduler is installed. Production scheduling is defined below
 as three independent high-frequency tasks, with no local completion polling.
 
 Point-output parity also requires Open-Meteo's Copernicus DEM90 static data for
-land elevation correction. For production, keep the runtime data local and
-preseed `copernicus_dem90/static/lat_*.om` files from a project-owned DEM
-source.
+land elevation correction. For production, keep one host-level copy below
+`WEATHER_OM_DEM_ROOT`, preseed its `copernicus_dem90/static/lat_*.om` files from
+a project-owned DEM source, and expose that same root to the Rust API as
+`OM_DEM_ROOT`. Immutable GFS coverages contain only model data; they reference
+the shared DEM through their external static-source contract instead of
+packaging another 6 GiB copy in every coverage.
 
 The scheduled entrypoints call `scripts/run_native_model_pipeline.sh`; the
 producer-only GFS runtime stage remains `scripts/run_gfs_om_production_cycle.sh`.
@@ -411,11 +414,11 @@ only boundary/sentinel NOAA `.idx` files (`0,5,120,123,384h`) for `gfs013`
 sflux, `gfs025` pgrb2, and `gfs025` pgrb2b. The actual import and publication
 validators still require the complete real hourly/3-hourly schedule. Only after a newer run is
 complete does the GFS producer hard-link the previous coverage into staging,
-re-import the former previous-complete run at `0...5h`, retain the old latest
+re-import the former previous-complete run at `f000...f005` (six hourly frames), retain the old latest
 run through 384h, and import the new latest run through 384h,
 validate the five-run rolling database, and publish a native OM coverage. On
 first start, after a gap, or when legacy history overlaps through `f006`, it imports the
-affected older `0...5h` runs from
+affected older `f000...f005` six-frame runs from
 the five-run window.
 While a GFS production cycle is still running, later probe ticks skip instead of
 probing or starting another cycle. Start or retry it only with **Execute** on
