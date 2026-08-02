@@ -156,8 +156,18 @@ export WEATHER_OPENMETEO_DEM_ROOT="$DEM_ROOT"
     COVERAGE_REVISION="$SAME_RUN_COVERAGE_REVISION"
   fi
 
-  if [[ -e "$STAGING_DIR/copernicus_dem90" || -L "$STAGING_DIR/copernicus_dem90" ]]; then
-    printf '%s\n' "GFS staging unexpectedly contains packaged DEM data" >&2
+  STAGING_DEM="$STAGING_DIR/copernicus_dem90"
+  if [[ -L "$STAGING_DEM" ]]; then
+    rm -- "$STAGING_DEM"
+  elif [[ -e "$STAGING_DEM" ]]; then
+    if [[ "$(dirname -- "$(realpath -- "$STAGING_DEM")")" != "$(realpath -- "$STAGING_DIR")" ]]; then
+      printf '%s\n' "unsafe staged DEM path: $STAGING_DEM" >&2
+      exit 2
+    fi
+    rm -rf -- "$STAGING_DEM"
+  fi
+  if [[ -e "$STAGING_DEM" || -L "$STAGING_DEM" ]]; then
+    printf '%s\n' "GFS staging still contains packaged DEM data" >&2
     exit 2
   fi
   prepare_openmeteo_staging_permissions "$STAGING_DIR"
