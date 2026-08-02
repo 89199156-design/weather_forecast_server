@@ -1124,6 +1124,9 @@ def test_gfs_probe_cycle_uses_official_indices_before_gfs_only_production():
     assert 'start += GFS_UPPER_LEVEL_BATCH_SIZE' not in download
     assert "datetime.now(UTC)" in probe
     assert "scripts/probe_gfs_official_run.py" in cycle
+    assert 'probe_args+=(--reference-run "$WEATHER_GFS_FROZEN_RUN")' in cycle
+    assert 'parser.add_argument(\n        "--reference-run"' in probe
+    assert "verified frozen official run=$run" in cycle
     assert "CYCLE_LOCK_FILE" not in cycle
     assert "flock" not in cycle
     assert "stage=startup cleanup" in cycle

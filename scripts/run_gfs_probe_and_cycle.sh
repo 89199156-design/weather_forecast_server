@@ -96,8 +96,15 @@ trap finish_task EXIT
     exit 0
   fi
   max_hour="${WEATHER_GFS_MAX_FORECAST_HOUR:-384}"
+  probe_args=(
+    --data-dir "$data_dir"
+    --max-forecast-hour "$max_hour"
+  )
+  if [[ -n "${WEATHER_GFS_FROZEN_RUN:-}" ]]; then
+    probe_args+=(--reference-run "$WEATHER_GFS_FROZEN_RUN")
+  fi
   probe_output=""
-  if ! probe_output="$(python3 scripts/probe_gfs_official_run.py --data-dir "$data_dir" --max-forecast-hour "$max_hour" 2>&1)"; then
+  if ! probe_output="$(python3 scripts/probe_gfs_official_run.py "${probe_args[@]}" 2>&1)"; then
     echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_GFS_PROBE] $probe_output"
     printf "\036WEATHER_TASK_SKIP=%s\n" "官方尚无可发布的新完整 GFS 批次"
     exit 0
@@ -113,6 +120,9 @@ trap finish_task EXIT
   set -- $ready_line
   run="$2"
   printf "\036WEATHER_TASK_TARGET_RUN=%s\n" "$run"
+  if [[ -n "${WEATHER_GFS_FROZEN_RUN:-}" ]]; then
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_GFS_PROBE] verified frozen official run=$run"
+  fi
   echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [OPENMETEO_GFS_PROBE] complete official run=$run"
   WEATHER_GFS_RUN="$run" bash scripts/run_native_model_pipeline.sh gfs "$run"
 }

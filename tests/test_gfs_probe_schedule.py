@@ -66,6 +66,18 @@ class GfsProbeScheduleTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "must not exceed"):
             probe.gfs_forecast_hours(385)
 
+    def test_reference_run_accepts_only_six_hour_gfs_cycles(self):
+        probe = load_probe_module()
+
+        self.assertEqual(
+            probe.parse_reference_run("2026080206"),
+            datetime(2026, 8, 2, 6, tzinfo=timezone.utc),
+        )
+        with self.assertRaisesRegex(Exception, "YYYYMMDD"):
+            probe.parse_reference_run("2026080203")
+        with self.assertRaisesRegex(Exception, "YYYYMMDD"):
+            probe.parse_reference_run("2026-08-02T06")
+
     def test_probe_reads_latest_run_from_native_producer_marker(self):
         probe = load_probe_module()
         import tempfile

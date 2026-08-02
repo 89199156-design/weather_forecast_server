@@ -72,6 +72,20 @@ def floor_to_gfs_run(now: datetime) -> datetime:
     return now.replace(hour=(now.hour // 6) * 6)
 
 
+def parse_reference_run(value: str) -> datetime:
+    try:
+        run = datetime.strptime(value, "%Y%m%d%H").replace(tzinfo=UTC)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            "reference run must use YYYYMMDD{00|06|12|18}"
+        ) from exc
+    if run.strftime("%Y%m%d%H") != value or run.hour not in (0, 6, 12, 18):
+        raise argparse.ArgumentTypeError(
+            "reference run must use YYYYMMDD{00|06|12|18}"
+        )
+    return run
+
+
 def candidate_runs(
     now: datetime,
     local_latest: datetime | None,
@@ -150,6 +164,11 @@ def main() -> int:
     parser.add_argument("--lookback-hours", type=int, default=36)
     parser.add_argument("--timeout-seconds", type=float, default=8.0)
     parser.add_argument("--workers", type=int, default=16)
+    parser.add_argument(
+        "--reference-run",
+        type=parse_reference_run,
+        help="probe one exact frozen GFS run instead of discovering the newest run",
+    )
     args = parser.parse_args()
 
     try:
@@ -161,7 +180,12 @@ def main() -> int:
     data_dir = Path(args.data_dir)
     local_latest, local_source_runs = read_local_state(data_dir)
 
-    for run in candidate_runs(now, local_latest, args.lookback_hours, local_source_runs):
+    runs = (
+        [args.reference_run]
+        if args.reference_run is not None
+        else candidate_runs(now, local_latest, args.lookback_hours, local_source_runs)
+    )
+    for run in runs:
         complete, failures = run_complete(run, args.max_forecast_hour, args.timeout_seconds, args.workers)
         if complete:
             print(f"READY {run.strftime('%Y%m%d%H')} {run.strftime('%Y-%m-%dT%H:00:00Z')}")
