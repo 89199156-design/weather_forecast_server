@@ -156,20 +156,23 @@ export WEATHER_OPENMETEO_DEM_ROOT="$DEM_ROOT"
     COVERAGE_REVISION="$SAME_RUN_COVERAGE_REVISION"
   fi
 
-  STAGING_DEM="$STAGING_DIR/copernicus_dem90"
-  if [[ -L "$STAGING_DEM" ]]; then
-    rm -- "$STAGING_DEM"
-  elif [[ -e "$STAGING_DEM" ]]; then
-    if [[ "$(dirname -- "$(realpath -- "$STAGING_DEM")")" != "$(realpath -- "$STAGING_DIR")" ]]; then
-      printf '%s\n' "unsafe staged DEM path: $STAGING_DEM" >&2
+  remove_packaged_staging_dem() {
+    local staging_dem="$STAGING_DIR/copernicus_dem90"
+    if [[ -L "$staging_dem" ]]; then
+      rm -- "$staging_dem"
+    elif [[ -e "$staging_dem" ]]; then
+      if [[ "$(dirname -- "$(realpath -- "$staging_dem")")" != "$(realpath -- "$STAGING_DIR")" ]]; then
+        printf '%s\n' "unsafe staged DEM path: $staging_dem" >&2
+        exit 2
+      fi
+      rm -rf -- "$staging_dem"
+    fi
+    if [[ -e "$staging_dem" || -L "$staging_dem" ]]; then
+      printf '%s\n' "GFS staging still contains packaged DEM data" >&2
       exit 2
     fi
-    rm -rf -- "$STAGING_DEM"
-  fi
-  if [[ -e "$STAGING_DEM" || -L "$STAGING_DEM" ]]; then
-    printf '%s\n' "GFS staging still contains packaged DEM data" >&2
-    exit 2
-  fi
+  }
+  remove_packaged_staging_dem
   prepare_openmeteo_staging_permissions "$STAGING_DIR"
 
   export WEATHER_OPENMETEO_DATA_DIR="$STAGING_DIR"
@@ -421,6 +424,13 @@ PY
     --data-dir "$STAGING_DIR" \
     --domains ncep_gefs025,ncep_gefs05 \
     --retained-runs "$(IFS=,; echo "${PROBABILITY_SOURCE_RUNS[*]}")"
+
+  # Swift materializes its own static DEM directory while downloading even
+  # though the runtime also mounts the shared read-only DEM.  Remove that
+  # generated copy again after every download and before the publisher's
+  # no-packaged-DEM safety gate.  The publisher independently verifies the
+  # shared DEM passed through --dem-root.
+  remove_packaged_staging_dem
 
   COVERAGE_REVISION_ARGS=()
   if [[ -n "$COVERAGE_REVISION" ]]; then

@@ -857,8 +857,13 @@ class NativeOmProducerTests(unittest.TestCase):
         self.assertIn("publish_native_om_coverage.py", producer)
         self.assertIn('DEM_ROOT="${WEATHER_OM_DEM_ROOT:-$APP_DIR/data/point}"', producer)
         self.assertIn('export WEATHER_OPENMETEO_DEM_ROOT="$DEM_ROOT"', producer)
-        self.assertIn('rm -rf -- "$STAGING_DEM"', producer)
+        self.assertIn('rm -rf -- "$staging_dem"', producer)
         self.assertIn("GFS staging still contains packaged DEM data", producer)
+        self.assertEqual(producer.count("remove_packaged_staging_dem"), 3)
+        self.assertLess(
+            producer.rindex("remove_packaged_staging_dem"),
+            producer.index("publish_native_om_coverage.py"),
+        )
         self.assertIn('--dem-root "$DEM_ROOT"', producer)
         self.assertNotIn('cp -al "$ACTIVE_DATA_DIR/copernicus_dem90"', producer)
         self.assertNotIn('ln -s "$DEM_ROOT/copernicus_dem90"', producer)
